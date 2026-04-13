@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hotel AI Receptionist — Live Call</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      padding: 20px;
+      color: #f0f0f0;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 24px;
+      padding: 40px 36px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+    }
+
+    .hotel-logo {
+      width: 72px;
+      height: 72px;
+      background: linear-gradient(135deg, #f7971e, #ffd200);
+      border-radius: 50%;
+      margin: 0 auto 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      box-shadow: 0 8px 24px rgba(247,151,30,0.4);
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: rgba(255,255,255,0.55);
+      margin-bottom: 28px;
+    }
+
+    /* ── Visualiser ── */
+    .visualiser {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 4px;
+      height: 60px;
+      margin-bottom: 26px;
+    }
+
+    .bar {
+      width: 5px;
+      background: linear-gradient(to top, #f7971e, #ffd200);
+      border-radius: 3px;
+      animation: none;
+      height: 6px;
+      transition: height 0.1s ease;
+    }
+
+    .bar.active { animation: bounce 0.8s ease-in-out infinite; }
+    .bar:nth-child(2) { animation-delay: 0.1s; }
+    .bar:nth-child(3) { animation-delay: 0.2s; }
+    .bar:nth-child(4) { animation-delay: 0.3s; }
+    .bar:nth-child(5) { animation-delay: 0.15s; }
+    .bar:nth-child(6) { animation-delay: 0.05s; }
+    .bar:nth-child(7) { animation-delay: 0.25s; }
+    .bar:nth-child(8) { animation-delay: 0.35s; }
+
+    @keyframes bounce {
+      0%, 100% { height: 6px;  }
+      50%       { height: 44px; }
+    }
+
+    /* ── Status pill ── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 100px;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 28px;
+      border: 1px solid rgba(255,255,255,0.15);
+      min-width: 180px;
+      justify-content: center;
+    }
+
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: #6b7280;
+      flex-shrink: 0;
+    }
+    .dot.green  { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .dot.yellow { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; animation: pulse 1s infinite; }
+    .dot.red    { background: #f87171; box-shadow: 0 0 8px #f87171; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-join {
+      background: linear-gradient(135deg, #f7971e, #ffd200);
+      color: #1a1a1a;
+      box-shadow: 0 6px 20px rgba(247,151,30,0.45);
+    }
+    .btn-join:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 28px rgba(247,151,30,0.55);
+    }
+
+    .btn-leave {
+      background: rgba(248,113,113,0.15);
+      color: #f87171;
+      border: 1px solid rgba(248,113,113,0.35);
+    }
+    .btn-leave:hover:not(:disabled) {
+      background: rgba(248,113,113,0.25);
+    }
+
+    .btn-mute {
+      background: rgba(255,255,255,0.08);
+      color: #d1d5db;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .btn-mute:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
+    .btn-mute.muted { color: #f87171; border-color: rgba(248,113,113,0.35); }
+
+    .controls { display: flex; gap: 10px; }
+    .controls .btn { flex: 1; margin-bottom: 0; }
+
+    .tip {
+      margin-top: 20px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.35);
+      line-height: 1.6;
+    }
+
+    .error-box {
+      background: rgba(248,113,113,0.12);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 13px;
+      color: #fca5a5;
+      margin-top: 14px;
+      display: none;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="hotel-logo">🏨</div>
+  <h1 id="hotelName">Hotel AI Receptionist</h1>
+  <p class="subtitle" id="subtitle">Live voice call with our AI front desk</p>
+
+  <!-- Audio visualiser bars -->
+  <div class="visualiser" id="visualiser">
+    <div class="bar" id="b1"></div><div class="bar" id="b2"></div>
+    <div class="bar" id="b3"></div><div class="bar" id="b4"></div>
+    <div class="bar" id="b5"></div><div class="bar" id="b6"></div>
+    <div class="bar" id="b7"></div><div class="bar" id="b8"></div>
+  </div>
+
+  <div class="status-pill">
+    <div class="dot" id="dot"></div>
+    <span id="statusText">Ready to connect</span>
+  </div>
+
+  <button class="btn btn-join" id="joinBtn">🎙️ Join Call</button>
+
+  <div class="controls" style="display:none" id="liveControls">
+    <button class="btn btn-mute" id="muteBtn">🔇 Mute</button>
+    <button class="btn btn-leave" id="leaveBtn">📵 Leave</button>
+  </div>
+
+  <p class="tip" id="tip">Allow microphone access when prompted. Speak naturally after connecting.</p>
+  <div class="error-box" id="errorBox"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<script>
+  const LK = window.LivekitClient;
+  const $ = id => document.getElementById(id);
+
+  // UI refs
+  const hotelNameEl = $("hotelName");
+  const subtitleEl  = $("subtitle");
+  const dotEl       = $("dot");
+  const statusEl    = $("statusText");
+  const joinBtn     = $("joinBtn");
+  const liveControls= $("liveControls");
+  const muteBtn     = $("muteBtn");
+  const leaveBtn    = $("leaveBtn");
+  const tipEl       = $("tip");
+  const errorBox    = $("errorBox");
+  const bars        = Array.from(document.querySelectorAll(".bar"));
+
+  let room = null;
+  let muted = false;
+  let audioCtx = null;
+  let analyser = null;
+  let animFrame = null;
+  const remoteAudioEls = new Map();
+  let primaryRemoteTrackSid = null;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  function getRoomId() {
+    const parts = window.location.pathname.split("/").filter(Boolean);
+    // path: /call/{room_id}
+    return parts[parts.length - 1] || "default-room";
+  }
+
+  function setStatus(text, dotClass) {
+    statusEl.textContent = text;
+    dotEl.className = "dot " + (dotClass || "");
+  }
+
+  function showError(msg) {
+    errorBox.style.display = "block";
+    errorBox.textContent = "⚠️ " + msg;
+    setStatus("Error", "red");
+  }
+
+  function setVisualiserActive(active) {
+    bars.forEach(b => b.classList.toggle("active", active));
+  }
+
+  // ── Audio visualiser via Web Audio API ───────────────────────────────────
+
+  function startVisualiser(stream) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 32;
+      const src = audioCtx.createMediaStreamSource(stream);
+      src.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+
+      function draw() {
+        animFrame = requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(data);
+        bars.forEach((bar, i) => {
+          const val = data[i % data.length] || 0;
+          const h = Math.max(6, Math.floor((val / 255) * 52));
+          bar.style.height = h + "px";
+        });
+      }
+      draw();
+    } catch (e) {
+      // Visualiser is non-critical — fall back to CSS animation
+      setVisualiserActive(true);
+    }
+  }
+
+  function stopVisualiser() {
+    if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+    if (audioCtx)  { audioCtx.close().catch(() => {}); audioCtx = null; }
+    bars.forEach(b => { b.classList.remove("active"); b.style.height = "6px"; });
+  }
+
+  // ── Join call ─────────────────────────────────────────────────────────────
+
+  async function joinCall() {
+    errorBox.style.display = "none";
+    joinBtn.disabled = true;
+    setStatus("Connecting…", "yellow");
+    tipEl.textContent = "Requesting microphone access…";
+
+    try {
+      const roomId = getRoomId();
+      const resp = await fetch(`/livekit/token?room=${encodeURIComponent(roomId)}`);
+      if (!resp.ok) {
+        const t = await resp.text();
+        throw new Error(t || "Token request failed (" + resp.status + ")");
+      }
+      const data = await resp.json();
+
+      // Show hotel name from API
+      if (data.hotel_name) {
+        hotelNameEl.textContent = data.hotel_name;
+        document.title = data.hotel_name + " — Live Call";
+        subtitleEl.textContent = `Speaking with ${data.receptionist_name || "AI Receptionist"}`;
+      }
+
+      setStatus("Joining room…", "yellow");
+      room = new LK.Room({ adaptiveStream: true, dynacast: true });
+
+      // Remote audio tracks → play through speaker
+      room.on(LK.RoomEvent.TrackSubscribed, (track, _pub, _participant) => {
+        if (track.kind === LK.Track.Kind.Audio) {
+          if (remoteAudioEls.has(track.sid)) return;
+
+          // Keep exactly one remote audio source active to prevent double voice.
+          if (primaryRemoteTrackSid && primaryRemoteTrackSid !== track.sid) {
+            const prevEl = remoteAudioEls.get(primaryRemoteTrackSid);
+            if (prevEl) {
+              try { prevEl.pause(); } catch (_) {}
+              prevEl.remove();
+            }
+            remoteAudioEls.delete(primaryRemoteTrackSid);
+          }
+
+          const el = track.attach();
+          el.autoplay = true;
+          el.playsInline = true;
+          el.style.display = "none";
+          document.body.appendChild(el);
+          remoteAudioEls.set(track.sid, el);
+          primaryRemoteTrackSid = track.sid;
+        }
+      });
+      room.on(LK.RoomEvent.TrackUnsubscribed, (track) => {
+        const el = remoteAudioEls.get(track.sid);
+        if (el) {
+          try { track.detach(el); } catch (_) {}
+          el.remove();
+          remoteAudioEls.delete(track.sid);
+          if (primaryRemoteTrackSid === track.sid) primaryRemoteTrackSid = null;
+          return;
+        }
+        track.detach().forEach(x => x.remove());
+      });
+      room.on(LK.RoomEvent.Disconnected, () => {
+        onCallEnded();
+      });
+
+      await room.connect(data.url, data.token, {
+        autoSubscribe: true,
+        audioCaptureDefaults: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      // Enable microphone
+      await room.localParticipant.setMicrophoneEnabled(true);
+
+      // Start local audio visualiser
+      const localTrack = [...room.localParticipant.audioTrackPublications.values()][0];
+      if (localTrack && localTrack.track && localTrack.track.mediaStreamTrack) {
+        const stream = new MediaStream([localTrack.track.mediaStreamTrack]);
+        startVisualiser(stream);
+      } else {
+        setVisualiserActive(true);
+      }
+
+      setStatus("Connected — speak now", "green");
+      tipEl.textContent = "You are live. The receptionist can hear you.";
+      joinBtn.style.display = "none";
+      liveControls.style.display = "flex";
+      muteBtn.textContent = "🔇 Mute";
+      muteBtn.classList.remove("muted");
+      muted = false;
+
+    } catch (err) {
+      console.error(err);
+      showError(err.message || "Failed to connect.");
+      joinBtn.disabled = false;
+      tipEl.textContent = "Allow microphone access when prompted. Speak naturally after connecting.";
+    }
+  }
+
+  // ── Mute toggle ───────────────────────────────────────────────────────────
+
+  async function toggleMute() {
+    if (!room) return;
+    muted = !muted;
+    await room.localParticipant.setMicrophoneEnabled(!muted);
+    muteBtn.textContent = muted ? "🎙️ Unmute" : "🔇 Mute";
+    muteBtn.classList.toggle("muted", muted);
+    setStatus(muted ? "Muted" : "Connected — speak now", muted ? "yellow" : "green");
+  }
+
+  // ── Leave call ────────────────────────────────────────────────────────────
+
+  async function leaveCall() {
+    if (room) { await room.disconnect(); room = null; }
+    onCallEnded();
+  }
+
+  function onCallEnded() {
+    remoteAudioEls.forEach(el => {
+      try { el.remove(); } catch (_) {}
+    });
+    remoteAudioEls.clear();
+    primaryRemoteTrackSid = null;
+    stopVisualiser();
+    setStatus("Call ended", "red");
+    tipEl.textContent = "Thank you for calling. You may close this window.";
+    joinBtn.style.display = "block";
+    joinBtn.disabled = false;
+    joinBtn.textContent = "🔄 Reconnect";
+    liveControls.style.display = "none";
+  }
+
+  // ── Event listeners ───────────────────────────────────────────────────────
+
+  joinBtn.addEventListener("click", joinCall);
+  muteBtn.addEventListener("click", toggleMute);
+  leaveBtn.addEventListener("click", leaveCall);
+</script>
+</body>
+</html>
