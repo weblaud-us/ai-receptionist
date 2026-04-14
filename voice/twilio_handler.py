@@ -106,6 +106,16 @@ def _twiml_connect(request: Request) -> Response:
     return Response(content=str(response), media_type="application/xml")
 
 
+@router.get("/incoming")
+async def incoming_call_get_fallback():
+    """
+    Fallback for accidental GET requests from browsers/health checks.
+    Twilio voice webhook must use POST.
+    """
+    logger.warning("GET /voice/incoming received; expected POST webhook from Twilio")
+    return Response(content="Voice webhook expects POST", media_type="text/plain")
+
+
 @router.post("/incoming")
 async def incoming_call(request: Request):
     """

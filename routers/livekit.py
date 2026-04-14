@@ -1,6 +1,6 @@
 """
 LiveKit call link endpoints.
-GET  /call/{room_id}      → serves the browser call page (ui/call.html)
+GET  /call/{room_id}      → returns call metadata for frontend apps
 GET  /livekit/token       → issues a LiveKit JWT for the given room
 POST /livekit/send-whatsapp → internal helper used by livekit_agent
 """
@@ -10,7 +10,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from config import settings
@@ -38,7 +38,13 @@ def _get_call_base_url() -> str:
 async def call_page(room_id: str):
     if not room_id:
         raise HTTPException(status_code=400, detail="Missing room id")
-    return FileResponse("ui/call.html")
+    return JSONResponse(
+        {
+            "room": room_id,
+            "token_endpoint": f"{_get_call_base_url()}/livekit/token?room={room_id}",
+            "livekit_url": settings.LIVEKIT_URL,
+        }
+    )
 
 
 @livekit_router.get("/livekit/token")

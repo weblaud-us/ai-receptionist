@@ -319,4 +319,5 @@ if __name__ == "__main__":
         ws_url=settings.LIVEKIT_URL,
         api_key=settings.LIVEKIT_API_KEY,
         api_secret=settings.LIVEKIT_API_SECRET,
+        port=settings.LIVEKIT_WORKER_PORT,
     ))

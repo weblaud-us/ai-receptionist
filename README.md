@@ -61,8 +61,8 @@ python -m utils.seed_rooms
 # 5. Start server
 uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 
-# 6. Open dashboard
-http://localhost:8002/dashboard
+# 6. Open API docs
+http://localhost:8002/docs
 ```
 
 ## Environment Variables (Key Ones)
@@ -87,7 +87,6 @@ http://localhost:8002/dashboard
 |---|---|---|
 | GET | `/` | Service info |
 | GET | `/health` | Health + DB status |
-| GET | `/dashboard` | Dashboard HTML |
 
 ### Admin Dashboard
 | Method | Path | Description |
@@ -143,7 +142,7 @@ http://localhost:8002/dashboard
 | Method | Path | Description |
 |---|---|---|
 | POST | `/voice/incoming` | Twilio voice call webhook |
-| GET | `/call/{room_id}` | LiveKit browser call page |
+| GET | `/call/{room_id}` | LiveKit room metadata for frontend integration |
 | GET | `/livekit/token` | Generate LiveKit join token |
 
 ## Dashboard Features
@@ -240,6 +239,4 @@ database/
 services/
   reminders.py              ← 24h check-in reminder scheduler
   calendar.py               ← ICS calendar file generation
-ui/
-  dashboard.html            ← Complete interactive dashboard
 ```

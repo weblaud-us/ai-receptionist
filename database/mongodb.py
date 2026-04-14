@@ -88,4 +88,9 @@ async def _create_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("created_at", DESCENDING)]),
     ])
 
+    await db.blocked_contacts.create_indexes([
+        IndexModel([("phone", ASCENDING)], unique=True),
+        IndexModel([("blocked_at", DESCENDING)]),
+    ])
+
     logger.info("✅ DB indexes created")

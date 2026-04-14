@@ -384,7 +384,13 @@ async def _process_incoming_message(
 ) -> None:
     db = get_db()
 
-    # ── Handover check: if manager is handling, AI stays silent ───────────────
+    # ── Blocked contact check: silently ignore blocked numbers ───────────────
+    blocked = await db.blocked_contacts.find_one({"phone": phone})
+    if blocked:
+        logger.info("🚫 Ignoring message from blocked contact: %s", phone)
+        return
+
+    # ── Handover check: if manager is handling, AI stays silent ──────────────
     conv_check = await db.conversations.find_one(
         {"phone": phone, "channel": "whatsapp"},
         sort=[("updated_at", -1)],

@@ -1,0 +1,659 @@
+{
+  "info": {
+    "name": "AI Receptionist API",
+    "_postman_id": "a8f7a90e-3b5b-4a4b-90bf-f8ec88bf6cd9",
+    "description": "Postman collection generated from the current FastAPI project routes (main.py + routers + voice + whatsapp).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health & Debug",
+      "item": [
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/"
+          }
+        },
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health"
+          }
+        },
+        {
+          "name": "Debug Routes",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/debug/routes"
+          }
+        },
+        {
+          "name": "Debug Rooms",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/debug/rooms"
+          }
+        },
+        {
+          "name": "Debug Bookings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/debug/bookings"
+          }
+        }
+      ]
+    },
+    {
+      "name": "WhatsApp Meta",
+      "item": [
+        {
+          "name": "Verify Webhook",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/webhook?hub.mode=subscribe&hub.verify_token={{verify_token}}&hub.challenge=12345",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhook"
+              ],
+              "query": [
+                {
+                  "key": "hub.mode",
+                  "value": "subscribe"
+                },
+                {
+                  "key": "hub.verify_token",
+                  "value": "{{verify_token}}"
+                },
+                {
+                  "key": "hub.challenge",
+                  "value": "12345"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Inbound Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"changes\": [\n        {\n          \"value\": {\n            \"metadata\": {\n              \"phone_number_id\": \"{{meta_phone_number_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Test User\"\n                }\n              }\n            ],\n            \"messages\": [\n              {\n                \"id\": \"wamid.TEST123\",\n                \"from\": \"{{phone_no_plus}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"Hello\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": "{{base_url}}/webhook"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice (Twilio)",
+      "item": [
+        {
+          "name": "Incoming Call Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "CallSid",
+                  "value": "{{call_sid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "From",
+                  "value": "{{phone}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{base_url}}/voice/incoming"
+          }
+        },
+        {
+          "name": "Call Status Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "CallSid",
+                  "value": "{{call_sid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "CallStatus",
+                  "value": "completed",
+                  "type": "text"
+                },
+                {
+                  "key": "CallDuration",
+                  "value": "42",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{base_url}}/voice/status"
+          }
+        },
+        {
+          "name": "Outbound Call (Admin key optional)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{admin_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to_phone\": \"{{phone}}\",\n  \"message\": \"Hello, this is a test call from AI receptionist.\"\n}"
+            },
+            "url": "{{base_url}}/voice/outbound"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "Lookup Booking",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/bookings/lookup/search?phone={{phone}}"
+          }
+        },
+        {
+          "name": "List Bookings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/bookings?page=1&limit=20"
+          }
+        },
+        {
+          "name": "Get Booking",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/bookings/{{booking_id}}"
+          }
+        },
+        {
+          "name": "Download Booking ICS",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/bookings/{{booking_id}}/calendar.ics?token={{calendar_token}}"
+          }
+        },
+        {
+          "name": "Create Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guest_name\": \"Ruhul Amin\",\n  \"guest_phone\": \"{{phone}}\",\n  \"guest_email\": \"guest@example.com\",\n  \"room_id\": \"{{room_id}}\",\n  \"check_in_date\": \"2026-05-01\",\n  \"check_out_date\": \"2026-05-03\",\n  \"adults\": 2,\n  \"children\": 0,\n  \"special_requests\": \"Late check-in\"\n}"
+            },
+            "url": "{{base_url}}/bookings/"
+          }
+        },
+        {
+          "name": "Update Booking Status",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/bookings/{{booking_id}}/status?status=confirmed"
+          }
+        },
+        {
+          "name": "Cancel Booking",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/bookings/{{booking_id}}?reason=Guest%20requested"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rooms",
+      "item": [
+        {
+          "name": "List Rooms",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/rooms/?is_active=true"
+          }
+        },
+        {
+          "name": "Create Room",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"room_number\": \"101\",\n  \"room_type\": \"standard\",\n  \"bed_type\": \"queen\",\n  \"floor\": 1,\n  \"capacity\": 2,\n  \"description\": \"Standard room\",\n  \"pricing\": {\n    \"base_price_per_night\": 4500,\n    \"weekend_surcharge_pct\": 10,\n    \"peak_season_surcharge_pct\": 0,\n    \"discount_weekly_pct\": 5,\n    \"discount_monthly_pct\": 10,\n    \"tax_pct\": 15\n  },\n  \"is_active\": true,\n  \"is_maintenance\": false\n}"
+            },
+            "url": "{{base_url}}/rooms/"
+          }
+        },
+        {
+          "name": "Check Availability",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/rooms/availability?check_in_date=2026-05-01&check_out_date=2026-05-03&room_type=standard&adults=2&children=0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Dashboard",
+      "item": [
+        {
+          "name": "Dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/dashboard"
+          }
+        },
+        {
+          "name": "List Conversations",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/conversations?page=1&limit=30"
+          }
+        },
+        {
+          "name": "Get Conversation",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/conversations/{{session_id}}"
+          }
+        },
+        {
+          "name": "Toggle Handover",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"active\": true,\n  \"note\": \"Taking over manually\"\n}"
+            },
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/handover"
+          }
+        },
+        {
+          "name": "Manager Reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hello sir, manager here.\"\n}"
+            },
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/reply"
+          }
+        },
+        {
+          "name": "Mark Conversation Read",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/mark-read"
+          }
+        },
+        {
+          "name": "Resolve Conversation",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/resolve"
+          }
+        },
+        {
+          "name": "Block Contact",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Spam or abuse\"\n}"
+            },
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/block"
+          }
+        },
+        {
+          "name": "Unblock Contact",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/admin/conversations/{{session_id}}/block"
+          }
+        },
+        {
+          "name": "List Blocked Contacts",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/blocked-contacts"
+          }
+        },
+        {
+          "name": "Admin List Bookings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/bookings?page=1&limit=20"
+          }
+        },
+        {
+          "name": "Admin Get Booking",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/bookings/{{booking_id}}"
+          }
+        },
+        {
+          "name": "Admin Confirm Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"send_whatsapp\": true\n}"
+            },
+            "url": "{{base_url}}/admin/bookings/{{booking_id}}/confirm"
+          }
+        },
+        {
+          "name": "Admin Cancel Booking",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/bookings/{{booking_id}}/cancel?reason=No%20show"
+          }
+        },
+        {
+          "name": "Get Agent Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/settings"
+          }
+        },
+        {
+          "name": "Save Agent Settings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_active\": true,\n  \"personality\": \"Professional & Formal\",\n  \"response_language\": \"All languages (Auto-detect)\"\n}"
+            },
+            "url": "{{base_url}}/admin/settings"
+          }
+        },
+        {
+          "name": "List Knowledge",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/knowledge?is_active=true"
+          }
+        },
+        {
+          "name": "Add Knowledge",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Check-in time\",\n  \"content\": \"Standard check-in time is 14:00.\",\n  \"tags\": [\"policy\", \"checkin\"]\n}"
+            },
+            "url": "{{base_url}}/admin/knowledge"
+          }
+        },
+        {
+          "name": "Update Knowledge",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Updated content\",\n  \"is_active\": true\n}"
+            },
+            "url": "{{base_url}}/admin/knowledge/{{item_id}}"
+          }
+        },
+        {
+          "name": "Delete Knowledge",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/admin/knowledge/{{item_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Extras",
+      "item": [
+        {
+          "name": "Export Bookings CSV",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/bookings/export-csv?status=all"
+          }
+        },
+        {
+          "name": "Conversation Analytics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/conversations/analytics?days=7"
+          }
+        },
+        {
+          "name": "Knowledge Test",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/knowledge/test?question=What%20is%20check-in%20time%3F"
+          }
+        },
+        {
+          "name": "Revenue Chart",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/bookings/revenue-chart?days=30"
+          }
+        }
+      ]
+    },
+    {
+      "name": "LiveKit",
+      "item": [
+        {
+          "name": "Call Room Metadata",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/call/{{room}}"
+          }
+        },
+        {
+          "name": "Get LiveKit Token",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/livekit/token?room={{room}}&identity={{identity}}"
+          }
+        },
+        {
+          "name": "LiveKit Send WhatsApp",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"{{phone}}\",\n  \"message\": \"Your call has been scheduled.\"\n}"
+            },
+            "url": "{{base_url}}/livekit/send-whatsapp"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Legacy Webhook App (webhook.py)",
+      "item": [
+        {
+          "name": "Legacy Verify Webhook",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/webhook?hub.mode=subscribe&hub.verify_token={{verify_token}}&hub.challenge=12345"
+          }
+        },
+        {
+          "name": "Legacy Webhook Receive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"test\": true\n}"
+            },
+            "url": "{{base_url}}/webhook"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://hotel.weblaud.com"
+    },
+    {
+      "key": "verify_token",
+      "value": "replace-with-meta-verify-token"
+    },
+    {
+      "key": "meta_phone_number_id",
+      "value": "replace-with-meta-phone-number-id"
+    },
+    {
+      "key": "admin_key",
+      "value": ""
+    },
+    {
+      "key": "phone",
+      "value": "+8801000000000"
+    },
+    {
+      "key": "phone_no_plus",
+      "value": "8801000000000"
+    },
+    {
+      "key": "booking_id",
+      "value": "HTL12345678"
+    },
+    {
+      "key": "calendar_token",
+      "value": "replace-with-calendar-token"
+    },
+    {
+      "key": "room_id",
+      "value": "replace-with-room-id"
+    },
+    {
+      "key": "item_id",
+      "value": "replace-with-knowledge-item-id"
+    },
+    {
+      "key": "session_id",
+      "value": "replace-with-session-id"
+    },
+    {
+      "key": "call_sid",
+      "value": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "key": "room",
+      "value": "room-101"
+    },
+    {
+      "key": "identity",
+      "value": "guest_test_user"
+    }
+  ]
+}

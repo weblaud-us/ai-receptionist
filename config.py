@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     LIVEKIT_API_KEY:    str = Field(default="")
     LIVEKIT_API_SECRET: str = Field(default="")
     CALL_BASE_URL:      str = Field(default="")
+    LIVEKIT_WORKER_PORT: int = Field(default=0)
 
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)
