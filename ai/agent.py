@@ -18,7 +18,7 @@ from typing import Optional, List, Dict, Tuple, Any
 
 from ai.llm_provider import get_llm_provider
 from ai.tools import HOTEL_TOOLS, get_tool_executor
-from ai.prompts import get_system_prompt, VOICE_BREVITY_REMINDER
+from ai.prompts import get_system_prompt, VOICE_BREVITY_REMINDER, detect_gender_preference
 from config import settings
 from database.mongodb import get_db
 from database.models import (
@@ -132,6 +132,17 @@ class HotelAgent:
             logger.warning("Session %s not found, creating new", session_id)
             conv_doc = await self._create_conversation(session_id, phone)
 
+        # ── Detect gender from current message and persist to context ──────────
+        detected_gender = detect_gender_preference(user_message)
+        if detected_gender:
+            current_gender = (conv_doc.get("context") or {}).get("guest_gender")
+            if detected_gender != current_gender:
+                await db.conversations.update_one(
+                    {"session_id": session_id},
+                    {"$set": {"context.guest_gender": detected_gender}}
+                )
+                conv_doc.setdefault("context", {})["guest_gender"] = detected_gender
+                logger.info("Gender updated to '%s' for session %s", detected_gender, session_id)
         messages = self._build_messages(conv_doc, user_message)
         all_tool_calls: List[Dict] = []
 
@@ -243,12 +254,11 @@ class HotelAgent:
         return messages
 
     def _enforce_style(self, text: str) -> str:
+        """Remove AI mentions. Do NOT force-prepend 'Sir' — the LLM handles salutation."""
         if not text:
-            return "Sir, how may I assist you today?"
+            return "How may I assist you today?"
         cleaned = re.sub(r"\bA\.I\.\b|\bAI\b|\bartificial intelligence\b", "", text, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-        if not re.search(r"\bsir\b", cleaned, flags=re.IGNORECASE):
-            cleaned = "Sir, " + cleaned
         return cleaned
 
     def _extract_fallback_tool_calls(self, content: str) -> Tuple[Optional[List[Dict]], str]:

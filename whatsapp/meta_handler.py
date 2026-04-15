@@ -82,11 +82,15 @@ def _is_call_request(text: str) -> bool:
         return False
     norm = text.lower()
     keywords = [
-        "call", "voice", "talk", "speak", "audio call", "phone call",
+        "voice call", "talk", "audio call", "phone call",
         "want to call", "can i call", "give me a call", "let me call",
     ]
     bangla = ["\u0995\u09b2", "\u0995\u09a5\u09be", "\u09ad\u09af\u09bc\u09c7\u09b8", "\u0995\u09a5\u09be \u09ac\u09b2", "\u0995\u09b2 \u09a6\u09bf\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u0995\u09b0\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u09a8\u09ae\u09cd\u09ac\u09b0", "\u0995\u09b2 \u0995\u09b0\u09ac"]
     return any(k in norm for k in keywords) or any(k in norm for k in bangla)
+
+
+def _is_quick_greeting(text: str) -> bool:
+    return (text or "").strip().lower() in {"hi", "hello", "hey", "start", "menu"}
 
 
 def _build_call_options_message(profile: dict, room_id: str) -> str:
@@ -95,7 +99,7 @@ def _build_call_options_message(profile: dict, room_id: str) -> str:
     base = _get_call_base_url()
 
     lines = [
-        f"Sir, you can speak with our AI receptionist *{profile.get('receptionist_name', 'Aria')}* "
+        f"You can speak with our receptionist *{profile.get('receptionist_name', 'Aria')}* "
         f"from *{profile.get('name', 'the hotel')}* in two ways:\n"
     ]
     if twilio_number:
@@ -105,12 +109,12 @@ def _build_call_options_message(profile: dict, room_id: str) -> str:
         lines.append(f"\ud83c\udf10 *Browser Call (no phone needed):*\nTap this link:\n{call_link}")
 
     if not twilio_number and not base:
-        return "Sorry sir, call options are not configured yet. Please ask your query here."
+        return "Sorry, call options are not configured yet. Please ask your query here."
 
     lines.append(
         "\nBoth options connect you live with our receptionist who can "
         "take bookings, check availability, and answer all your questions. "
-        "We look forward to speaking with you, sir! \ud83c\udfa4"
+        "We look forward to speaking with you! \ud83c\udfa4"
     )
     return "\n\n".join(lines)
 
@@ -341,6 +345,9 @@ async def _handle_webhook_payload(payload: dict) -> None:
 
                 for msg in messages:
                     msg_id = msg.get("id")
+                    if not msg_id:
+                        logger.warning("Meta inbound message without id ignored")
+                        continue
                     if _seen_meta_message_recently(msg_id):
                         continue
 
@@ -414,18 +421,13 @@ async def _process_incoming_message(
     if msg_type != "text" and not message_body:
         await _send_meta_whatsapp(
             phone,
-            "Sorry sir, I couldn't understand the voice note. Please type your message.",
+            "Sorry, I couldn't understand the voice note. Please type your message.",
             phone_number_id,
         )
         return
 
     if not (message_body or "").strip():
-        profile = get_hotel_profile()
-        await _send_meta_whatsapp(
-            phone,
-            f"Hello! This is {profile['receptionist_name']} at {profile['name']}. How can I help you today, sir?",
-            phone_number_id,
-        )
+        logger.info("Ignoring empty WhatsApp text payload from %s", phone)
         return
 
     if msg_type == "text" and _is_call_request(message_body):
@@ -475,8 +477,9 @@ async def _process_incoming_message(
         pass
 
 
-    # ── Quick greetings → send welcome message directly ───────────────────────
-    if message_body.lower() in ["hi", "hello", "hey", "start", "menu"]:
+    # ── Quick greetings → send welcome message only once for a fresh session ──
+    # This prevents repeated greeting sends from duplicate/retried inbound events.
+    if _is_quick_greeting(message_body) and not session.get("messages"):
         profile = get_hotel_profile()
         greeting = GREETING_WHATSAPP.format(
             hotel_name=profile["name"],
@@ -529,7 +532,7 @@ async def _process_incoming_message(
         logger.error("Meta WhatsApp agent processing error: %s", e, exc_info=True)
         await _send_meta_whatsapp(
             phone,
-            "I'm sorry, I'm experiencing a technical issue. Please try again or call us directly, sir.",
+            "I'm sorry, I'm experiencing a technical issue. Please try again or contact us directly.",
             phone_number_id,
         )
 
