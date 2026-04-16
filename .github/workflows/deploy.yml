@@ -1,0 +1,46 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main        # main branch-এ push হলেই deploy হবে
+      - master      # অথবা master branch
+
+jobs:
+  deploy:
+    name: SSH Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+
+            # Project directory
+            APP_DIR="${{ secrets.APP_DIR }}"
+            cd "$APP_DIR"
+
+            echo "=== Git pull ==="
+            git pull origin main || git pull origin master
+
+            echo "=== Install dependencies ==="
+            source .venv/bin/activate
+            pip install -r requirements.txt --quiet
+
+            echo "=== Restart service ==="
+            sudo systemctl restart ai-receptionist
+
+            echo "=== Health check ==="
+            sleep 3
+            sudo systemctl is-active --quiet ai-receptionist \
+              && echo "✅ Service running" \
+              || (echo "❌ Service failed!" && sudo systemctl status ai-receptionist && exit 1)
