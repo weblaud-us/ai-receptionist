@@ -36,7 +36,7 @@ jobs:
 
             echo "=== Restarting services with PM2 ==="
             # This restarts both the API and the LiveKit worker defined in ecosystem.config.js
-            pm2 restart ecosystem.config.js
+            /home/deployer/.nvm/versions/node/v24.11.1/bin/pm2 restart ecosystem.config.js
 
             echo "=== Checking status ==="
-            pm2 status
+            /home/deployer/.nvm/versions/node/v24.11.1/bin/pm2 status
