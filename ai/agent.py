@@ -210,6 +210,11 @@ class HotelAgent:
     def _build_messages(self, conv_doc: Dict, user_message: str) -> List[Dict]:
         hotel  = get_hotel_profile()
         context = conv_doc.get("context", {})
+        contact_phone = (
+            (hotel.get("twilio_voice_number") or "").strip()
+            if self.channel.value == "whatsapp"
+            else ""
+        ) or hotel["phone"]
         system = get_system_prompt(
             channel=self.channel.value,
             hotel_name=hotel["name"],
@@ -218,7 +223,7 @@ class HotelAgent:
             checkin_time=hotel["checkin_time"],
             checkout_time=hotel["checkout_time"],
             currency=hotel["currency"],
-            hotel_phone=hotel["phone"],
+            hotel_phone=contact_phone,
             context=context,  # Pass context for booking-aware greeting
         )
         messages = [{"role": "system", "content": system}]
