@@ -31,8 +31,8 @@ jobs:
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
             echo "=== Pulling latest changes ==="
-            git fetch --all
-            git pull origin main
+            # Using GITHUB_TOKEN for authentication to avoid 'Username' prompts on HTTPS remotes
+            git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git main
 
             echo "=== Updating dependencies ==="
             source .venv/bin/activate
