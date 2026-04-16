@@ -13,7 +13,7 @@ ssh ubuntu@YOUR_VPS_IP
 
 ### Project clone করুন (যদি না থাকে)
 ```bash
-git clone https://github.com/YOUR_USERNAME/AI-receptionist.git
+git clone https://github.com/ruhul-cse-duet/Hotel-AI-Receptionist-Agent-voice-and-message.git
 cd AI-receptionist
 ```
 
