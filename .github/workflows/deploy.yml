@@ -3,8 +3,7 @@ name: Deploy to VPS
 on:
   push:
     branches:
-      - main        # main branch-এ push হলেই deploy হবে
-      - master      # অথবা master branch
+      - main
 
 jobs:
   deploy:
@@ -24,23 +23,20 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           script: |
             set -e
+            cd ${{ secrets.APP_DIR }}
 
-            # Project directory
-            APP_DIR="${{ secrets.APP_DIR }}"
-            cd "$APP_DIR"
+            echo "=== Pulling latest changes ==="
+            git pull origin main
 
-            echo "=== Git pull ==="
-            git pull origin main || git pull origin master
-
-            echo "=== Install dependencies ==="
+            echo "=== Updating dependencies ==="
             source .venv/bin/activate
+            # Ensure pip is up to date
+            python -m pip install --upgrade pip
             pip install -r requirements.txt --quiet
 
-            echo "=== Restart service ==="
-            sudo systemctl restart ai-receptionist
+            echo "=== Restarting services with PM2 ==="
+            # This restarts both the API and the LiveKit worker defined in ecosystem.config.js
+            pm2 restart ecosystem.config.js
 
-            echo "=== Health check ==="
-            sleep 3
-            sudo systemctl is-active --quiet ai-receptionist \
-              && echo "✅ Service running" \
-              || (echo "❌ Service failed!" && sudo systemctl status ai-receptionist && exit 1)
+            echo "=== Checking status ==="
+            pm2 status

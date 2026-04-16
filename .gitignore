@@ -9,6 +9,7 @@ build/
 .venv/
 venv/
 .python-version
+ngrok-v3-stable
 
 # Pytest / coverage
 .pytest_cache/
