@@ -1,16 +1,17 @@
 """
 LiveKit call link endpoints.
-GET  /call/{room_id}      → returns call metadata for frontend apps
+GET  /call/{room_id}      → serves the call.html UI page
 GET  /livekit/token       → issues a LiveKit JWT for the given room
 POST /livekit/send-whatsapp → internal helper used by livekit_agent
 """
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
 from config import settings
@@ -20,6 +21,9 @@ from whatsapp.meta_handler import _send_meta_whatsapp
 logger = logging.getLogger(__name__)
 
 livekit_router = APIRouter(tags=["LiveKit"])
+
+# Path to the call UI HTML file
+CALL_HTML_PATH = Path(__file__).resolve().parent.parent / "ui" / "call.html"
 
 
 class LivekitWhatsAppSendRequest(BaseModel):
@@ -36,14 +40,15 @@ def _get_call_base_url() -> str:
 
 @livekit_router.get("/call/{room_id}")
 async def call_page(room_id: str):
+    """Serve the LiveKit voice call HTML UI."""
     if not room_id:
         raise HTTPException(status_code=400, detail="Missing room id")
-    return JSONResponse(
-        {
-            "room": room_id,
-            "token_endpoint": f"{_get_call_base_url()}/livekit/token?room={room_id}",
-            "livekit_url": settings.LIVEKIT_URL,
-        }
+    if not CALL_HTML_PATH.exists():
+        logger.error("call.html not found at %s", CALL_HTML_PATH)
+        raise HTTPException(status_code=500, detail="Call UI page not found on server")
+    return FileResponse(
+        path=str(CALL_HTML_PATH),
+        media_type="text/html",
     )
 
 
