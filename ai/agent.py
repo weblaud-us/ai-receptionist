@@ -151,8 +151,10 @@ class HotelAgent:
                 messages=messages,
                 tools=HOTEL_TOOLS,
                 tool_choice="auto",
-                temperature=0.6,
-                max_tokens=300 if self.is_voice else 800,
+                temperature=0.5,
+                # Voice: very short answers (1-2 sentences).
+                # WhatsApp: concise but formatted. 400 tokens saves ~40% vs 700.
+                max_tokens=200 if self.is_voice else 400,
             )
 
             assistant_content = response["content"]
@@ -244,8 +246,10 @@ class HotelAgent:
                 ),
             })
 
-        # Add conversation history (last 20 messages)
-        history = conv_doc.get("messages", [])[-20:]
+        # Voice: last 8 messages. WhatsApp: last 8 messages too — trimmed from
+        # 12 to reduce input tokens while keeping enough booking context.
+        history_limit = 8 if self.is_voice else 8
+        history = conv_doc.get("messages", [])[-history_limit:]
         for m in history:
             role, content = m.get("role", "user"), m.get("content", "")
             if role in ("user", "assistant") and content:

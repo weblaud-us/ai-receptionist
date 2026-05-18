@@ -3,6 +3,7 @@ Hotel AI Receptionist - FastAPI Application
 Entry point: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -93,7 +94,7 @@ except Exception as e:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"{settings.HOTEL_NAME} - AI Receptionist starting")
-    logger.info(f"   LLM Provider : {settings.LLM_PROVIDER}")
+    logger.info(f"   LLM Provider : OpenAI ({settings.OPENAI_MODEL})")
     logger.info(f"   STT Provider : OpenAI Whisper")
     logger.info(f"   TTS Provider : ElevenLabs / OpenAI")
     logger.info(f"   Environment  : {settings.APP_ENV}")
@@ -104,6 +105,15 @@ async def lifespan(app: FastAPI):
     get_llm_provider()
     reminder_service = get_booking_reminder_service()
     reminder_service.start()
+
+    # Pre-warm TTS audio cache so the first caller hears the greeting instantly.
+    try:
+        from voice.stt_tts import get_tts
+        from voice.twilio_handler import _ensure_audio_cache
+        asyncio.create_task(_ensure_audio_cache(get_tts()))
+        logger.info("🔥 TTS audio cache pre-warm scheduled")
+    except Exception as _pw_err:
+        logger.warning("TTS prewarm skipped: %s", _pw_err)
 
     logger.info(f"{settings.HOTEL_NAME} AI Receptionist is LIVE on port {settings.PORT}")
     yield
@@ -123,7 +133,7 @@ app = FastAPI(
     - Booking Engine: Full room availability and booking management
     - MongoDB: Persistent guest data and conversation history
 
-    LLM Providers: OpenAI GPT-4o (prod) | Gemini 1.5 Pro (prod) | LM Studio (local dev)
+    LLM: OpenAI GPT-4o | STT: OpenAI Whisper | TTS: ElevenLabs
     """,
     version="1.0.0",
     lifespan=lifespan,
@@ -200,7 +210,7 @@ async def root():
         "status": "running",
         "version": "1.0.0",
         "env": settings.APP_ENV,
-        "llm": settings.LLM_PROVIDER,
+        "llm": f"openai/{settings.OPENAI_MODEL}",
         "docs": "/docs",
     }
 

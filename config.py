@@ -1,29 +1,14 @@
 """
 Hotel AI Receptionist — Configuration
-LLM: OpenAI (primary) | Gemini (alternative)
+LLM: OpenAI
 STT: OpenAI Whisper
 TTS: ElevenLabs (primary) | OpenAI TTS (fallback)
 """
 
-from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import Field
-
-
-class LLMProvider(str, Enum):
-    OPENAI = "openai"
-    GEMINI = "gemini"
-
-
-class STTProvider(str, Enum):
-    OPENAI_WHISPER = "openai_whisper"
-
-
-class TTSProvider(str, Enum):
-    ELEVENLABS = "elevenlabs"
-    OPENAI     = "openai"
 
 
 class Settings(BaseSettings):
@@ -40,15 +25,15 @@ class Settings(BaseSettings):
     MONGODB_URI:     str = Field(default="mongodb://localhost:27017")
     MONGODB_DB_NAME: str = Field(default="hotel_ai_dev")
 
-    # ── LLM ───────────────────────────────────────────────
-    LLM_PROVIDER: LLMProvider = Field(default=LLMProvider.OPENAI)
+    # ── LLM Provider ─────────────────────────────────────
+    LLM_PROVIDER: str = Field(default="openai")
 
-    # OpenAI Chat Completions (used by all agent turns)
-    OPENAI_API_KEY:   str   = Field(default="")
-    OPENAI_MODEL:     str   = Field(default="gpt-4o-mini")
+    # ── OpenAI ────────────────────────────────────────────
+    OPENAI_API_KEY:     str   = Field(default="")
+    OPENAI_MODEL:       str   = Field(default="gpt-4o-mini")
     OPENAI_TEMPERATURE: float = Field(default=0.6)
 
-    # OpenAI Realtime (LiveKit agent only — native audio, ~300ms latency)
+    # OpenAI Realtime (LiveKit agent only)
     OPENAI_VOICE_MODEL:    str = Field(default="gpt-4o-realtime-preview")
     OPENAI_REALTIME_VOICE: str = Field(default="shimmer")
 
@@ -56,38 +41,34 @@ class Settings(BaseSettings):
     OPENAI_TTS_MODEL: str = Field(default="gpt-4o-mini-tts")
     OPENAI_TTS_VOICE: str = Field(default="shimmer")
 
-    # Gemini (alternative LLM)
-    GEMINI_API_KEY: str = Field(default="")
-    GEMINI_MODEL:   str = Field(default="gemini-1.5-pro")
-
     # ── STT ───────────────────────────────────────────────
-    STT_PROVIDER: STTProvider = Field(default=STTProvider.OPENAI_WHISPER)
+    STT_PROVIDER: str = Field(default="openai_whisper")
 
     # ── TTS ───────────────────────────────────────────────
-    TTS_PROVIDER:      TTSProvider = Field(default=TTSProvider.ELEVENLABS)
-    ELEVENLABS_API_KEY: str        = Field(default="")
-    ELEVENLABS_VOICE_ID: str       = Field(default="21m00Tcm4TlvDq8ikWAM")
+    TTS_PROVIDER:        str = Field(default="elevenlabs")
+    ELEVENLABS_API_KEY:  str = Field(default="")
+    ELEVENLABS_VOICE_ID: str = Field(default="21m00Tcm4TlvDq8ikWAM")
 
     # ── Twilio Voice ──────────────────────────────────────
-    TWILIO_ACCOUNT_SID:       str  = Field(default="")
-    TWILIO_AUTH_TOKEN:        str  = Field(default="")
-    TWILIO_PHONE_NUMBER:      str  = Field(default="")
-    TWILIO_WHATSAPP_NUMBER:   str  = Field(default="")
-    VERIFY_TWILIO_SIGNATURE:  bool = Field(default=False)
-    WHATSAPP_MAX_PARTS:       int  = Field(default=1)
+    TWILIO_ACCOUNT_SID:      str  = Field(default="")
+    TWILIO_AUTH_TOKEN:       str  = Field(default="")
+    TWILIO_PHONE_NUMBER:     str  = Field(default="")
+    TWILIO_WHATSAPP_NUMBER:  str  = Field(default="")
+    VERIFY_TWILIO_SIGNATURE: bool = Field(default=False)
+    WHATSAPP_MAX_PARTS:      int  = Field(default=1)
 
     # ── Meta WhatsApp Cloud API ───────────────────────────
-    META_WA_VERIFY_TOKEN:   str = Field(default="")
-    META_WA_ACCESS_TOKEN:   str = Field(default="")
+    META_WA_VERIFY_TOKEN:    str = Field(default="")
+    META_WA_ACCESS_TOKEN:    str = Field(default="")
     META_WA_PHONE_NUMBER_ID: str = Field(default="")
-    META_WABA_ID:           str = Field(default="")
-    META_GRAPH_API_VERSION: str = Field(default="v20.0")
+    META_WABA_ID:            str = Field(default="")
+    META_GRAPH_API_VERSION:  str = Field(default="v20.0")
 
     # ── LiveKit ───────────────────────────────────────────
-    LIVEKIT_URL:        str = Field(default="")
-    LIVEKIT_API_KEY:    str = Field(default="")
-    LIVEKIT_API_SECRET: str = Field(default="")
-    CALL_BASE_URL:      str = Field(default="")
+    LIVEKIT_URL:         str = Field(default="")
+    LIVEKIT_API_KEY:     str = Field(default="")
+    LIVEKIT_API_SECRET:  str = Field(default="")
+    CALL_BASE_URL:       str = Field(default="")
     LIVEKIT_WORKER_PORT: int = Field(default=0)
 
     # ── Conversation Memory ───────────────────────────────
@@ -111,9 +92,9 @@ class Settings(BaseSettings):
     API_KEY_REQUIRED: bool = Field(default=False)
 
     # ── Logging ───────────────────────────────────────────
-    LOG_LEVEL:        str = Field(default="INFO")
-    LOG_FILE:         str = Field(default="hotel_ai.log")
-    LOG_MAX_SIZE_MB:  int = Field(default=50)
+    LOG_LEVEL:       str = Field(default="INFO")
+    LOG_FILE:        str = Field(default="hotel_ai.log")
+    LOG_MAX_SIZE_MB: int = Field(default=50)
     LOG_BACKUP_COUNT: int = Field(default=5)
 
     # ── Feature Flags ─────────────────────────────────────
@@ -125,9 +106,9 @@ class Settings(BaseSettings):
     BOOKING_REMINDER_POLL_MINUTES:   int  = Field(default=30)
 
     class Config:
-        env_file            = str(Path(__file__).resolve().parent / ".env")
-        env_file_encoding   = "utf-8"
-        extra               = "ignore"   # silently ignore extra .env keys
+        env_file          = str(Path(__file__).resolve().parent / ".env")
+        env_file_encoding = "utf-8"
+        extra             = "ignore"
 
 
 @lru_cache()

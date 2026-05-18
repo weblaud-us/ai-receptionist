@@ -4,38 +4,37 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI Application                       │
+│                    FastAPI Application                      │
 │  main.py  (uvicorn, lifespan, routers, middleware)          │
-│                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │  WhatsApp   │  │    Voice     │  │   Admin REST +   │   │
-│  │  Handlers   │  │   Twilio/   │  │   WebSocket API  │   │
-│  │  (Twilio +  │  │   LiveKit)  │  │   /admin/ws      │   │
-│  │   Meta)     │  │             │  │                  │   │
-│  └──────┬──────┘  └──────┬──────┘  └────────┬─────────┘   │
-│         │                │                  │              │
-│         └────────────────┴──────────────────┘              │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐   ┌──────────────────┐    │
+│  │  WhatsApp   │  │    Voice    │   │   Admin REST +   │    │
+│  │  Handlers   │  │   Twilio/   │   │   WebSocket API  │    │
+│  │  (Twilio +  │  │   LiveKit)  │   │   /admin/ws      │    │
+│  │   Meta)     │  │             │   │                  │    │
+│  └──────┬──────┘  └──────┬──────┘   └────────┬─────────┘    │
+│         │                │                  │               │
+│         └────────────────┴──────────────────┘               │
 │                          │                                  │
-│              ┌───────────▼───────────┐                     │
-│              │     AI Agent (LLM)    │                     │
-│              │  OpenAI / Gemini /    │                     │
-│              │  LM Studio            │                     │
-│              └───────────┬───────────┘                     │
+│              ┌───────────▼───────────┐                      │
+│              │     AI Agent (LLM)    │                      │
+│              │     OpenAI GPT-4o     │                      │
+│              └───────────┬───────────┘                      │
 │                          │                                  │
-│              ┌───────────▼───────────┐                     │
-│              │   Tool Executor       │                     │
-│              │  check_availability   │                     │
-│              │  create_booking       │                     │
-│              │  cancel_booking       │                     │
-│              └───────────┬───────────┘                     │
+│              ┌───────────▼───────────┐                      │
+│              │   Tool Executor       │                      │
+│              │  check_availability   │                      │
+│              │  create_booking       │                      │
+│              │  cancel_booking       │                      │
+│              └───────────┬───────────┘                      │
 │                          │                                  │
-│              ┌───────────▼───────────┐                     │
-│              │      MongoDB          │                     │
-│              │  bookings / rooms /   │                     │
-│              │  conversations /      │                     │
-│              │  knowledge_items /    │                     │
-│              │  agent_settings       │                     │
-│              └───────────────────────┘                     │
+│              ┌───────────▼───────────┐                      │
+│              │      MongoDB          │                      │
+│              │  bookings / rooms /   │                      │
+│              │  conversations /      │                      │
+│              │  knowledge_items /    │                      │
+│              │  agent_settings       │                      │
+│              └───────────────────────┘                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 

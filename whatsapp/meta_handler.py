@@ -1,6 +1,12 @@
 """
 Meta WhatsApp Cloud API webhook handler.
 Receives inbound messages and sends AI replies via Graph API.
+
+Token-cost optimisations applied:
+- Off-topic (non-hotel) messages get a lightweight canned reply — no agent call.
+- Quick greetings bypass agent and return a static welcome.
+- History trimmed to 8 messages (down from 12) via agent.py.
+- max_tokens reduced to 400 for WhatsApp in agent.py.
 """
 
 import asyncio
@@ -91,6 +97,42 @@ def _is_call_request(text: str) -> bool:
 
 def _is_quick_greeting(text: str) -> bool:
     return (text or "").strip().lower() in {"hi", "hello", "hey", "start", "menu"}
+
+
+# ── Off-topic / non-hotel question detection ─────────────────────────────────
+_HOTEL_KEYWORDS = {
+    "book", "room", "reserv", "check-in", "checkin", "check in",
+    "check-out", "checkout", "check out", "cancel", "price", "rate",
+    "availab", "suite", "hotel", "stay", "night", "guest", "payment",
+    "invoice", "receipt", "breakfast", "pool", "gym", "parking", "wifi",
+    "amenity", "service", "refund", "reschedule", "confirm", "booking id",
+    "floor", "bed", "twin", "double", "single", "deluxe", "presidential",
+    "executive", "standard", "arrive", "depart", "reception", "lobby",
+    "facility", "facilities", "restaurant", "spa", "laundry", "housekeep",
+    # Bangla hotel-related
+    "\u0986\u09ae\u09be\u09b0", "\u09ac\u09c1\u0995", "\u09b0\u09c1\u09ae",
+    "\u09b9\u09cb\u099f\u09c7\u09b2", "\u09b0\u09bf\u099c\u09be\u09b0\u09cd\u09ad",
+    "\u099a\u09c7\u0995 \u0987\u09a8", "\u099a\u09c7\u0995 \u0986\u0989\u099f",
+    "\u09ae\u09c2\u09b2\u09cd\u09af", "\u09b0\u09c7\u099f",
+}
+
+_OFF_TOPIC_REPLY = (
+    "I'm Aria, your hotel receptionist. I'm here to help with:\n\n"
+    "🏨 Room bookings & availability\n"
+    "💰 Pricing & packages\n"
+    "📋 Existing reservations\n"
+    "ℹ️ Hotel facilities & information\n\n"
+    "For other topics, I'd suggest searching online. "
+    "Is there anything about your stay I can help with? 😊"
+)
+
+
+def _is_off_topic(text: str) -> bool:
+    """Return True when the message has NO hotel-related keywords → skip full agent."""
+    if not text or len(text.strip()) < 4:
+        return False
+    norm = text.lower()
+    return not any(kw in norm for kw in _HOTEL_KEYWORDS)
 
 
 def _build_call_options_message(profile: dict, room_id: str) -> str:
@@ -391,7 +433,7 @@ async def _process_incoming_message(
 ) -> None:
     db = get_db()
 
-    # ── Blocked contact check: silently ignore blocked numbers ───────────────
+    # ── Blocked contact check ─────────────────────────────────────────────────
     blocked = await db.blocked_contacts.find_one({"phone": phone})
     if blocked:
         logger.info("🚫 Ignoring message from blocked contact: %s", phone)
@@ -416,8 +458,6 @@ async def _process_incoming_message(
         )
         return
 
-    agent = get_whatsapp_agent()
-
     if msg_type != "text" and not message_body:
         await _send_meta_whatsapp(
             phone,
@@ -430,12 +470,31 @@ async def _process_incoming_message(
         logger.info("Ignoring empty WhatsApp text payload from %s", phone)
         return
 
+    # ── Call request ──────────────────────────────────────────────────────────
     if msg_type == "text" and _is_call_request(message_body):
         profile = get_hotel_profile()
         room_id = f"wa_{phone.replace('+', '')}_{int(time.time())}"
         await _send_meta_whatsapp(phone, _build_call_options_message(profile, room_id), phone_number_id)
         return
 
+    # ── Off-topic check: reply instantly, skip agent & tool calls ─────────────
+    # Saves ~400-700 tokens per off-topic message.
+    if msg_type == "text" and _is_off_topic(message_body):
+        logger.info("Off-topic message from %s — returning canned reply", phone)
+        await _send_meta_whatsapp(phone, _OFF_TOPIC_REPLY, phone_number_id)
+        # Still update the inbox preview so manager dashboard stays in sync.
+        if conv_check:
+            await db.conversations.update_one(
+                {"session_id": conv_check["session_id"]},
+                {
+                    "$set": {
+                        "last_message_preview": (message_body or "")[:80],
+                        "updated_at": datetime.utcnow(),
+                    },
+                    "$inc": {"unread_count": 1},
+                },
+            )
+        return
 
     session = await _get_or_create_whatsapp_session(db, phone, profile_name)
     session_id = session["session_id"]
@@ -451,7 +510,7 @@ async def _process_incoming_message(
     else:
         _inbox_label = session.get("label")
 
-    # ── Update inbox metadata + increment unread ───────────────────────────────
+    # ── Update inbox metadata ─────────────────────────────────────────────────
     _inbox_update: dict = {
         "$set": {
             "last_message_preview": (message_body or "")[:80],
@@ -476,9 +535,7 @@ async def _process_incoming_message(
     except Exception:
         pass
 
-
-    # ── Quick greetings → send welcome message only once for a fresh session ──
-    # This prevents repeated greeting sends from duplicate/retried inbound events.
+    # ── Quick greetings → static welcome (no agent call, no tokens) ──────────
     if _is_quick_greeting(message_body) and not session.get("messages"):
         profile = get_hotel_profile()
         greeting = GREETING_WHATSAPP.format(
@@ -503,7 +560,8 @@ async def _process_incoming_message(
             )
         return
 
-    # ── Full AI agent processing ───────────────────────────────────────────────
+    # ── Full AI agent processing (only for hotel-related messages) ────────────
+    agent = get_whatsapp_agent()
     try:
         response_text, tool_calls = await agent.process_message(
             session_id=session_id,

@@ -1,7 +1,7 @@
 """
 Speech-to-Text (STT) and Text-to-Speech (TTS)
-OpenAI Whisper STT + ElevenLabs TTS only.
-Local/offline models removed for clean production code.
+STT  : OpenAI Whisper
+TTS  : ElevenLabs ONLY  (output_format="ulaw_8000" → no ffmpeg, no audioop)
 """
 import io
 import logging
@@ -62,13 +62,25 @@ class OpenAIWhisperSTT(BaseSTT):
 
 
 # ─────────────────────────────────────────────
-# TTS — Text to Speech
+# TTS — ElevenLabs Only
 # ─────────────────────────────────────────────
 
 class BaseTTS(ABC):
     @abstractmethod
     async def synthesize(self, text: str) -> bytes:
+        """Return raw 8kHz mulaw bytes ready for Twilio."""
         pass
+
+    async def prewarm(self, phrases: list[str]) -> dict[str, bytes]:
+        """Pre-synthesise a list of short phrases. Returns {text: mulaw_bytes}."""
+        cache: dict[str, bytes] = {}
+        for phrase in phrases:
+            try:
+                cache[phrase] = await self.synthesize(phrase)
+                logger.info("🔥 Pre-warmed TTS: %s", phrase[:60])
+            except Exception as e:
+                logger.warning("Prewarm failed for '%s': %s", phrase, e)
+        return cache
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
         audio = await self.synthesize(text)
@@ -78,34 +90,44 @@ class BaseTTS(ABC):
 
 
 class ElevenLabsTTS(BaseTTS):
-    """ElevenLabs — most natural human-like voice."""
+    """
+    ElevenLabs TTS — primary and only voice provider.
+    output_format='ulaw_8000' → returns 8kHz mulaw directly.
+    No ffmpeg. No audioop. Zero conversion overhead.
+    """
 
     def __init__(self):
         from elevenlabs import AsyncElevenLabs
-        self.client = AsyncElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
+        if not settings.ELEVENLABS_API_KEY:
+            raise RuntimeError("ELEVENLABS_API_KEY is not set in .env")
+        if not settings.ELEVENLABS_VOICE_ID:
+            raise RuntimeError("ELEVENLABS_VOICE_ID is not set in .env")
+        self.client   = AsyncElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
         self.voice_id = settings.ELEVENLABS_VOICE_ID
-        logger.info("🔊 TTS: ElevenLabs (voice: %s)", self.voice_id)
+        logger.info("🔊 TTS: ElevenLabs (voice_id=%s)", self.voice_id)
 
     async def synthesize(self, text: str) -> bytes:
+        """Returns 8kHz mulaw bytes — Twilio ready, no conversion needed."""
         if not text:
             return b""
         try:
-            audio = self.client.text_to_speech.convert(
+            audio_iter = self.client.text_to_speech.convert(
                 voice_id=self.voice_id,
                 text=text,
                 model_id="eleven_turbo_v2",
-                output_format="ulaw_8000",
+                output_format="ulaw_8000",   # ← mulaw directly, no ffmpeg ever
             )
             chunks = []
-            async for chunk in audio:
+            async for chunk in audio_iter:
                 chunks.append(chunk)
             return b"".join(chunks)
         except Exception as e:
             logger.error("ElevenLabs TTS error: %s", e, exc_info=True)
-            # Fallback to OpenAI TTS if ElevenLabs fails
-            return await _openai_tts_fallback(text)
+            return b""
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
+        if not text:
+            return
         try:
             async for chunk in self.client.text_to_speech.convert(
                 voice_id=self.voice_id,
@@ -116,59 +138,6 @@ class ElevenLabsTTS(BaseTTS):
                 yield chunk
         except Exception as e:
             logger.error("ElevenLabs stream error: %s", e)
-            audio = await _openai_tts_fallback(text)
-            yield audio
-
-
-class OpenAITTS(BaseTTS):
-    """OpenAI TTS — fallback when ElevenLabs is not configured."""
-
-    def __init__(self):
-        from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.voice = getattr(settings, "OPENAI_TTS_VOICE", "shimmer")
-        self.model = getattr(settings, "OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-        logger.info("🔊 TTS: OpenAI (%s / %s)", self.model, self.voice)
-
-    async def synthesize(self, text: str) -> bytes:
-        if not text:
-            return b""
-        try:
-            response = await self.client.audio.speech.create(
-                model=self.model,
-                voice=self.voice,
-                input=text,
-                response_format="mp3",
-            )
-            return response.content
-        except Exception as e:
-            logger.error("OpenAI TTS error: %s", e, exc_info=True)
-            return b""
-
-    async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
-        async with self.client.audio.speech.with_streaming_response.create(
-            model=self.model, voice=self.voice, input=text, response_format="mp3",
-        ) as r:
-            async for chunk in r.iter_bytes(chunk_size=4096):
-                yield chunk
-
-
-async def _openai_tts_fallback(text: str) -> bytes:
-    """Emergency fallback using OpenAI TTS."""
-    if not settings.OPENAI_API_KEY:
-        return b""
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        voice = getattr(settings, "OPENAI_TTS_VOICE", "shimmer")
-        model = getattr(settings, "OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-        response = await client.audio.speech.create(
-            model=model, voice=voice, input=text, response_format="mp3",
-        )
-        return response.content
-    except Exception as e:
-        logger.error("OpenAI TTS fallback failed: %s", e)
-        return b""
 
 
 # ─────────────────────────────────────────────
@@ -194,26 +163,5 @@ def get_stt() -> BaseSTT:
 def get_tts() -> BaseTTS:
     global _tts_instance
     if _tts_instance is None:
-        if settings.ELEVENLABS_API_KEY and settings.ELEVENLABS_VOICE_ID:
-            try:
-                _tts_instance = ElevenLabsTTS()
-            except (ModuleNotFoundError, ImportError) as e:
-                if settings.OPENAI_API_KEY:
-                    logger.warning(
-                        "ElevenLabs unavailable (%s) — falling back to OpenAI TTS",
-                        e,
-                    )
-                    _tts_instance = OpenAITTS()
-                else:
-                    raise RuntimeError(
-                        "ELEVENLABS_* is configured but elevenlabs package is not importable. "
-                        "Install elevenlabs or set OPENAI_API_KEY for fallback."
-                    ) from e
-        elif settings.OPENAI_API_KEY:
-            logger.warning("ElevenLabs not configured — using OpenAI TTS as fallback")
-            _tts_instance = OpenAITTS()
-        else:
-            raise RuntimeError(
-                "No TTS configured. Set ELEVENLABS_API_KEY or OPENAI_API_KEY in .env"
-            )
+        _tts_instance = ElevenLabsTTS()
     return _tts_instance
