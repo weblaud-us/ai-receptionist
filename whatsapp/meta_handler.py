@@ -141,6 +141,22 @@ _OFF_TOPIC_REPLIES = [
     "Sorry sir, I'm the hotel receptionist so I can only help with hotel-related questions. Feel free to ask about room bookings, pricing, or availability!",
 ]
 
+_NAME_QUESTION_KEYWORDS = [
+    "your name", "what is your name", "what's your name", "who are you", "who is this",
+    "receptionist name", "name of receptionist", "front desk name", "your full name",
+    "apnar nam", "apnar naam", "tomar nam", "tomar naam", "nam ki",
+    "apnar nam ki", "tomar nam ki",
+    "আপনার নাম", "আপনার নাম কী", "তোমার নাম", "নাম কী",
+    "রিসেপশনিস্টের নাম", "রিসেপশনের নাম",
+]
+
+
+def _is_name_question(text: str) -> bool:
+    norm = (text or "").strip().lower()
+    if not norm:
+        return False
+    return any(k in norm for k in _NAME_QUESTION_KEYWORDS)
+
 
 def _is_off_topic(text: str) -> bool:
     """Return True when the message has NO hotel-related keywords → skip full agent."""
@@ -578,7 +594,16 @@ async def _process_incoming_message(
     # Saves ~400-700 tokens per off-topic message.
     if msg_type == "text" and _is_off_topic(message_body):
         import random
-        off_reply = random.choice(_OFF_TOPIC_REPLIES)
+        profile = get_hotel_profile()
+        if _is_name_question(message_body):
+            receptionist_name = (profile.get("receptionist_name") or settings.RECEPTIONIST_NAME or "Aria").strip()
+            hotel_name = (profile.get("name") or settings.HOTEL_NAME or "the hotel").strip()
+            off_reply = (
+                f"Sir, my name is {receptionist_name}, the front desk receptionist at {hotel_name}. "
+                "How may I assist you with your stay today?"
+            )
+        else:
+            off_reply = random.choice(_OFF_TOPIC_REPLIES)
         logger.info("Off-topic message from %s — returning canned reply", phone)
         await _send_meta_whatsapp(phone, off_reply, phone_number_id)
         await db.conversations.update_one(
