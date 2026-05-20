@@ -57,19 +57,19 @@ VOICE_BREVITY_REMINDER = (
 def build_greeting_whatsapp(hotel_name: str, receptionist_name: str) -> str:
     """Dynamic greeting — does NOT assume gender."""
     return (
-        f"Hello! Welcome to {hotel_name}.\n"
-        f"I am {receptionist_name} from the front desk.\n"
-        "I can help with room bookings, pricing, existing reservations, and hotel information.\n\n"
-        "How may I assist you today?"
+        f"Hello sir, welcome to {hotel_name}.\n"
+        f"This is {receptionist_name} from the front desk.\n"
+        "I can help with room booking, pricing, reservation details, and hotel information.\n\n"
+        "How may I assist you today, sir?"
     )
 
 
 # Keep template for backward compat (used in some handlers)
 GREETING_WHATSAPP = (
-    "Hello! Welcome to {hotel_name}.\n"
-    "I am {receptionist_name} from the front desk.\n"
-    "I can help with room bookings, pricing, existing reservations, and hotel information.\n\n"
-    "How may I assist you today?"
+    "Hello sir, welcome to {hotel_name}.\n"
+    "This is {receptionist_name} from the front desk.\n"
+    "I can help with room booking, pricing, reservation details, and hotel information.\n\n"
+    "How may I assist you today, sir?"
 )
 
 BOOKING_CONFIRMATION_WHATSAPP = (

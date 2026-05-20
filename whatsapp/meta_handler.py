@@ -88,15 +88,34 @@ def _is_call_request(text: str) -> bool:
         return False
     norm = text.lower()
     keywords = [
-        "voice call", "talk", "audio call", "phone call",
-        "want to call", "can i call", "give me a call", "let me call",
+        "voice call", "audio call", "phone call",
+        "want to call", "want call", "i want call",
+        "can i call", "give me a call", "let me call",
+        "call you", "call me", "wanna call",
+        "speak to", "speak with", "talk to you",
     ]
-    bangla = ["\u0995\u09b2", "\u0995\u09a5\u09be", "\u09ad\u09af\u09bc\u09c7\u09b8", "\u0995\u09a5\u09be \u09ac\u09b2", "\u0995\u09b2 \u09a6\u09bf\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u0995\u09b0\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u09a8\u09ae\u09cd\u09ac\u09b0", "\u0995\u09b2 \u0995\u09b0\u09ac"]
+    bangla = ["\u0995\u09b2", "\u0995\u09a5\u09be \u09ac\u09b2", "\u0995\u09b2 \u09a6\u09bf\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u0995\u09b0\u09a4\u09c7", "\u09ab\u09cb\u09a8 \u09a8\u09ae\u09cd\u09ac\u09b0", "\u0995\u09b2 \u0995\u09b0\u09ac", "\u0995\u09a5\u09be \u09ac\u09b2\u09a4\u09c7"]
     return any(k in norm for k in keywords) or any(k in norm for k in bangla)
 
 
+_QUICK_GREETING_WORDS = {
+    "hi", "hello", "hey", "start", "menu", "helo", "hii", "hiii",
+    "good morning", "good afternoon", "good evening", "good night",
+    "greetings", "salaam", "salam",
+}
+
+_RETURNING_GUEST_REPLIES = [
+    "Hello! \U0001f60a How can I help you today?",
+    "Good to hear from you! How may I assist you?",
+    "Hi there! What can I help you with today?",
+    "Welcome back! How may I assist you?",
+    "Hello! What can I do for you today?",
+]
+
+
 def _is_quick_greeting(text: str) -> bool:
-    return (text or "").strip().lower() in {"hi", "hello", "hey", "start", "menu"}
+    norm = (text or "").strip().lower()
+    return norm in _QUICK_GREETING_WORDS
 
 
 # ── Off-topic / non-hotel question detection ─────────────────────────────────
@@ -116,21 +135,19 @@ _HOTEL_KEYWORDS = {
     "\u09ae\u09c2\u09b2\u09cd\u09af", "\u09b0\u09c7\u099f",
 }
 
-_OFF_TOPIC_REPLY = (
-    "I'm Aria, your hotel receptionist. I'm here to help with:\n\n"
-    "🏨 Room bookings & availability\n"
-    "💰 Pricing & packages\n"
-    "📋 Existing reservations\n"
-    "ℹ️ Hotel facilities & information\n\n"
-    "For other topics, I'd suggest searching online. "
-    "Is there anything about your stay I can help with? 😊"
-)
+_OFF_TOPIC_REPLIES = [
+    "Sorry sir, I am the hotel receptionist and can only assist with hotel-related queries — room bookings, availability, pricing, or reservations. May I help you with any of those?",
+    "Apologies sir, that's outside my area. I'm here for hotel bookings, room availability, pricing, and reservation queries. Is there anything about your stay I can help with?",
+    "Sorry sir, I'm the hotel receptionist so I can only help with hotel-related questions. Feel free to ask about room bookings, pricing, or availability!",
+]
 
 
 def _is_off_topic(text: str) -> bool:
     """Return True when the message has NO hotel-related keywords → skip full agent."""
     if not text or len(text.strip()) < 4:
         return False
+    if _is_quick_greeting(text):
+        return False  # greetings are handled separately, never off-topic
     norm = text.lower()
     return not any(kw in norm for kw in _HOTEL_KEYWORDS)
 
@@ -477,25 +494,6 @@ async def _process_incoming_message(
         await _send_meta_whatsapp(phone, _build_call_options_message(profile, room_id), phone_number_id)
         return
 
-    # ── Off-topic check: reply instantly, skip agent & tool calls ─────────────
-    # Saves ~400-700 tokens per off-topic message.
-    if msg_type == "text" and _is_off_topic(message_body):
-        logger.info("Off-topic message from %s — returning canned reply", phone)
-        await _send_meta_whatsapp(phone, _OFF_TOPIC_REPLY, phone_number_id)
-        # Still update the inbox preview so manager dashboard stays in sync.
-        if conv_check:
-            await db.conversations.update_one(
-                {"session_id": conv_check["session_id"]},
-                {
-                    "$set": {
-                        "last_message_preview": (message_body or "")[:80],
-                        "updated_at": datetime.utcnow(),
-                    },
-                    "$inc": {"unread_count": 1},
-                },
-            )
-        return
-
     session = await _get_or_create_whatsapp_session(db, phone, profile_name)
     session_id = session["session_id"]
 
@@ -535,13 +533,29 @@ async def _process_incoming_message(
     except Exception:
         pass
 
-    # ── Quick greetings → static welcome (no agent call, no tokens) ──────────
-    if _is_quick_greeting(message_body) and not session.get("messages"):
+    # ── Quick greetings → human-like response (new & returning guests) ──────────
+    if msg_type == "text" and _is_quick_greeting(message_body):
+        import random
         profile = get_hotel_profile()
-        greeting = GREETING_WHATSAPP.format(
-            hotel_name=profile["name"],
-            receptionist_name=profile["receptionist_name"],
-        )
+        has_history = bool(session.get("messages"))
+        if has_history:
+            # Returning guest — vary the response so it doesn’t feel like a bot
+            guest_name = profile_name or (session.get("context") or {}).get("guest_name", "")
+            name_part = f" {guest_name}" if guest_name else ""
+            options = [
+                f"Hello{name_part}! \U0001f60a How can I help you today?",
+                f"Good to hear from you{name_part}! How may I assist you?",
+                f"Hi{name_part}! What can I help you with today?",
+                f"Welcome back{name_part}! How may I assist you?",
+                f"Hello{name_part}! What can I do for you today?",
+            ]
+            greeting = random.choice(options)
+        else:
+            # First-time guest — send full welcome with capabilities list
+            greeting = GREETING_WHATSAPP.format(
+                hotel_name=profile["name"],
+                receptionist_name=profile["receptionist_name"],
+            )
         sent = await _send_meta_whatsapp(phone, greeting, phone_number_id)
         if sent:
             await db.conversations.update_one(
@@ -558,6 +572,25 @@ async def _process_incoming_message(
                     "$set": {"updated_at": datetime.utcnow()},
                 },
             )
+        return
+
+    # ── Off-topic check: reply instantly, skip agent & tool calls ─────────────
+    # Saves ~400-700 tokens per off-topic message.
+    if msg_type == "text" and _is_off_topic(message_body):
+        import random
+        off_reply = random.choice(_OFF_TOPIC_REPLIES)
+        logger.info("Off-topic message from %s — returning canned reply", phone)
+        await _send_meta_whatsapp(phone, off_reply, phone_number_id)
+        await db.conversations.update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "last_message_preview": (message_body or "")[:80],
+                    "updated_at": datetime.utcnow(),
+                },
+                "$inc": {"unread_count": 1},
+            },
+        )
         return
 
     # ── Full AI agent processing (only for hotel-related messages) ────────────
