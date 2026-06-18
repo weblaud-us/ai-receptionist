@@ -221,68 +221,9 @@ class Conversation(BaseModel):
     status: ConversationStatus = ConversationStatus.ACTIVE
     booking_ids: List[str] = []           # bookings made in this conversation
     duration_sec: Optional[float] = None
-    # ── Handover (AI ↔ Human Manager) ──────────────────────
-    handover_active: bool = False          # True = manager is handling this chat
-    handover_at: Optional[datetime] = None
-    handover_note: Optional[str] = None
-    guest_name: Optional[str] = None       # cached for inbox display
-    last_message_preview: Optional[str] = None
-    unread_count: int = 0
-    label: Optional[str] = None           # "Booking", "Info", "Cancellation", etc.
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
-
-    class Config:
-        populate_by_name = True
-
-
-# ─────────────────────────────────────────────
-# AGENT SETTINGS MODEL
-# ─────────────────────────────────────────────
-
-class BusinessHours(BaseModel):
-    enabled: bool = True
-    open: str = "08:00"
-    close: str = "22:00"
-
-
-class AgentSettings(BaseModel):
-    id: str = Field(default="singleton", alias="_id")
-    greeting_message: str = "Hello! Welcome to our hotel. I'm Aria, your AI concierge. How can I assist you today?"
-    personality: str = "Professional & Formal"          # Professional & Formal | Friendly & Casual | Luxury & Premium
-    response_language: str = "All languages (Auto-detect)"
-    agent_active: bool = True
-    auto_booking_confirmation: bool = True
-    guest_reminders: bool = True
-    notify_on_escalation: bool = False
-    away_mode: bool = False
-    escalation_email: str = ""
-    business_hours: Dict[str, BusinessHours] = Field(default_factory=lambda: {
-        "mon": BusinessHours(), "tue": BusinessHours(), "wed": BusinessHours(),
-        "thu": BusinessHours(), "fri": BusinessHours(),
-        "sat": BusinessHours(open="08:00", close="22:00"),
-        "sun": BusinessHours(enabled=False, open="", close=""),
-    })
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    class Config:
-        populate_by_name = True
-
-
-# ─────────────────────────────────────────────
-# KNOWLEDGE BASE MODEL
-# ─────────────────────────────────────────────
-
-class KnowledgeItem(BaseModel):
-    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
-    title: str
-    content: str
-    tags: List[str] = []
-    is_active: bool = True
-    query_count: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         populate_by_name = True

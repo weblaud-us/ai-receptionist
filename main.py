@@ -74,15 +74,11 @@ except Exception as e:
 
 try:
     from routers.api import bookings_router, rooms_router
-    from routers.admin import admin_router
-    from routers.admin_extras import admin_extras_router
     logger.info("[OK] API routers imported")
 except Exception as e:
     logger.error(f"[FAIL] Failed to import API routers: {e}", exc_info=True)
     bookings_router     = None
     rooms_router        = None
-    admin_router        = None
-    admin_extras_router = None
 try:
     from routers.livekit import livekit_router
     logger.info("[OK] LiveKit router imported")
@@ -182,19 +178,6 @@ if rooms_router:
     logger.info("Rooms router registered")
 else:
     logger.warning("Rooms router NOT registered")
-
-if admin_router:
-    app.include_router(admin_router)
-    logger.info("Admin router registered")
-else:
-    logger.warning("Admin router NOT registered")
-
-try:
-    if admin_extras_router:
-        app.include_router(admin_extras_router)
-        logger.info("Admin extras router registered")
-except Exception as _e:
-    logger.warning("Admin extras router NOT registered: %s", _e)
 
 if livekit_router:
     app.include_router(livekit_router)

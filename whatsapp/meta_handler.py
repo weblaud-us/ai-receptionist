@@ -9,7 +9,6 @@ Token-cost optimisations applied:
 - max_tokens reduced to 400 for WhatsApp in agent.py.
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -500,31 +499,6 @@ async def _process_incoming_message(
 ) -> None:
     db = get_db()
 
-    # ── Blocked contact check ─────────────────────────────────────────────────
-    blocked = await db.blocked_contacts.find_one({"phone": phone})
-    if blocked:
-        logger.info("🚫 Ignoring message from blocked contact: %s", phone)
-        return
-
-    # ── Handover check: if manager is handling, AI stays silent ──────────────
-    conv_check = await db.conversations.find_one(
-        {"phone": phone, "channel": "whatsapp"},
-        sort=[("updated_at", -1)],
-    )
-    if conv_check and conv_check.get("handover_active"):
-        logger.info("Handover active for %s — AI skipping response", phone)
-        await db.conversations.update_one(
-            {"session_id": conv_check["session_id"]},
-            {
-                "$inc": {"unread_count": 1},
-                "$set": {
-                    "last_message_preview": (message_body or "")[:80],
-                    "updated_at": datetime.utcnow(),
-                },
-            },
-        )
-        return
-
     if msg_type != "text" and not message_body:
         await _send_meta_whatsapp(
             phone,
@@ -546,42 +520,6 @@ async def _process_incoming_message(
 
     session = await _get_or_create_whatsapp_session(db, phone, profile_name)
     session_id = session["session_id"]
-
-    # ── Detect label from message intent ──────────────────────────────────────
-    body_lower = (message_body or "").lower()
-    if any(k in body_lower for k in ["book", "reserv", "room", "suite", "check-in", "checkin"]):
-        _inbox_label = "Booking"
-    elif any(k in body_lower for k in ["cancel", "refund"]):
-        _inbox_label = "Cancellation"
-    elif any(k in body_lower for k in ["info", "price", "avail", "?", "how", "what"]):
-        _inbox_label = "Info"
-    else:
-        _inbox_label = session.get("label")
-
-    # ── Update inbox metadata ─────────────────────────────────────────────────
-    _inbox_update: dict = {
-        "$set": {
-            "last_message_preview": (message_body or "")[:80],
-            "guest_name": profile_name or session.get("context", {}).get("guest_name"),
-            "updated_at": datetime.utcnow(),
-        },
-        "$inc": {"unread_count": 1},
-    }
-    if _inbox_label:
-        _inbox_update["$set"]["label"] = _inbox_label
-    await db.conversations.update_one({"session_id": session_id}, _inbox_update)
-
-    # ── Broadcast real-time update to dashboard WebSocket clients ─────────────
-    try:
-        from routers.admin_extras import broadcast_new_message
-        asyncio.create_task(broadcast_new_message(
-            session_id=session_id,
-            phone=phone,
-            preview=(message_body or "")[:80],
-            label=_inbox_label,
-        ))
-    except Exception:
-        pass
 
     # ── Quick greetings & casual pleasantries → human-like warm response ─────
     if msg_type == "text" and _is_quick_greeting(message_body):
@@ -642,13 +580,7 @@ async def _process_incoming_message(
         await _send_meta_whatsapp(phone, off_reply, phone_number_id)
         await db.conversations.update_one(
             {"session_id": session_id},
-            {
-                "$set": {
-                    "last_message_preview": (message_body or "")[:80],
-                    "updated_at": datetime.utcnow(),
-                },
-                "$inc": {"unread_count": 1},
-            },
+            {"$set": {"updated_at": datetime.utcnow()}},
         )
         return
 

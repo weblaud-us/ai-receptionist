@@ -563,19 +563,6 @@ class HotelToolExecutor:
 
         logger.info(f"✅ Booking created: {booking.booking_id} for {guest_name}")
 
-        # ── Real-time dashboard broadcast ──────────────────────────────────────
-        try:
-            import asyncio
-            from routers.admin_extras import broadcast_new_booking
-            asyncio.create_task(broadcast_new_booking(
-                booking_id=booking.booking_id,
-                guest_name=guest_name,
-                status="confirmed",
-                amount=pricing_data["final_total"],
-            ))
-        except Exception:
-            pass  # non-critical
-
         return {
             "success": True,
             "booking_id": booking.booking_id,
