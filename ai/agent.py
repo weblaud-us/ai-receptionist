@@ -56,20 +56,45 @@ async def create_conversation_with_memory(
         if guest and guest.get("name"):
             guest_name = guest.get("name")
 
-    cutoff   = _get_memory_cutoff()
+    cutoff    = _get_memory_cutoff()
     prev_list = await db.conversations.find(
         {"phone": phone, "updated_at": {"$gte": cutoff}}
     ).sort("updated_at", -1).limit(1).to_list(1)
 
-    prev_doc     = prev_list[0] if prev_list else None
+    prev_doc      = prev_list[0] if prev_list else None
     prev_messages = []
     prev_context  = {}
 
     if prev_doc:
-        prev_context  = prev_doc.get("context", {}) or {}
-        history       = prev_doc.get("messages", []) or []
-        limit         = _get_memory_limit()
-        prev_messages = history[-limit:]
+        prev_context = prev_doc.get("context", {}) or {}
+        history      = prev_doc.get("messages", []) or []
+        limit        = _get_memory_limit()
+
+        # ── Voice calls: NEVER carry over greeting messages from a past session.
+        # Greetings are re-played fresh every call. Carrying them over makes the
+        # LLM think it already introduced itself mid-call and causes re-greetings.
+        if channel == ConversationChannel.VOICE:
+            _greeting_kw = (
+                "thank you for calling", "good day", "from the front desk",
+                "how may i assist", "how may i help you today",
+            )
+            filtered = []
+            first_asst_done = False
+            for m in history:
+                role    = m.get("role", "")
+                content = (m.get("content") or "").lower()
+                if (
+                    role == "assistant"
+                    and not first_asst_done
+                    and any(kw in content for kw in _greeting_kw)
+                ):
+                    first_asst_done = True
+                    continue
+                filtered.append(m)
+            # For voice carry only last 4 exchanges (8 msgs) of real conversation
+            prev_messages = filtered[-8:]
+        else:
+            prev_messages = history[-limit:]
 
     context = ConversationContext(
         guest_phone=phone,
@@ -151,10 +176,10 @@ class HotelAgent:
                 messages=messages,
                 tools=HOTEL_TOOLS,
                 tool_choice="auto",
-                temperature=0.5,
+                temperature=0.7,
                 # Voice: very short answers (1-2 sentences).
                 # WhatsApp: concise but formatted. 400 tokens saves ~40% vs 700.
-                max_tokens=200 if self.is_voice else 400,
+                max_tokens=150 if self.is_voice else 500,
             )
 
             assistant_content = response["content"]
@@ -226,7 +251,7 @@ class HotelAgent:
             checkout_time=hotel["checkout_time"],
             currency=hotel["currency"],
             hotel_phone=contact_phone,
-            context=context,  # Pass context for booking-aware greeting
+            context=context,
         )
         messages = [{"role": "system", "content": system}]
 
@@ -246,29 +271,109 @@ class HotelAgent:
                 ),
             })
 
-        # Voice: last 8 messages. WhatsApp: last 8 messages too — trimmed from
-        # 12 to reduce input tokens while keeping enough booking context.
-        history_limit = 8 if self.is_voice else 8
-        history = conv_doc.get("messages", [])[-history_limit:]
+        # ── Voice: last 6 turns only; WhatsApp: last 8 ────────────────────
+        history_limit = 6 if self.is_voice else 8
+        raw_history   = conv_doc.get("messages", [])
+
+        # For voice: strip old greeting messages from history so the LLM
+        # never sees a stale "Good day, thank you for calling..." as context.
+        # We keep everything EXCEPT the very first assistant message if it
+        # matches the greeting pattern.
+        if self.is_voice:
+            greeting_keywords = (
+                "thank you for calling",
+                "good day",
+                "from the front desk",
+                "how may i assist",
+                "how may i help you today",
+            )
+            history = []
+            first_assistant_skipped = False
+            for m in raw_history:
+                role    = m.get("role", "")
+                content = (m.get("content") or "").lower()
+                if (
+                    role == "assistant"
+                    and not first_assistant_skipped
+                    and any(kw in content for kw in greeting_keywords)
+                ):
+                    first_assistant_skipped = True   # skip ONE greeting
+                    continue
+                history.append(m)
+        else:
+            history = raw_history
+
+        history = history[-history_limit:]
+
         for m in history:
             role, content = m.get("role", "user"), m.get("content", "")
             if role in ("user", "assistant") and content:
                 messages.append({"role": role, "content": content})
 
-        # Periodic voice brevity reminder
-        if self.is_voice and len(history) % 4 == 0:
+        # ── Voice: inject CALL ACTIVE signal so LLM never re-greets ───────
+        if self.is_voice:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "CALL STATUS: ACTIVE. "
+                    "You have already introduced yourself and greeted this caller. "
+                    "Do NOT say hello, welcome, or re-introduce yourself. "
+                    "If the caller says Hi/Hello/How are you — reply only with "
+                    "'How may I help you, sir/ma'am?' and proceed to help immediately. "
+                    "Keep replies to 1-2 sentences. One question per turn."
+                ),
+            })
+
+        # ── Periodic brevity reminder for voice (skip turn 0 & 4 edge) ───
+        # Only inject when history has messages AND at the 4/8/12 mark
+        if self.is_voice and len(history) > 0 and len(history) % 4 == 0:
             messages.append({"role": "system", "content": VOICE_BREVITY_REMINDER})
 
         messages.append({"role": "user", "content": user_message})
         return messages
 
     def _enforce_style(self, text: str) -> str:
-        """Remove AI mentions. Do NOT force-prepend 'Sir' — the LLM handles salutation."""
+        """
+        Post-process LLM reply:
+        - Strip AI/bot self-references
+        - For voice: strip re-greeting openers that the LLM produces despite instructions
+        - Strip robotic out-of-scope refusals
+        - Normalise whitespace
+        """
         if not text:
             return "How may I assist you today?"
-        cleaned = re.sub(r"\bA\.I\.\b|\bAI\b|\bartificial intelligence\b", "", text, flags=re.IGNORECASE)
+
+        cleaned = re.sub(
+            r"\b(A\.I\.|AI|artificial intelligence|language model|chatbot|virtual assistant)\b",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Voice-only: strip re-greeting openers at the START of a response
+        if self.is_voice:
+            re_greeting_patterns = [
+                r"^(Hello|Hi|Good (morning|afternoon|evening|day))[,!.]?\s*(thank you for calling[^.]*\.)?\s*",
+                r"^Welcome to [^.]+\.\s*",
+                r"^(This is|I'?m) \w+ from the front desk[.,]?\s*",
+                r"^Thank you for calling [^.]+\.\s*",
+                r"^(How may I|How can I) (assist|help) you today[,?]?\s*",
+            ]
+            for pat in re_greeting_patterns:
+                cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+
+        # Remove robotic hotel-scope refusals
+        robotic_phrases = [
+            r"that'?s outside my area",
+            r"I'?m only here for hotel",
+            r"I can only (assist|help) with hotel",
+            r"I'?m sorry,? I can only",
+        ]
+        for phrase in robotic_phrases:
+            cleaned = re.sub(phrase, "", cleaned, flags=re.IGNORECASE)
+
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-        return cleaned
+        return cleaned if cleaned else "How may I help you?"
 
     def _extract_fallback_tool_calls(self, content: str) -> Tuple[Optional[List[Dict]], str]:
         """Handle tool calls embedded as text (some models)."""

@@ -73,17 +73,15 @@ class HotelReceptionistAgent(Agent):
     async def on_enter(self) -> None:
         """
         Called by livekit-agents AFTER session.start() completes.
-        This is the CORRECT place to send the initial greeting.
-        FIX: Was calling session.say() after session.start() which caused
-             _update_activity race condition.
+        Greeting is sent ONCE here — the system prompt instructs the LLM
+        never to re-greet on subsequent turns.
         """
         greeting = (
             f"Good day, thank you for calling {settings.HOTEL_NAME}. "
             f"This is {settings.RECEPTIONIST_NAME} from the front desk. "
-            "How may I assist you today, sir?"
+            "How may I assist you today?"
         )
-        logger.info("🗣 on_enter → sending greeting")
-        # session.say() returns SpeechHandle (awaitable) — await it to complete
+        logger.info("🗣 on_enter → sending greeting (once only)")
         await self.session.say(greeting, allow_interruptions=True)
 
     # ── Hotel Tools ───────────────────────────────────────────────────────────
@@ -193,7 +191,7 @@ class HotelReceptionistAgent(Agent):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_system_prompt() -> str:
-    return get_system_prompt(
+    base = get_system_prompt(
         channel="voice",
         hotel_name=settings.HOTEL_NAME,
         receptionist_name=settings.RECEPTIONIST_NAME,
@@ -203,6 +201,15 @@ def _build_system_prompt() -> str:
         currency=settings.HOTEL_CURRENCY,
         hotel_phone=settings.HOTEL_PHONE,
     )
+    # Append a hard no-regreet rule specific to LiveKit (stateless LLM turns)
+    base += (
+        "\n\nCRITICAL — LIVEKIT CALL RULE:\n"
+        "The greeting is played ONCE automatically via on_enter(). "
+        "NEVER repeat 'Good day', 'Thank you for calling', 'This is [name] from the front desk', "
+        "or any hotel welcome introduction again — even if the caller says Hi or Hello. "
+        "Respond to Hi/Hello with only 'How may I help you?' and proceed immediately."
+    )
+    return base
 
 
 def _build_pipeline_session() -> AgentSession:
