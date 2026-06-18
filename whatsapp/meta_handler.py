@@ -99,23 +99,51 @@ def _is_call_request(text: str) -> bool:
 
 
 _QUICK_GREETING_WORDS = {
+    # one-word / short greetings
     "hi", "hello", "hey", "start", "menu", "helo", "hii", "hiii",
+    "greetings", "salaam", "salam", "howdy", "sup", "yo",
+    # time-of-day greetings
     "good morning", "good afternoon", "good evening", "good night",
-    "greetings", "salaam", "salam",
+    # casual "how are you" variants — these are pleasantries, NOT off-topic
+    "how are you", "how are you?", "how r u", "how r u?",
+    "how are u", "how are u?", "hows it going", "how's it going",
+    "how's it going?", "how are you doing", "how are you doing?",
+    "how do you do", "how do you do?",
+    # casual "what's up" variants
+    "what's up", "what's up?", "whats up", "whats up?",
+    "wassup", "wazzup", "sup?",
+    # general openers
+    "ok", "okay", "k", "fine", "yes", "no",
+    "i am here", "i'm here", "present",
 }
 
-_RETURNING_GUEST_REPLIES = [
-    "Hello! \U0001f60a How can I help you today?",
-    "Good to hear from you! How may I assist you?",
-    "Hi there! What can I help you with today?",
-    "Welcome back! How may I assist you?",
-    "Hello! What can I do for you today?",
+# Phrases that are casual conversation — handled naturally, never off-topic
+_CASUAL_CONVERSATION = {
+    "how are you", "how are you?", "how r u", "how r u?",
+    "how are u", "how are u?", "hows it going", "how's it going",
+    "how's it going?", "how are you doing", "how are you doing?",
+    "how do you do", "how do you do?",
+    "what's up", "what's up?", "whats up", "whats up?",
+    "wassup", "wazzup", "sup", "sup?",
+}
+
+_CASUAL_REPLIES = [
+    "I'm doing well, thank you for asking! 😊 How can I help you today?",
+    "All good here, thanks! How may I assist you today?",
+    "I'm great, thanks for asking! What can I do for you today?",
+    "Doing well! How can I help you with your stay today?",
 ]
 
 
 def _is_quick_greeting(text: str) -> bool:
-    norm = (text or "").strip().lower()
-    return norm in _QUICK_GREETING_WORDS
+    norm = (text or "").strip().lower().rstrip("!?.")
+    return norm in _QUICK_GREETING_WORDS or norm.rstrip("?!.") in _QUICK_GREETING_WORDS
+
+
+def _is_casual_conversation(text: str) -> bool:
+    """Casual pleasantries like 'how are you', 'what's up' — respond warmly, not with hotel refusal."""
+    norm = (text or "").strip().lower().rstrip("!?.")
+    return norm in _CASUAL_CONVERSATION
 
 
 # ── Off-topic / non-hotel question detection ─────────────────────────────────
@@ -136,9 +164,9 @@ _HOTEL_KEYWORDS = {
 }
 
 _OFF_TOPIC_REPLIES = [
-    "Sorry sir, I am the hotel receptionist and can only assist with hotel-related queries — room bookings, availability, pricing, or reservations. May I help you with any of those?",
-    "Apologies sir, that's outside my area. I'm here for hotel bookings, room availability, pricing, and reservation queries. Is there anything about your stay I can help with?",
-    "Sorry sir, I'm the hotel receptionist so I can only help with hotel-related questions. Feel free to ask about room bookings, pricing, or availability!",
+    "That's a bit outside what I can help with, but I'm happy to assist with anything about your stay — room bookings, availability, pricing, or reservations. What can I do for you?",
+    "I'm best at helping with hotel-related questions like bookings, room availability, and pricing. Is there anything about your stay I can assist with?",
+    "Happy to help with anything hotel-related! Feel free to ask about room bookings, availability, or pricing. 😊",
 ]
 
 _NAME_QUESTION_KEYWORDS = [
@@ -159,11 +187,17 @@ def _is_name_question(text: str) -> bool:
 
 
 def _is_off_topic(text: str) -> bool:
-    """Return True when the message has NO hotel-related keywords → skip full agent."""
+    """
+    Return True only when the message has NO hotel-related keywords AND
+    is NOT a greeting or casual pleasantry.
+    Greetings/pleasantries like 'how are you', 'what's up' are NEVER off-topic.
+    """
     if not text or len(text.strip()) < 4:
         return False
     if _is_quick_greeting(text):
-        return False  # greetings are handled separately, never off-topic
+        return False
+    if _is_casual_conversation(text):
+        return False
     norm = text.lower()
     return not any(kw in norm for kw in _HOTEL_KEYWORDS)
 
@@ -549,7 +583,7 @@ async def _process_incoming_message(
     except Exception:
         pass
 
-    # ── Quick greetings → human-like response (new & returning guests) ──────────
+    # ── Quick greetings & casual pleasantries → human-like warm response ─────
     if msg_type == "text" and _is_quick_greeting(message_body):
         import random
         profile = get_hotel_profile()
