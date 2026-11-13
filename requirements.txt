@@ -36,6 +36,7 @@ livekit-plugins-elevenlabs>=1.4.5
 livekit-plugins-silero>=1.3.2
 
 # ── Audio Processing ───────────────────────
+audioop-lts>=0.2.1; python_version >= "3.13"   # stdlib audioop was removed in Python 3.13
 # ffmpeg binary required at OS level — do NOT pip install ffmpeg
 # Ubuntu: sudo apt install ffmpeg
 # macOS:  brew install ffmpeg
@@ -43,6 +44,7 @@ livekit-plugins-silero>=1.3.2
 # ── Utilities ──────────────────────────────
 python-dateutil==2.9.0
 pytz==2024.2
+tzdata>=2024.1        # IANA timezones on Windows (hotel timezone, reminders)
 
 # ── Testing ────────────────────────────────
 pytest==7.4.0

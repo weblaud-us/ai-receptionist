@@ -8,7 +8,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -73,12 +73,22 @@ except Exception as e:
     meta_whatsapp_router = None
 
 try:
-    from routers.api import bookings_router, rooms_router
+    from routers.api import bookings_router, rooms_router, calendar_router
     logger.info("[OK] API routers imported")
 except Exception as e:
     logger.error(f"[FAIL] Failed to import API routers: {e}", exc_info=True)
     bookings_router     = None
     rooms_router        = None
+    calendar_router     = None
+
+try:
+    from routers.admin import admin_router
+    logger.info("[OK] Admin router imported")
+except Exception as e:
+    logger.error(f"[FAIL] Failed to import Admin router: {e}", exc_info=True)
+    admin_router = None
+
+from utils.auth import require_admin
 try:
     from routers.livekit import livekit_router
     logger.info("[OK] LiveKit router imported")
@@ -137,10 +147,13 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+_cors_origins = [o.strip() for o in (settings.CORS_ORIGINS or "*").split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    # Dashboard auth uses a Bearer header, not cookies. Credentials are only
+    # allowed when origins are listed explicitly (never with a wildcard).
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -179,6 +192,18 @@ if rooms_router:
 else:
     logger.warning("Rooms router NOT registered")
 
+if calendar_router:
+    app.include_router(calendar_router)
+    logger.info("Public calendar router registered")
+else:
+    logger.warning("Public calendar router NOT registered")
+
+if admin_router:
+    app.include_router(admin_router)
+    logger.info("Admin router registered")
+else:
+    logger.warning("Admin router NOT registered")
+
 if livekit_router:
     app.include_router(livekit_router)
     logger.info("LiveKit router registered")
@@ -210,13 +235,13 @@ async def health():
         db_status = "disconnected"
 
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
         "database": db_status,
         "hotel": settings.HOTEL_NAME,
     }
 
 
-@app.get("/debug/routes", tags=["Debug"])
+@app.get("/debug/routes", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_routes():
     """List all registered routes"""
     routes = []
@@ -230,7 +255,7 @@ async def debug_routes():
     return {"total_routes": len(routes), "routes": sorted(routes, key=lambda x: x["path"])}
 
 
-@app.get("/debug/rooms", tags=["Debug"])
+@app.get("/debug/rooms", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_rooms():
     """Check rooms in database - for debugging"""
     from database.mongodb import get_db
@@ -263,7 +288,7 @@ async def debug_rooms():
         return {"error": str(e)}
 
 
-@app.get("/debug/bookings", tags=["Debug"])
+@app.get("/debug/bookings", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_bookings():
     """Check bookings in database - for debugging"""
     from database.mongodb import get_db

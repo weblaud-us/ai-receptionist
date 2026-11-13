@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     LIVEKIT_API_SECRET:  str = Field(default="")
     CALL_BASE_URL:       str = Field(default="")
     LIVEKIT_WORKER_PORT: int = Field(default=0)
+    LIVEKIT_USE_REALTIME: bool = Field(default=False)
 
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)
@@ -90,6 +91,13 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET:   str  = Field(default="")
     ADMIN_SECRET_KEY: str  = Field(default="change-in-production")
     API_KEY_REQUIRED: bool = Field(default=False)
+
+    # Dashboard / admin API auth (JWT, HS256 signed with SECRET_KEY)
+    ADMIN_USERNAME:       str = Field(default="admin")
+    ADMIN_PASSWORD:       str = Field(default="")      # empty => admin login disabled
+    ADMIN_TOKEN_TTL_MIN:  int = Field(default=480)
+    # Comma-separated list of allowed browser origins, or "*"
+    CORS_ORIGINS:         str = Field(default="*")
 
     # ── Logging ───────────────────────────────────────────
     LOG_LEVEL:       str = Field(default="INFO")

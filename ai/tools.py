@@ -264,7 +264,7 @@ class HotelToolExecutor:
             room_id = str(room.get("_id", ""))
             if room_id not in booked_room_ids:
                 price = room["pricing"]["base_price_per_night"]
-                total = price * nights * (1 + room["pricing"].get("tax_pct", 15) / 100)
+                total = self._price_stay(room["pricing"], nights)["final_total"]
                 available.append({
                     "room_id": room_id,
                     "room_number": room["room_number"],
@@ -414,44 +414,59 @@ class HotelToolExecutor:
         
         return alternatives
 
-    async def get_room_pricing(
-        self,
-        room_type: str,
-        check_in_date: str,
-        check_out_date: str,
-    ) -> Dict:
-        db = self._get_db()
-        checkin = date.fromisoformat(check_in_date)
-        checkout = date.fromisoformat(check_out_date)
-        nights = (checkout - checkin).days
-
-        room = await db.rooms.find_one({"room_type": room_type, "is_active": True})
-        if not room:
-            return {"error": f"No {room_type} rooms found"}
-
-        pricing = room["pricing"]
+    @staticmethod
+    def _price_stay(pricing: Dict, nights: int) -> Dict[str, float]:
+        """Single source of truth for a stay's price (weekly/monthly discount, then tax)."""
         base = pricing["base_price_per_night"]
         base_total = base * nights
-
-        # Apply discounts
         discount = 0.0
         if nights >= 30:
             discount = base_total * (pricing.get("discount_monthly_pct", 0) / 100)
         elif nights >= 7:
             discount = base_total * (pricing.get("discount_weekly_pct", 0) / 100)
-
         taxable = base_total - discount
         tax = taxable * (pricing.get("tax_pct", 15) / 100)
-        final = taxable + tax
+        return {
+            "base_total": round(base_total, 2),
+            "discount": round(discount, 2),
+            "tax": round(tax, 2),
+            "final_total": round(taxable + tax, 2),
+        }
+
+    async def get_room_pricing(
+        self,
+        room_type: str,
+        check_in_date: str,
+        check_out_date: str,
+        room_id: Optional[str] = None,
+    ) -> Dict:
+        db = self._get_db()
+        checkin = date.fromisoformat(check_in_date)
+        checkout = date.fromisoformat(check_out_date)
+        nights = (checkout - checkin).days
+        if nights < 1:
+            return {"error": "Check-out must be after check-in"}
+
+        room = None
+        if room_id:
+            room = await db.rooms.find_one({"_id": room_id, "is_active": True})
+        if not room:
+            room = await db.rooms.find_one({"room_type": room_type, "is_active": True})
+        if not room:
+            return {"error": f"No {room_type} rooms found"}
+
+        quote = self._price_stay(room["pricing"], nights)
+        base = room["pricing"]["base_price_per_night"]
 
         return {
             "room_type": room_type,
             "price_per_night": base,
             "nights": nights,
-            "base_total": round(base_total, 2),
-            "discount": round(discount, 2),
-            "tax_15pct": round(tax, 2),
-            "final_total": round(final, 2),
+            "base_total": quote["base_total"],
+            "discount": quote["discount"],
+            "tax_15pct": quote["tax"],          # legacy key name (tax % is per room)
+            "tax": quote["tax"],
+            "final_total": quote["final_total"],
             "currency": get_hotel_profile()["currency"],
             "amenities_included": ["WiFi", "AC", "TV"] + (["Breakfast"] if room["amenities"].get("breakfast_included") else []),
         }
@@ -467,6 +482,8 @@ class HotelToolExecutor:
         adults: int = 1,
         children: int = 0,
         special_requests: Optional[str] = None,
+        room_id: Optional[str] = None,
+        source: str = "ai_receptionist",
     ) -> Dict:
         db = self._get_db()
 
@@ -474,6 +491,8 @@ class HotelToolExecutor:
         avail = await self.check_room_availability(
             check_in_date, check_out_date, room_type, adults, children
         )
+        if avail.get("error"):
+            return {"error": avail["error"]}
         if not avail.get("available"):
             return {"error": f"No {room_type} rooms available for those dates. {avail.get('total_available', 0)} rooms available."}
 
@@ -481,12 +500,21 @@ class HotelToolExecutor:
         if not rooms:
             return {"error": "No rooms match your requirements"}
 
-        # Pick first available room
-        chosen = rooms[0]
+        if room_id:
+            # Caller asked for a specific room — it must still be free.
+            chosen = next((r for r in rooms if r["room_id"] == room_id), None)
+            if not chosen:
+                return {"error": "The selected room is no longer available for those dates"}
+        else:
+            chosen = rooms[0]
 
-        # Calculate pricing
+        # Calculate pricing from the room actually being booked
         nights = avail["nights"]
-        pricing_data = await self.get_room_pricing(room_type, check_in_date, check_out_date)
+        pricing_data = await self.get_room_pricing(
+            room_type, check_in_date, check_out_date, room_id=chosen["room_id"]
+        )
+        if pricing_data.get("error"):
+            return {"error": pricing_data["error"]}
 
         pricing = PricingBreakdown(
             base_total=pricing_data["base_total"],
@@ -529,7 +557,7 @@ class HotelToolExecutor:
             special_requests=special_requests,
             pricing=pricing,
             status=BookingStatus.CONFIRMED,
-            source="ai_receptionist",
+            source=source,
         )
 
         doc = booking.model_dump(by_alias=True)

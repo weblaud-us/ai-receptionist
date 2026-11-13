@@ -78,14 +78,7 @@ class OutboundCallRequest(BaseModel):
     message:  str = Field(default="")
 
 
-async def _require_admin_key(
-    x_admin_key: str = Header(default="", alias="X-Admin-Key")
-) -> bool:
-    if not settings.API_KEY_REQUIRED:
-        return True
-    if x_admin_key != settings.ADMIN_SECRET_KEY:
-        raise HTTPException(401, "Invalid admin key")
-    return True
+from utils.auth import require_admin as _require_admin_key  # JWT (dashboard) or X-Admin-Key
 
 
 def _build_ws_url(request: Request) -> str:
