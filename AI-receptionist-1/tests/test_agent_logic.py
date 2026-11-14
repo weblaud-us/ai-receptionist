@@ -10,17 +10,23 @@ import pytest
 
 from agent import greeting
 from agent.persistence import CallRecorder, call_document, load_contact
-from agent.profile import parse_hours, load_profile
+from agent.profile import VoiceProfile, load_profile, parse_hours
 from agent.prompt import STATIC_RULES, build_voice_prompt
 from agent.speech import clean_for_speech, clean_stream
 from agent.state import CallState
 from agent.telemetry import TurnTracker, percentile, summarise, turn_latency
 
 
-def _profile(**overrides):
-    from dataclasses import replace
-
-    return replace(load_profile(), **overrides)
+def _profile(transfer_number=None, transfer_hours=None, recording=None):
+    """The legacy hotel profile with a few tenant fields overridden."""
+    tenant = load_profile().tenant.model_copy(deep=True)
+    if transfer_number is not None:
+        tenant.transfer.number = transfer_number
+    if transfer_hours is not None:
+        tenant.transfer.hours = transfer_hours
+    if recording is not None:
+        tenant.agent.recording.enabled = recording
+    return VoiceProfile(tenant=tenant)
 
 
 def _state(**overrides) -> CallState:
@@ -39,6 +45,11 @@ def test_greeting_discloses_ai_and_is_short():
     assert "virtual assistant" in text and "Grand Azure Hotel" in text
     assert len(text.split()) <= 20          # ≤ ~4 s spoken
     assert "recorded" not in text
+
+
+def test_keyterms_come_from_tenant_and_vertical():
+    words = _profile().keyterms
+    assert words[:2] == ("Grand Azure Hotel", "Aria") and "deluxe" in words
 
 
 def test_greeting_announces_recording():
@@ -84,6 +95,7 @@ def test_dynamic_tail():
     assert "+8801711111111" in phone and "Rahim" in phone and "Uddin" not in phone
     assert phone.rstrip().endswith("History: suite booking")
     assert "Saturday, 14 November 2026" in phone and "10:00 AM" in phone
+    assert "# Hotel rules" in phone and "Check-in from 14:00" in phone   # vertical plug-in facts
 
 
 # ── Speech clean-up ──────────────────────────────────────

@@ -1,7 +1,9 @@
 # AI Receptionist — backend
 
-FastAPI API + LiveKit voice agent for a single hotel (multi-tenant arrives in Phase 2 — see
-[../ROADMAP.md](../ROADMAP.md)). This README describes what exists **today**.
+FastAPI API + LiveKit voice agent for many local businesses — salons, home services, restaurants,
+clinics, offices and hotels — each with its own number, hours, services, knowledge and voice
+(Phase 2, see [../ROADMAP.md](../ROADMAP.md) and [../docs/PHASE_2_TESTING.md](../docs/PHASE_2_TESTING.md)).
+This README describes what exists **today**.
 
 ## What it does
 
@@ -19,6 +21,25 @@ WhatsApp confirmation, take a message for the team, and (on phone calls) transfe
 and hang up. It always introduces itself as a **virtual assistant** and answers honestly if
 asked whether it is an AI. Every tool is implemented once (`core/tools/`) and shared by voice
 and WhatsApp.
+
+## Multi-tenant core (Phase 2)
+
+- **Tenants**: every business is a `tenants` document (`core/tenancy`). Inbound calls resolve the
+  tenant from the dialled number (`phone_numbers`), WhatsApp from the receiving number id, the
+  dashboard from the signed-in user. Unknown numbers get a neutral message, never a crash.
+- **Isolation**: tenant data is read and written through `core/repositories` (tenant_id on every
+  query); older routers use `scoped_db`. `tests/test_api_tenancy.py` proves no endpoint or tool
+  leaks across tenants; `tests/test_isolation_guard.py` keeps new code on repositories.
+- **Any business**: a prompt builder with vertical templates (`core/prompts`), generic tools
+  (availability, booking, rescheduling, cancelling, leads, knowledge, messages) and a DST-safe
+  availability engine. `slot_locks` (unique per resource per 5 minutes) makes double booking
+  impossible. Hotels keep their room tools as a plug-in.
+- **Dashboard**: real users (argon2id), roles (owner / admin / staff), rotating refresh cookie,
+  TOTP two-factor (required for platform admins), onboarding wizard, editable settings, services
+  and staff, knowledge editor with website import and unanswered questions, appointments,
+  contacts, job requests, call transcripts and recordings, team invites, platform admin.
+- **Integrations**: Google Calendar two-way sync, owner notifications by SMS / e-mail / WhatsApp,
+  appointment reminders and a daily digest (`services/tenant_jobs.py`).
 
 ## Voice agent (Phase 1)
 
@@ -108,17 +129,23 @@ main.py                 FastAPI app, middleware, health
 config.py               every setting + production guard (documented in .env.example)
 agent/                  LiveKit voice agent (phone + browser): worker, session, prompt, telemetry
 core/                   framework-light shared logic
+  tenancy/              TenantConfig + resolver (number / WhatsApp id / id → tenant, cached)
+  repositories/         tenant-scoped data access (TenantRepo, Repos, scoped_db)
+  auth/                 users, passwords, tokens, roles, TOTP, FastAPI dependencies
+  prompts/              prompt builder + vertical templates
+  services/             availability, scheduling, calendar sync, tenant admin
   tools/                AI tools shared by voice + WhatsApp (registry.run_tool is the entry point)
-  integrations/         Twilio + Meta signature checks
+  integrations/         Twilio/Meta signatures, WhatsApp, SMS, e-mail, Google Calendar, S3 links
+  notifications.py      owner + caller notifications
   log.py                JSON logging, PII redaction, request/call ids
   observability.py      Sentry
   phone.py, timeutils.py, signed_links.py
 ai/                     WhatsApp (and legacy phone) agent loop and prompts
 voice/                  legacy Twilio media-stream path, STT/TTS clients
 whatsapp/               Meta webhook + sending
-routers/                dashboard API, LiveKit token/call page
-services/               reminders, calendar links
-database/               Mongo connection + indexes, models, tenancy stubs
+routers/                auth, tenant (/t), platform admin, hotel + admin APIs, LiveKit, OAuth callbacks
+services/               hotel reminders, calendar links, tenant jobs (reminders, digest, calendar sync)
+database/               Mongo connection + indexes, hotel models, legacy profile helpers
 migrations/             data migrations + index creation (python -m migrations.<name>)
 scripts/                operator scripts (latency_report)
 telephony/              LiveKit SIP trunk + dispatch rule templates, Twilio setup
@@ -128,6 +155,16 @@ Dockerfile              backend image (voice worker by default; dev target for l
 ```
 
 ## Data migrations
+
+Phase 2: turn the `.env` hotel into tenant #1 (snapshot first; idempotent):
+
+```bash
+uv run python -m migrations.m0003_hotel_to_tenant --dry-run
+uv run python -m migrations.m0003_hotel_to_tenant --owner-email owner@hotel.com
+uv run python -m scripts.create_admin --email you@company.com     # your platform admin
+```
+
+Phase 0:
 
 After the first Phase 0 deploy, backfill the double-booking guard once:
 

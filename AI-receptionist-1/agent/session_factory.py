@@ -86,14 +86,14 @@ def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
 
 
 def build_tts(p: VoiceProfile) -> Any:
-    """Primary provider first, then any other configured provider as an automatic fallback."""
-    order = [settings.VOICE_TTS_PROVIDER] + [x for x in ("elevenlabs", "cartesia", "openai")
-                                             if x != settings.VOICE_TTS_PROVIDER]
+    """The tenant's provider first, then any other configured provider as an automatic fallback."""
+    primary = p.voice_provider if not p.tenant.is_legacy else settings.VOICE_TTS_PROVIDER
+    order = [primary] + [x for x in ("elevenlabs", "cartesia", "openai") if x != primary]
     engines = [e for e in (_tts_for(name, p) for name in order) if e is not None]
     if not engines:
         raise RuntimeError("No TTS provider configured (ELEVENLABS_API_KEY, CARTESIA_API_KEY or OPENAI_API_KEY)")
-    if _tts_for(settings.VOICE_TTS_PROVIDER, p) is None:
-        logger.warning("VOICE_TTS_PROVIDER=%s has no API key — falling back", settings.VOICE_TTS_PROVIDER)
+    if _tts_for(primary, p) is None:
+        logger.warning("TTS provider %s has no API key — falling back", primary)
     return engines[0] if len(engines) == 1 else lk_tts.FallbackAdapter(engines)
 
 
@@ -107,14 +107,15 @@ def build_llm(p: VoiceProfile) -> Any:
     )
 
 
-def turn_handling() -> dict[str, Any]:
+def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
+    ep = p.tenant.agent.endpointing if p else None
     return {
         "turn_detection": inference.TurnDetector(
             api_key=settings.LIVEKIT_API_KEY, api_secret=settings.LIVEKIT_API_SECRET),
         "endpointing": {
             "mode": "dynamic",
-            "min_delay": settings.VOICE_ENDPOINTING_MIN_DELAY,
-            "max_delay": settings.VOICE_ENDPOINTING_MAX_DELAY,
+            "min_delay": ep.min_delay if ep else settings.VOICE_ENDPOINTING_MIN_DELAY,
+            "max_delay": ep.max_delay if ep else settings.VOICE_ENDPOINTING_MAX_DELAY,
         },
         "interruption": {
             "enabled": True,
@@ -147,7 +148,7 @@ def build_session(proc_userdata: dict[str, Any], state: CallState) -> AgentSessi
         stt=build_stt(p),
         llm=build_llm(p),
         tts=build_tts(p),
-        turn_handling=turn_handling(),  # type: ignore[arg-type]
+        turn_handling=turn_handling(p),  # type: ignore[arg-type]
         user_away_timeout=settings.VOICE_USER_AWAY_TIMEOUT,
         max_tool_steps=MAX_TOOL_STEPS,
     )

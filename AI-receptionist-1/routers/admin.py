@@ -1,8 +1,9 @@
 """
-Admin / dashboard API  (prefix /admin)
+Admin / dashboard API  (prefix /admin) — tenant-scoped since Phase 2.
 
-Public:    POST /admin/login
-Protected: everything else (Bearer JWT or X-Admin-Key) —
+Public:    POST /admin/login     (legacy .env admin; the dashboard now uses POST /auth/login)
+Protected: everything else acts on the caller's active tenant (Bearer JWT, X-Tenant-Id for
+           platform admins, or X-Admin-Key in legacy single-hotel mode) —
   GET  /admin/me
   GET  /admin/stats                 KPIs, charts, today's arrivals/departures
   GET  /admin/occupancy             room x day grid data ("tape chart")
@@ -17,7 +18,6 @@ Protected: everything else (Bearer JWT or X-Admin-Key) —
 import logging
 import re
 import time
-from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -25,25 +25,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from config import settings
+from core.auth import TenantPrincipal, require_tenant
+from core.repositories.scoped import scoped_db
 from core.timeutils import business_today
-from database.mongodb import get_db
-from database.tenancy import get_hotel_profile
-from utils.auth import (
-    auth_configured, create_access_token, require_admin, verify_credentials,
-)
+from database.tenancy import tenant_profile
 from utils.serialize import to_jsonable
 
 logger = logging.getLogger(__name__)
 
 admin_router = APIRouter(prefix="/admin", tags=["Admin"])
-protected = APIRouter(dependencies=[Depends(require_admin)])
+protected = APIRouter()
+_staff = require_tenant("staff")
+_admin = require_tenant("admin")
 
 ACTIVE_STATUSES = ["confirmed", "pending", "checked_in"]
 REVENUE_STATUSES = ["confirmed", "pending", "checked_in", "checked_out"]
-
-
-def _hotel_today() -> date:
-    return business_today(settings.HOTEL_TIMEZONE)
 
 
 def _strip_id(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,41 +52,23 @@ def _strip_id(doc: Dict[str, Any]) -> Dict[str, Any]:
 # ─────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=256)
-
-
-_failed_logins: Dict[str, List[float]] = defaultdict(list)
-_MAX_FAILS, _FAIL_WINDOW = 5, 300  # 5 failures / 5 minutes per client IP
 
 
 @admin_router.post("/login")
 async def login(req: LoginRequest, request: Request):
-    if not auth_configured():
-        raise HTTPException(
-            503,
-            "Admin login is disabled. Set ADMIN_PASSWORD and a non-default SECRET_KEY in .env.",
-        )
-    ip = request.client.host if request.client else "unknown"
-    now = time.time()
-    recent = [t for t in _failed_logins[ip] if now - t < _FAIL_WINDOW]
-    _failed_logins[ip] = recent
-    if len(recent) >= _MAX_FAILS:
-        raise HTTPException(429, "Too many failed attempts. Try again in a few minutes.")
+    """Legacy login (username = e-mail, or the .env ADMIN_USERNAME). Same as POST /auth/login."""
+    from core.auth import service
 
-    if not verify_credentials(req.username, req.password):
-        _failed_logins[ip].append(now)
-        raise HTTPException(401, "Invalid username or password")
-
-    _failed_logins.pop(ip, None)
-    token, expires_in = create_access_token(req.username)
-    return {"access_token": token, "token_type": "bearer", "expires_in": expires_in,
-            "username": req.username}
+    result = await service.login(req.username, req.password, ip=request.client.host if request.client else "unknown")
+    return {**result.body(), "username": (result.user or {}).get("email") or req.username}
 
 
 @protected.get("/me")
-async def me(admin: dict = Depends(require_admin)):
-    return {"username": admin.get("sub"), "role": admin.get("role", "admin")}
+async def me(tp: TenantPrincipal = Depends(_staff)):
+    return {"username": tp.user.email, "role": tp.role, "tenant_id": tp.tenant.id,
+            "platform_admin": tp.user.platform_admin}
 
 
 # ─────────────────────────────────────────────
@@ -98,9 +76,9 @@ async def me(admin: dict = Depends(require_admin)):
 # ─────────────────────────────────────────────
 
 @protected.get("/stats")
-async def stats(days: int = Query(30, ge=7, le=365)):
-    db = get_db()
-    today = _hotel_today()
+async def stats(days: int = Query(30, ge=7, le=365), tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
+    today = business_today(tp.tenant.timezone)
     today_s = today.isoformat()
     since_dt = datetime.utcnow() - timedelta(days=days)
 
@@ -223,7 +201,7 @@ async def stats(days: int = Query(30, ge=7, le=365)):
     return {
         "as_of": to_jsonable(datetime.utcnow()),
         "hotel_today": today_s,
-        "currency": settings.HOTEL_CURRENCY,
+        "currency": tp.tenant.currency,
         "period_days": days,
         "rooms": {"total": total_rooms, "maintenance": maintenance, "sellable": sellable,
                   "occupied": occupied, "available": max(sellable - occupied, 0),
@@ -258,9 +236,10 @@ async def stats(days: int = Query(30, ge=7, le=365)):
 async def occupancy(
     start: Optional[date] = Query(None),
     days: int = Query(14, ge=1, le=62),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    db = get_db()
-    hotel_today = _hotel_today()
+    db = scoped_db(tp.tenant)
+    hotel_today = business_today(tp.tenant.timezone)
     start_d = start or hotel_today
     end_d = start_d + timedelta(days=days)
 
@@ -301,8 +280,9 @@ async def list_conversations(
     q: Optional[str] = Query(None, description="phone or guest name"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    db = get_db()
+    db = scoped_db(tp.tenant)
     query: Dict[str, Any] = {}
     if channel:
         query["channel"] = channel
@@ -342,8 +322,8 @@ async def list_conversations(
 
 
 @protected.get("/conversations/{session_id}")
-async def get_conversation(session_id: str):
-    db = get_db()
+async def get_conversation(session_id: str, tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
     doc = await db.conversations.find_one({"session_id": session_id})
     if not doc:
         raise HTTPException(404, "Conversation not found")
@@ -377,8 +357,9 @@ async def list_guests(
     vip_tier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    db = get_db()
+    db = scoped_db(tp.tenant)
     query: Dict[str, Any] = {}
     if vip_tier:
         query["vip_tier"] = vip_tier
@@ -412,8 +393,8 @@ async def list_guests(
 
 
 @protected.get("/guests/by-phone")
-async def get_guest(phone: str = Query(..., min_length=3)):
-    db = get_db()
+async def get_guest(phone: str = Query(..., min_length=3), tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
     guest = await db.guests.find_one({"phone": phone})
     if not guest:
         raise HTTPException(404, "Guest not found")
@@ -434,7 +415,7 @@ async def get_guest(phone: str = Query(..., min_length=3)):
 
 
 @protected.patch("/guests/by-phone")
-async def update_guest(body: GuestUpdate, phone: str = Query(..., min_length=3)):
+async def update_guest(body: GuestUpdate, phone: str = Query(..., min_length=3), tp: TenantPrincipal = Depends(_staff)):
     data = body.model_dump(exclude_unset=True)
     if "vip_tier" in data and data["vip_tier"] not in VIP_TIERS:
         raise HTTPException(400, f"Invalid vip_tier. Valid: {VIP_TIERS}")
@@ -442,7 +423,7 @@ async def update_guest(body: GuestUpdate, phone: str = Query(..., min_length=3))
         raise HTTPException(400, "Nothing to update")
     data["updated_at"] = datetime.utcnow()
 
-    db = get_db()
+    db = scoped_db(tp.tenant)
     res = await db.guests.update_one({"phone": phone}, {"$set": data})
     if res.matched_count == 0:
         raise HTTPException(404, "Guest not found")
@@ -457,7 +438,7 @@ LIVE_CALL_STALE_S = 120  # the worker flushes every 10 s; older "in_progress" ro
 
 
 @protected.get("/calls/live")
-async def live_calls():
+async def live_calls(tp: TenantPrincipal = Depends(_staff)):
     """Calls in progress: LiveKit voice agent (phone + browser) and the legacy Twilio path."""
     now = time.time()
     calls: List[Dict[str, Any]] = []
@@ -478,7 +459,7 @@ async def live_calls():
         } for sid, s in list(active_sessions.items())]
 
     cutoff = datetime.utcnow() - timedelta(seconds=LIVE_CALL_STALE_S)
-    async for c in get_db().calls.find({"status": "in_progress", "updated_at": {"$gte": cutoff}},
+    async for c in scoped_db(tp.tenant).calls.find({"status": "in_progress", "updated_at": {"$gte": cutoff}},
                                        {"transcript": 0, "turns": 0}).sort("started_at", -1).limit(50):
         calls.append({
             "call_sid": c["call_id"],
@@ -498,17 +479,18 @@ async def live_calls():
 async def call_history(
     limit: int = Query(50, ge=1, le=200),
     outcome: Optional[str] = Query(None, max_length=32),
+    tp: TenantPrincipal = Depends(_staff),
 ):
     """Voice-agent call log, newest first (transcripts via /calls/{call_id})."""
     query: Dict[str, Any] = {"outcome": outcome} if outcome else {}
-    docs = await get_db().calls.find(query, {"transcript": 0, "turns": 0}) \
+    docs = await scoped_db(tp.tenant).calls.find(query, {"transcript": 0, "turns": 0}) \
         .sort("started_at", -1).limit(limit).to_list(limit)
     return {"calls": [to_jsonable(_strip_id(d)) for d in docs], "total": len(docs)}
 
 
 @protected.get("/calls/{call_id}")
-async def call_detail(call_id: str):
-    doc = await get_db().calls.find_one({"call_id": call_id})
+async def call_detail(call_id: str, tp: TenantPrincipal = Depends(_staff)):
+    doc = await scoped_db(tp.tenant).calls.find_one({"call_id": call_id})
     if not doc:
         raise HTTPException(404, "Call not found")
     return to_jsonable(_strip_id(doc))
@@ -518,12 +500,13 @@ async def call_detail(call_id: str):
 async def list_messages(
     status: Optional[str] = Query(None, pattern="^(new|handled)$"),
     limit: int = Query(50, ge=1, le=200),
+    tp: TenantPrincipal = Depends(_staff),
 ):
     """Messages callers left for the team (take_message), newest first."""
     query: Dict[str, Any] = {"status": status} if status else {}
-    docs = await get_db().messages.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    docs = await scoped_db(tp.tenant).messages.find(query).sort("created_at", -1).limit(limit).to_list(limit)
     return {"messages": [to_jsonable(_strip_id(d)) for d in docs], "total": len(docs),
-            "new": await get_db().messages.count_documents({"status": "new"})}
+            "new": await scoped_db(tp.tenant).messages.count_documents({"status": "new"})}
 
 
 class MessageUpdate(BaseModel):
@@ -531,8 +514,8 @@ class MessageUpdate(BaseModel):
 
 
 @protected.patch("/messages/{message_id}")
-async def update_message(message_id: str, body: MessageUpdate):
-    result = await get_db().messages.update_one(
+async def update_message(message_id: str, body: MessageUpdate, tp: TenantPrincipal = Depends(_staff)):
+    result = await scoped_db(tp.tenant).messages.update_one(
         {"message_id": message_id},
         {"$set": {"status": body.status, "updated_at": datetime.utcnow()}})
     if result.matched_count == 0:
@@ -546,14 +529,14 @@ class WhatsAppSend(BaseModel):
 
 
 @protected.post("/whatsapp/send")
-async def send_whatsapp(req: WhatsAppSend):
+async def send_whatsapp(req: WhatsAppSend, tp: TenantPrincipal = Depends(_admin)):
     """
     Free-text WhatsApp. Meta only delivers free-form text inside the 24-hour window
     after the guest last messaged the hotel.
     """
     from whatsapp.meta_handler import _send_meta_whatsapp, _normalize_wa_phone
     to = _normalize_wa_phone(re.sub(r"[\s\-()]", "", req.to))
-    ok = await _send_meta_whatsapp(to, req.message, None)
+    ok = await _send_meta_whatsapp(to, req.message, tp.tenant.integrations.whatsapp.phone_number_id or None)
     if not ok:
         raise HTTPException(502, "WhatsApp send failed (check Meta credentials, or the guest's "
                                  "24-hour messaging window has expired)")
@@ -565,9 +548,9 @@ async def send_whatsapp(req: WhatsAppSend):
 # ─────────────────────────────────────────────
 
 @protected.get("/reminders")
-async def reminders():
-    db = get_db()
-    today = _hotel_today()
+async def reminders(tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
+    today = business_today(tp.tenant.timezone)
     tomorrow_s = (today + timedelta(days=1)).isoformat()
 
     def _row(b: Dict[str, Any]) -> Dict[str, Any]:
@@ -607,7 +590,7 @@ async def reminders():
 
 
 @protected.post("/reminders/run")
-async def run_reminders():
+async def run_reminders(tp: TenantPrincipal = Depends(_admin)):
     from services.reminders import get_booking_reminder_service
     if not (settings.ENABLE_ONE_DAY_BOOKING_REMINDER and settings.ENABLE_WHATSAPP):
         raise HTTPException(400, "Reminders are disabled (ENABLE_ONE_DAY_BOOKING_REMINDER / ENABLE_WHATSAPP)")
@@ -620,8 +603,8 @@ async def run_reminders():
 # ─────────────────────────────────────────────
 
 @protected.get("/system")
-async def system():
-    db = get_db()
+async def system(tp: TenantPrincipal = Depends(_admin)):
+    db = scoped_db(tp.tenant)
     try:
         await db.command("ping")
         db_ok = True
@@ -631,7 +614,7 @@ async def system():
     def has(v: Optional[str]) -> bool:
         return bool((v or "").strip())
 
-    profile = get_hotel_profile()
+    profile = tenant_profile(tp.tenant)
     return {
         "hotel": {k: profile[k] for k in (
             "name", "receptionist_name", "phone", "address",

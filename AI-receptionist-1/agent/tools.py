@@ -1,24 +1,32 @@
 """
-The shared AI tools (core.tools.registry) exposed to the LiveKit agent — Roadmap Task 1.10.
+The shared AI tools (core.tools.registry) exposed to the LiveKit agent — Roadmap Tasks 1.10, 2.7.
 
 Each OpenAI-format schema becomes a LiveKit raw-schema tool whose handler calls run_tool(),
-the same function WhatsApp uses. No tool is defined twice; ownership checks and timeouts apply
-identically on every channel.
+the same function WhatsApp uses. The set of tools comes from the tenant's vertical. No tool is
+defined twice; ownership checks and timeouts apply identically on every channel.
 """
+
+from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from livekit.agents import RunContext, function_tool
 from livekit.agents.llm import RawFunctionTool, Tool, Toolset
 
-from core.tools.registry import AI_TOOL_SCHEMAS, run_tool
+from agent.profile import VoiceProfile
+from core.tools.registry import run_tool, schemas_for
 
 logger = logging.getLogger(__name__)
 
 # A successful call to one of these tells us how the call went (stored on the call record).
-_OUTCOMES = {"create_booking": "booked", "take_message": "message", "cancel_booking": "cancelled"}
+_OUTCOMES = {
+    "create_booking": "booked", "book_appointment": "booked",
+    "reschedule_appointment": "rescheduled",
+    "cancel_booking": "cancelled", "cancel_appointment": "cancelled",
+    "take_message": "message", "capture_lead": "message",
+}
 
 
 def _succeeded(result: str) -> bool:
@@ -42,5 +50,7 @@ def _make_tool(schema: dict[str, Any]) -> RawFunctionTool:
     return function_tool(handler, raw_schema=schema)
 
 
-def shared_tools() -> list[Tool | Toolset]:
-    return [_make_tool(s["function"]) for s in AI_TOOL_SCHEMAS]
+def shared_tools(profile: Optional[VoiceProfile] = None) -> list[Tool | Toolset]:
+    tenant = profile.tenant if profile else None
+    large_kb = profile.large_kb if profile else False
+    return [_make_tool(s["function"]) for s in schemas_for(tenant, large_kb=large_kb)]

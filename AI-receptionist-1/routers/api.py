@@ -1,7 +1,10 @@
 """
-REST API Routers (all protected by `require_admin`, except the tokenised .ics link)
+Hotel vertical REST API (tenant-scoped since Phase 2; the tokenised .ics link is public)
 - /bookings  — hotel bookings: search, create, edit, status changes, cancel
 - /rooms     — room inventory: list, create, edit, deactivate, availability
+
+Every endpoint acts on the caller's active tenant (`require_tenant`) through `scoped_db`, so a
+query can never return another business's rooms or bookings.
 """
 
 import hmac
@@ -13,6 +16,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
+from core.auth import TenantPrincipal, require_tenant
+from core.repositories.scoped import scoped_db
+from core.tenancy import resolve_by_id
+from core.tenancy.models import legacy_hotel_tenant
 from core.tools.hotel import release_room_nights
 from core.tools.registry import get_tool_executor
 from core.timeutils import business_today
@@ -21,19 +28,17 @@ from database.models import (
     RoomPricing, RoomType,
 )
 from database.mongodb import get_db
-from database.tenancy import get_hotel_profile
+from database.tenancy import tenant_profile
 from services.calendar import generate_booking_ics
-from utils.auth import require_admin
 from utils.serialize import to_jsonable
 
 logger = logging.getLogger(__name__)
 
-bookings_router = APIRouter(
-    prefix="/bookings", tags=["Bookings"], dependencies=[Depends(require_admin)]
-)
-rooms_router = APIRouter(
-    prefix="/rooms", tags=["Rooms"], dependencies=[Depends(require_admin)]
-)
+_staff = require_tenant("staff")
+_admin = require_tenant("admin")
+
+bookings_router = APIRouter(prefix="/bookings", tags=["Bookings"])
+rooms_router = APIRouter(prefix="/rooms", tags=["Rooms"])
 # Public: guests open this link from WhatsApp; it is protected by its own token.
 calendar_router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -60,9 +65,10 @@ async def lookup_booking(
     phone: Optional[str] = Query(None),
     booking_id: Optional[str] = Query(None),
     guest_name: Optional[str] = Query(None),
+    tp: TenantPrincipal = Depends(_staff),
 ):
     """Lookup bookings by phone number, booking ID, or guest name."""
-    db = get_db()
+    db = scoped_db(tp.tenant)
     query: Dict[str, Any] = {}
 
     if booking_id:
@@ -110,8 +116,9 @@ async def list_bookings(
     order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    db = get_db()
+    db = scoped_db(tp.tenant)
     query: Dict[str, Any] = {}
     if status:
         statuses = [s.strip() for s in status.split(",") if s.strip()]
@@ -155,8 +162,8 @@ async def list_bookings(
 
 
 @bookings_router.get("/{booking_id}")
-async def get_booking(booking_id: str):
-    db = get_db()
+async def get_booking(booking_id: str, tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
     doc = await db.bookings.find_one({"booking_id": booking_id.upper()})
     if not doc:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -168,8 +175,7 @@ async def download_booking_calendar_ics(
     booking_id: str,
     token: str = Query(...),
 ):
-    db = get_db()
-    doc = await db.bookings.find_one({"booking_id": booking_id.upper()})
+    doc = await get_db().bookings.find_one({"booking_id": booking_id.upper()})
     if not doc:
         raise HTTPException(status_code=404, detail="Booking not found")
 
@@ -177,7 +183,8 @@ async def download_booking_calendar_ics(
     if not expected or not hmac.compare_digest(token.encode("utf-8"), str(expected).encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid calendar token")
 
-    profile = get_hotel_profile()
+    tenant = (await resolve_by_id(doc["tenant_id"])) if doc.get("tenant_id") else None
+    profile = tenant_profile(tenant or legacy_hotel_tenant())
     ics_text = generate_booking_ics(
         booking_id=doc["booking_id"],
         guest_name=doc.get("guest_name", "Guest"),
@@ -205,9 +212,10 @@ async def download_booking_calendar_ics(
 async def create_booking_api(
     req: BookingCreateRequest,
     send_whatsapp: bool = Query(False, description="Also send the WhatsApp confirmation"),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    executor = get_tool_executor()
-    db = get_db()
+    executor = get_tool_executor(tp.tenant)
+    db = scoped_db(tp.tenant)
 
     room = await db.rooms.find_one({"_id": req.room_id})
     if not room:
@@ -248,9 +256,9 @@ class BookingUpdate(BaseModel):
 
 
 @bookings_router.patch("/{booking_id}")
-async def update_booking(booking_id: str, body: BookingUpdate):
+async def update_booking(booking_id: str, body: BookingUpdate, tp: TenantPrincipal = Depends(_staff)):
     """Edit non-structural booking fields (dates/room changes: cancel and rebook)."""
-    db = get_db()
+    db = scoped_db(tp.tenant)
     bid = booking_id.upper()
     sets: Dict[str, Any] = {}
     data = body.model_dump(exclude_unset=True)
@@ -282,20 +290,20 @@ async def update_booking(booking_id: str, body: BookingUpdate):
 
 
 @bookings_router.patch("/{booking_id}/status")
-async def update_booking_status(booking_id: str, status: str):
+async def update_booking_status(booking_id: str, status: str, tp: TenantPrincipal = Depends(_staff)):
     valid = [s.value for s in BookingStatus]
     if status not in valid:
         raise HTTPException(400, f"Invalid status. Valid: {valid}")
 
     # Cancelling goes through the cancellation-fee logic.
     if status == BookingStatus.CANCELLED.value:
-        executor = get_tool_executor()
+        executor = get_tool_executor(tp.tenant)
         result = await executor.cancel_booking(booking_id, "Cancelled from dashboard")
         if result.get("error"):
             raise HTTPException(400, result["error"])
         return result
 
-    db = get_db()
+    db = scoped_db(tp.tenant)
     now = datetime.utcnow()
     sets: Dict[str, Any] = {"status": status, "updated_at": now}
     if status == BookingStatus.CHECKED_IN.value:
@@ -310,19 +318,19 @@ async def update_booking_status(booking_id: str, status: str):
     if status == BookingStatus.NO_SHOW.value:
         await release_room_nights(db, booking_id.upper())
     elif status == BookingStatus.CHECKED_OUT.value:
-        today = business_today(get_hotel_profile()["timezone"]).isoformat()
+        today = business_today(tp.tenant.timezone).isoformat()
         await release_room_nights(db, booking_id.upper(), from_night=today)
     return {"success": True, "booking_id": booking_id.upper(), "status": status}
 
 
 @bookings_router.post("/{booking_id}/send-confirmation")
-async def send_booking_confirmation(booking_id: str):
+async def send_booking_confirmation(booking_id: str, tp: TenantPrincipal = Depends(_staff)):
     """(Re)send the WhatsApp booking confirmation to the guest's phone."""
-    db = get_db()
+    db = scoped_db(tp.tenant)
     doc = await db.bookings.find_one({"booking_id": booking_id.upper()})
     if not doc:
         raise HTTPException(404, "Booking not found")
-    result = await get_tool_executor().send_booking_confirmation_whatsapp(
+    result = await get_tool_executor(tp.tenant).send_booking_confirmation_whatsapp(
         booking_id=doc["booking_id"], whatsapp_number=doc.get("guest_phone", "")
     )
     if not result.get("success"):
@@ -331,8 +339,8 @@ async def send_booking_confirmation(booking_id: str):
 
 
 @bookings_router.delete("/{booking_id}")
-async def cancel_booking_api(booking_id: str, reason: Optional[str] = Query(None)):
-    executor = get_tool_executor()
+async def cancel_booking_api(booking_id: str, reason: Optional[str] = Query(None), tp: TenantPrincipal = Depends(_staff)):
+    executor = get_tool_executor(tp.tenant)
     result = await executor.cancel_booking(booking_id, reason)
     if result.get("error"):
         raise HTTPException(400, result["error"])
@@ -358,11 +366,11 @@ class RoomUpdate(BaseModel):
     is_maintenance: Optional[bool] = None
 
 
-async def _ensure_no_upcoming_bookings(db, room_id: str) -> None:
+async def _ensure_no_upcoming_bookings(db, room_id: str, tz: str) -> None:
     upcoming = await db.bookings.count_documents({
         "room_id": room_id,
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "check_out_date": {"$gte": business_today(get_hotel_profile()["timezone"]).isoformat()},
+        "check_out_date": {"$gte": business_today(tz).isoformat()},
     })
     if upcoming:
         raise HTTPException(
@@ -375,8 +383,9 @@ async def list_rooms(
     room_type: Optional[str] = None,
     is_active: bool = True,
     include_inactive: bool = False,
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    db = get_db()
+    db = scoped_db(tp.tenant)
     query: Dict[str, Any] = {} if include_inactive else {"is_active": is_active}
     if room_type:
         query["room_type"] = room_type
@@ -386,8 +395,8 @@ async def list_rooms(
 
 
 @rooms_router.post("/")
-async def create_room(room: Room):
-    db = get_db()
+async def create_room(room: Room, tp: TenantPrincipal = Depends(_admin)):
+    db = scoped_db(tp.tenant)
     existing = await db.rooms.find_one({"room_number": room.room_number})
     if existing:
         raise HTTPException(400, f"Room {room.room_number} already exists")
@@ -404,8 +413,9 @@ async def check_availability(
     room_type: Optional[str] = Query(None),
     adults: int = Query(1),
     children: int = Query(0),
+    tp: TenantPrincipal = Depends(_staff),
 ):
-    executor = get_tool_executor()
+    executor = get_tool_executor(tp.tenant)
     return await executor.check_room_availability(
         check_in_date=str(check_in_date),
         check_out_date=str(check_out_date),
@@ -416,8 +426,8 @@ async def check_availability(
 
 
 @rooms_router.get("/{room_id}")
-async def get_room(room_id: str):
-    db = get_db()
+async def get_room(room_id: str, tp: TenantPrincipal = Depends(_staff)):
+    db = scoped_db(tp.tenant)
     doc = await db.rooms.find_one({"_id": room_id})
     if not doc:
         raise HTTPException(404, "Room not found")
@@ -425,8 +435,8 @@ async def get_room(room_id: str):
 
 
 @rooms_router.patch("/{room_id}")
-async def update_room(room_id: str, body: RoomUpdate):
-    db = get_db()
+async def update_room(room_id: str, body: RoomUpdate, tp: TenantPrincipal = Depends(_admin)):
+    db = scoped_db(tp.tenant)
     room = await db.rooms.find_one({"_id": room_id})
     if not room:
         raise HTTPException(404, "Room not found")
@@ -441,7 +451,7 @@ async def update_room(room_id: str, body: RoomUpdate):
             raise HTTPException(400, f"Room {new_number} already exists")
 
     if sets.get("is_active") is False and room.get("is_active", True):
-        await _ensure_no_upcoming_bookings(db, room_id)
+        await _ensure_no_upcoming_bookings(db, room_id, tp.tenant.timezone)
 
     sets["updated_at"] = datetime.utcnow()
     await db.rooms.update_one({"_id": room_id}, {"$set": sets})
@@ -449,14 +459,14 @@ async def update_room(room_id: str, body: RoomUpdate):
 
 
 @rooms_router.delete("/{room_id}")
-async def deactivate_room(room_id: str):
+async def deactivate_room(room_id: str, tp: TenantPrincipal = Depends(_admin)):
     """Soft delete: marks the room inactive. Blocked while it has upcoming bookings."""
-    db = get_db()
+    db = scoped_db(tp.tenant)
     room = await db.rooms.find_one({"_id": room_id})
     if not room:
         raise HTTPException(404, "Room not found")
 
-    await _ensure_no_upcoming_bookings(db, room_id)
+    await _ensure_no_upcoming_bookings(db, room_id, tp.tenant.timezone)
     await db.rooms.update_one(
         {"_id": room_id}, {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
     )

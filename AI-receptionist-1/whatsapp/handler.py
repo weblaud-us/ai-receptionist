@@ -15,12 +15,17 @@ from config import settings
 from database.models import Conversation, ConversationChannel, ConversationContext
 from database.mongodb import get_db
 from database.tenancy import get_hotel_profile
+from core.repositories.scoped import scoped_db
+from core.tenancy.models import TenantConfig
 
 logger = logging.getLogger(__name__)
 
 
-async def _get_or_create_whatsapp_session(db, phone: str, name: Optional[str]) -> dict:
-    """Get active WhatsApp session or create a new one."""
+async def _get_or_create_whatsapp_session(db, phone: str, name: Optional[str],
+                                          tenant: Optional[TenantConfig] = None) -> dict:
+    """Get the active WhatsApp session for this customer *of this business*, or create one."""
+    if tenant is not None:
+        db = scoped_db(tenant)
     cutoff = datetime.utcnow() - timedelta(days=max(1, int(settings.CONVERSATION_MEMORY_DAYS)))
 
     existing = await db.conversations.find_one(

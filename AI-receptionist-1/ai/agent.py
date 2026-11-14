@@ -25,7 +25,12 @@ from database.models import (
     Conversation, ConversationMessage, ConversationContext,
     MessageRole, ConversationChannel, ConversationStatus
 )
-from database.tenancy import get_hotel_profile
+from database.tenancy import tenant_profile
+from core.prompts.builder import BusinessSnapshot, build_chat_prompt
+from core.repositories import Repos
+from core.repositories.scoped import scoped_db
+from core.services.snapshot import load_snapshot
+from core.tenancy.models import TenantConfig, legacy_hotel_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +53,9 @@ async def create_conversation_with_memory(
     call_sid: Optional[str] = None,
     guest_name: Optional[str] = None,
     previous_bookings: Optional[List[Dict]] = None,
+    tenant: Optional[TenantConfig] = None,
 ) -> Dict:
-    db = get_db()
+    db = scoped_db(tenant or legacy_hotel_tenant())
 
     if not guest_name:
         guest = await db.guests.find_one({"phone": phone})
@@ -132,6 +138,8 @@ class HotelAgent:
         self.channel  = channel
         self._llm     = None
         self.is_voice = (channel == ConversationChannel.VOICE)
+        self.tenant: TenantConfig = legacy_hotel_tenant()
+        self.snapshot = BusinessSnapshot()
 
     @property
     def llm(self):
@@ -144,13 +152,18 @@ class HotelAgent:
         session_id: str,
         user_message: str,
         phone: str,
+        tenant: Optional[TenantConfig] = None,
     ) -> Tuple[str, List[Dict]]:
         """
         Process one user turn.
         Returns (assistant_response, list_of_tool_calls_executed).
         Booking is saved to MongoDB INSIDE the tool executor during create_booking.
         """
-        db = get_db()
+        if tenant is not None:
+            self.tenant = tenant
+        if self.tenant.vertical != "hotel":
+            self.snapshot = await load_snapshot(Repos(get_db(), self.tenant.id), self.tenant)
+        db = scoped_db(self.tenant)
         conv_doc = await db.conversations.find_one({"session_id": session_id})
         if not conv_doc:
             logger.warning("Session %s not found, creating new", session_id)
@@ -173,7 +186,7 @@ class HotelAgent:
         for iteration in range(MAX_TOOL_ITERATIONS):
             response = await self.llm.chat_completion(
                 messages=messages,
-                tools=openai_tool_schemas(),
+                tools=openai_tool_schemas(self.tenant, large_kb=self.snapshot.large_kb),
                 tool_choice="auto",
                 temperature=0.7,
                 # Voice: very short answers (1-2 sentences).
@@ -213,7 +226,8 @@ class HotelAgent:
                 logger.debug("🔧 Tool args: %s", str(args)[:200])  # may contain guest PII
                 # The caller's phone is the identity proof for booking reads/changes.
                 caller_phone = conv_doc.get("phone") or phone
-                ctx = ToolContext(channel=self.channel.value, caller_phone=caller_phone, call_id=session_id)
+                ctx = ToolContext(channel=self.channel.value, caller_phone=caller_phone, call_id=session_id,
+                                  tenant=self.tenant)
                 result = await run_tool(ctx, fn_name, args)
                 logger.debug("🔧 Tool result: %s", result[:200])
 
@@ -238,7 +252,7 @@ class HotelAgent:
         return assistant_content, all_tool_calls
 
     def _build_messages(self, conv_doc: Dict, user_message: str) -> List[Dict]:
-        hotel  = get_hotel_profile()
+        hotel  = tenant_profile(self.tenant)
         context = conv_doc.get("context", {})
         contact_phone = (
             (hotel.get("twilio_voice_number") or "").strip()
@@ -255,7 +269,11 @@ class HotelAgent:
             currency=hotel["currency"],
             hotel_phone=contact_phone,
             context=context,
+            timezone=hotel["timezone"],
         )
+        if self.tenant.vertical != "hotel":
+            system = build_chat_prompt(self.tenant, self.snapshot,
+                                       customer_phone=conv_doc.get("phone") or None)
         messages = [{"role": "system", "content": system}]
 
         # Inject caller phone so AI doesn't ask for it again
@@ -441,14 +459,14 @@ class HotelAgent:
 
     async def _create_conversation(self, session_id: str, phone: str) -> Dict:
         return await create_conversation_with_memory(
-            session_id=session_id, phone=phone, channel=self.channel,
+            session_id=session_id, phone=phone, channel=self.channel, tenant=self.tenant,
         )
 
     async def _save_turn(
         self, session_id: str, user_message: str,
         assistant_message: str, tool_calls: List[Dict], phone: str,
     ):
-        db  = get_db()
+        db  = scoped_db(self.tenant)
         now = datetime.utcnow()
         user_msg = ConversationMessage(role=MessageRole.USER, content=user_message, timestamp=now)
         ai_msg   = ConversationMessage(
@@ -474,7 +492,7 @@ class HotelAgent:
 
     async def _update_context(self, session_id: str, tool_calls: List[Dict]):
         """Track booking IDs and conversation stage in MongoDB."""
-        db = get_db()
+        db = scoped_db(self.tenant)
         ctx_updates = {}
         for tc in tool_calls:
             if tc["name"] == "create_booking":
@@ -507,7 +525,7 @@ class HotelAgent:
             )
 
     async def end_conversation(self, session_id: str):
-        db = get_db()
+        db = scoped_db(self.tenant)
         await db.conversations.update_one(
             {"session_id": session_id},
             {"$set": {"status": ConversationStatus.COMPLETED,

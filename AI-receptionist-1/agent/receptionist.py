@@ -54,7 +54,7 @@ class ReceptionistAgent(Agent):
     def __init__(self, state: CallState) -> None:
         super().__init__(
             instructions=build_voice_prompt(state.profile, caller_phone=state.caller_phone),
-            tools=shared_tools(),
+            tools=shared_tools(state.profile),
         )
         self.state = state
 
@@ -132,6 +132,24 @@ class ReceptionistAgent(Agent):
         self.state.set_outcome("transferred", override=True)
         self.state.ended_reason = "transferred"
         return "Transferred. The call has left you; say nothing more."
+
+
+class UnassignedNumberAgent(Agent):
+    """A call to a number no tenant owns (Task 2.4): one neutral sentence, then hang up."""
+
+    def __init__(self, state: CallState) -> None:
+        super().__init__(instructions="Say nothing.", tools=[])
+        self.state = state
+
+    async def on_enter(self) -> None:
+        self.state.set_outcome("unassigned", override=True)
+        self.state.ended_reason = "unassigned_number"
+        handle = self.session.say(self.state.profile.greeting_text, allow_interruptions=False)
+        await handle.wait_for_playout()
+        if get_job_context(required=False) is None:
+            self.session.shutdown()
+            return
+        await hang_up("unassigned_number")
 
 
 class SilenceWatcher:

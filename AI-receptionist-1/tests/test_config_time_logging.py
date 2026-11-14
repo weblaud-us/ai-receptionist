@@ -14,7 +14,7 @@ from core.timeutils import business_today
 SAFE_PROD = dict(
     APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
     VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
-    META_APP_SECRET="meta-secret", LOG_LEVEL="INFO",
+    META_APP_SECRET="meta-secret", LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True,
 )
 
 

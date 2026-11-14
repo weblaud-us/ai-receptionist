@@ -1,162 +1,286 @@
+import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { CheckCircle2, Copy, XCircle } from 'lucide-react'
-import { ErrorBanner, KeyValue, PageHeader } from '@/components/app/blocks'
+import { CheckCircle2, Copy, Loader2, Plus, Save, Trash2, XCircle } from 'lucide-react'
+import { ErrorBanner, Field, KeyValue, PageHeader } from '@/components/app/blocks'
+import { HoursEditor } from '@/components/app/hours-editor'
+import { IntegrationsPanel } from '@/components/app/integrations-card'
+import { SimpleSelect } from '@/components/app/simple-select'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import { API_BASE } from '@/lib/api'
 import { titleCase } from '@/lib/format'
 import { useSystem } from '@/lib/hooks'
+import { useCtx, useTenant } from '@/lib/tenant'
+import { CURRENCIES, TIMEZONES } from '@/lib/tenant-format'
+import { useAudit, useUpdateSettings } from '@/lib/tenant-hooks'
+import type { Tenant } from '@/lib/tenant-types'
+import { useDraft } from '@/lib/use-draft'
 
-const INTEGRATION_LABELS: Record<string, string> = {
-  openai: 'OpenAI (LLM + speech-to-text)',
-  elevenlabs: 'ElevenLabs (phone voice)',
-  twilio_voice: 'Twilio voice',
-  meta_whatsapp: 'Meta WhatsApp Cloud API',
-  meta_webhook_verify_token: 'WhatsApp webhook verify token',
-  meta_webhook_signature: 'WhatsApp webhook signature check (app secret)',
-  twilio_signature_check: 'Twilio webhook signature check',
-  livekit: 'LiveKit (browser calls)',
-  public_base_url: 'Public base URL (webhooks, links)',
+type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'address' | 'timezone' | 'currency' | 'hours' |
+  'scheduling' | 'policies' | 'notifications' | 'hotel'>
+
+const CHANNELS = [{ key: 'sms', label: 'Text' }, { key: 'email', label: 'E-mail' }, { key: 'whatsapp', label: 'WhatsApp' }]
+
+export default function SettingsPage() {
+  const { can } = useTenant()
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') ?? 'business'
+  return (
+    <>
+      <PageHeader title="Settings" description="Your business details. Your assistant uses them on every call." />
+      <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) })}>
+        <TabsList>
+          <TabsTrigger value="business">Business</TabsTrigger>
+          <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          {can('admin') && <TabsTrigger value="activity">Change history</TabsTrigger>}
+          {can('admin') && <TabsTrigger value="system">System</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="business"><BusinessTab /></TabsContent>
+        <TabsContent value="integrations"><IntegrationsPanel /></TabsContent>
+        {can('admin') && <TabsContent value="activity"><AuditTab /></TabsContent>}
+        {can('admin') && <TabsContent value="system"><SystemTab /></TabsContent>}
+      </Tabs>
+    </>
+  )
 }
 
-const FEATURE_LABELS: Record<string, string> = {
-  one_day_reminder: '1-day booking reminder',
-  whatsapp: 'WhatsApp',
-  voice_calls: 'Voice calls',
-  call_recording: 'Call recording',
-  livekit_realtime: 'LiveKit realtime model',
+function BusinessTab() {
+  const ctx = useCtx()
+  const { can } = useTenant()
+  const t = ctx.tenant
+  const save = useUpdateSettings()
+  const editable = can('admin') && !ctx.legacy
+  const { draft, setDraft, dirty, reset } = useDraft<Draft>({
+    name: t.name, description: t.description, phone: t.phone, website: t.website, address: t.address, timezone: t.timezone,
+    currency: t.currency, hours: t.hours, scheduling: t.scheduling, policies: t.policies, notifications: t.notifications, hotel: t.hotel,
+  })
+  const [newPolicy, setNewPolicy] = useState('')
+  if (!draft) return null
+  const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch })
+  const n = draft.notifications
+  const toggleChannel = (event: 'on_new_booking' | 'on_message', ch: string, on: boolean) =>
+    set({ notifications: { ...n, [event]: on ? [...n[event], ch] : n[event].filter((c) => c !== ch) } })
+
+  return (
+    <div className="mt-3 space-y-4">
+      {ctx.legacy && <ErrorBanner error={new Error('These settings still come from .env. Run migration m0003 to edit them here.')} />}
+      {!can('admin') && <p className="text-sm text-muted-foreground">Only owners and admins can change settings.</p>}
+      <div className="sticky top-14 z-10 -mx-1 flex justify-end gap-2 bg-background/80 px-1 py-2 backdrop-blur">
+        {dirty && <Button variant="outline" onClick={reset}>Discard</Button>}
+        <Button disabled={!dirty || !editable || save.isPending} onClick={() => save.mutate(draft, { onSuccess: () => toast.success('Saved') })}>
+          {save.isPending ? <Loader2 className="animate-spin" /> : <Save />} Save changes
+        </Button>
+      </div>
+      <fieldset disabled={!editable} className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>Business</CardTitle></CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            <Field label="Name" className="sm:col-span-2"><Input value={draft.name} onChange={(e) => set({ name: e.target.value })} /></Field>
+            <Field label="One sentence about you" hint="e.g. Family-run plumbing in north Austin since 1998." className="sm:col-span-2">
+              <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} />
+            </Field>
+            <Field label="Public phone"><Input value={draft.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
+            <Field label="Website"><Input value={draft.website} onChange={(e) => set({ website: e.target.value })} /></Field>
+            <Field label="Street address" className="sm:col-span-2">
+              <Input value={draft.address.line1} onChange={(e) => set({ address: { ...draft.address, line1: e.target.value } })} />
+            </Field>
+            <Field label="City"><Input value={draft.address.city} onChange={(e) => set({ address: { ...draft.address, city: e.target.value } })} /></Field>
+            <Field label="State / region"><Input value={draft.address.region} onChange={(e) => set({ address: { ...draft.address, region: e.target.value } })} /></Field>
+            <Field label="Postcode"><Input value={draft.address.postal} onChange={(e) => set({ address: { ...draft.address, postal: e.target.value } })} /></Field>
+            <Field label="Country"><Input value={draft.address.country} onChange={(e) => set({ address: { ...draft.address, country: e.target.value } })} /></Field>
+            <Field label="Timezone" hint="Every time your assistant says uses this.">
+              <SimpleSelect value={draft.timezone} onChange={(v) => set({ timezone: v })}
+                options={[...new Set([draft.timezone, ...TIMEZONES])].map((z) => ({ value: z, label: z }))} />
+            </Field>
+            <Field label="Currency">
+              <SimpleSelect value={draft.currency} onChange={(v) => set({ currency: v })}
+                options={[...new Set([draft.currency, ...CURRENCIES])].map((c) => ({ value: c, label: c }))} />
+            </Field>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Opening hours</CardTitle>
+            <CardDescription>Bookings are only offered inside these hours.</CardDescription>
+          </CardHeader>
+          <CardContent><HoursEditor value={draft.hours} onChange={(hours) => set({ hours })} disabled={!editable} /></CardContent>
+        </Card>
+
+        {ctx.vertical.uses_scheduling ? (
+          <Card>
+            <CardHeader><CardTitle>Booking rules</CardTitle></CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              <Field label="Minimum notice (minutes)" hint="No same-hour surprises">
+                <Input type="number" min={0} value={draft.scheduling.min_notice_minutes}
+                  onChange={(e) => set({ scheduling: { ...draft.scheduling, min_notice_minutes: Number(e.target.value) } })} />
+              </Field>
+              <Field label="Book up to (days ahead)">
+                <Input type="number" min={1} value={draft.scheduling.max_days_ahead}
+                  onChange={(e) => set({ scheduling: { ...draft.scheduling, max_days_ahead: Number(e.target.value) } })} />
+              </Field>
+              <Field label="Start times every">
+                <SimpleSelect value={String(draft.scheduling.slot_step_minutes)}
+                  onChange={(v) => set({ scheduling: { ...draft.scheduling, slot_step_minutes: Number(v) } })}
+                  options={['5', '10', '15', '20', '30', '60'].map((v) => ({ value: v, label: `${v} minutes` }))} />
+              </Field>
+              {ctx.vertical.key === 'restaurant' && (
+                <Field label="Largest party the assistant books">
+                  <Input type="number" min={1} value={draft.scheduling.max_party_size}
+                    onChange={(e) => set({ scheduling: { ...draft.scheduling, max_party_size: Number(e.target.value) } })} />
+                </Field>
+              )}
+              <Field label="Cancellation policy" hint="Read to callers who cancel." className="sm:col-span-2">
+                <Textarea rows={2} value={draft.scheduling.cancellation_policy}
+                  onChange={(e) => set({ scheduling: { ...draft.scheduling, cancellation_policy: e.target.value } })} />
+              </Field>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader><CardTitle>Stays</CardTitle></CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              <Field label="Check-in from"><Input type="time" value={draft.hotel.checkin_time} onChange={(e) => set({ hotel: { ...draft.hotel, checkin_time: e.target.value } })} /></Field>
+              <Field label="Check-out by"><Input type="time" value={draft.hotel.checkout_time} onChange={(e) => set({ hotel: { ...draft.hotel, checkout_time: e.target.value } })} /></Field>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Policies</CardTitle>
+            <CardDescription>Short facts callers often ask about — parking, payment, pets…</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {Object.entries(draft.policies).map(([k, v]) => (
+              <div key={k} className="flex items-start gap-2">
+                <span className="w-28 shrink-0 pt-1.5 text-sm font-medium">{titleCase(k)}</span>
+                <Input value={v} onChange={(e) => set({ policies: { ...draft.policies, [k]: e.target.value } })} />
+                <Button size="icon-sm" variant="ghost" aria-label="Remove"
+                  onClick={() => { const next = { ...draft.policies }; delete next[k]; set({ policies: next }) }}><Trash2 /></Button>
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <Input placeholder="New topic, e.g. parking" value={newPolicy} onChange={(e) => setNewPolicy(e.target.value)} />
+              <Button size="sm" variant="outline" disabled={!newPolicy.trim()}
+                onClick={() => { set({ policies: { ...draft.policies, [newPolicy.trim().toLowerCase().replace(/\s+/g, '_')]: '' } }); setNewPolicy('') }}>
+                <Plus /> Add
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Notifications to you</CardTitle>
+            <CardDescription>How we tell you about new bookings and messages. Urgent messages always use every channel you've set up.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-3">
+              <Field label="Your mobile (texts)"><Input value={n.owner_phone} placeholder="+1…" onChange={(e) => set({ notifications: { ...n, owner_phone: e.target.value } })} /></Field>
+              <Field label="Your e-mail"><Input value={n.owner_email} onChange={(e) => set({ notifications: { ...n, owner_email: e.target.value } })} /></Field>
+              <Field label="WhatsApp numbers" hint="Comma-separated"><Input value={n.owner_whatsapp} onChange={(e) => set({ notifications: { ...n, owner_whatsapp: e.target.value } })} /></Field>
+            </div>
+            <div className="space-y-3 text-sm">
+              {([['on_new_booking', 'New booking'], ['on_message', 'Message or job request']] as const).map(([event, label]) => (
+                <div key={event}>
+                  <div className="mb-1 font-medium">{label}</div>
+                  <div className="flex gap-4">
+                    {CHANNELS.map((c) => (
+                      <label key={c.key} className="flex items-center gap-2">
+                        <Checkbox checked={n[event].includes(c.key)} onCheckedChange={(on) => toggleChannel(event, c.key, !!on)} /> {c.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <label className="flex items-center gap-2">
+                <Switch checked={n.daily_digest} onCheckedChange={(v) => set({ notifications: { ...n, daily_digest: v } })} /> Daily summary e-mail
+              </label>
+            </div>
+          </CardContent>
+        </Card>
+      </fieldset>
+    </div>
+  )
 }
 
-const WEBHOOK_LABELS: Record<string, string> = {
-  twilio_voice: 'Twilio — voice webhook (POST)',
-  twilio_status: 'Twilio — status callback (POST)',
-  meta_whatsapp: 'Meta — WhatsApp webhook (GET/POST)',
+function AuditTab() {
+  const q = useAudit()
+  return (
+    <Card className="mt-3">
+      <CardContent className="space-y-1">
+        {q.isLoading && <Skeleton className="h-40" />}
+        {q.data?.entries.length === 0 && <p className="text-sm text-muted-foreground">No changes recorded yet.</p>}
+        {q.data?.entries.map((e) => (
+          <div key={e.id} className="flex flex-wrap justify-between gap-2 border-b py-1.5 text-sm">
+            <span><span className="font-medium">{e.action}</span> <span className="text-muted-foreground">{Object.keys(e.diff ?? {}).join(', ')}</span></span>
+            <span className="text-xs text-muted-foreground">{new Date(e.at).toLocaleString()} · {e.user_id}</span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
 }
 
 function copy(text: string) {
   void navigator.clipboard.writeText(text).then(() => toast.success('Copied'))
 }
 
-export default function SettingsPage() {
+function SystemTab() {
   const q = useSystem()
   const s = q.data
-
   return (
-    <>
-      <PageHeader
-        title="Settings"
-        description="Read-only view of how the server is configured. Change values in the backend's .env file and restart it."
-      />
-      {q.error && <ErrorBanner error={q.error} onRetry={() => void q.refetch()} />}
-      {q.isLoading && <Skeleton className="h-96" />}
-
+    <div className="mt-3 grid gap-4 lg:grid-cols-2">
+      {q.error && <ErrorBanner error={q.error} />}
       {s && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <>
           <Card>
-            <CardHeader>
-              <CardTitle>Hotel profile</CardTitle>
-              <CardDescription>Used in every greeting, quote and confirmation.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <KeyValue label="Name">{s.hotel.name}</KeyValue>
-              <KeyValue label="Receptionist">{s.hotel.receptionist_name}</KeyValue>
-              <KeyValue label="Phone">{s.hotel.phone}</KeyValue>
-              <KeyValue label="Address">{s.hotel.address}</KeyValue>
-              <KeyValue label="Check-in">{s.hotel.checkin_time}</KeyValue>
-              <KeyValue label="Check-out">{s.hotel.checkout_time}</KeyValue>
-              <KeyValue label="Currency">{s.hotel.currency}</KeyValue>
-              <KeyValue label="Timezone">{s.hotel.timezone}</KeyValue>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Server</CardTitle>
-              <CardDescription>Connection and environment.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Server</CardTitle></CardHeader>
             <CardContent>
               <KeyValue label="Dashboard → API">{API_BASE}</KeyValue>
               <KeyValue label="Environment">{s.environment.app_env}</KeyValue>
-              <KeyValue label="Debug mode">
-                {s.environment.debug ? <Badge variant="destructive">On — turn off in production</Badge> : 'Off'}
-              </KeyValue>
-              <KeyValue label="AI model">{s.environment.llm_model}</KeyValue>
-              <KeyValue label="Database">
-                <Status ok={s.database.connected} yes={`Connected · ${s.environment.db_name}`} no="Disconnected" />
-              </KeyValue>
-              <KeyValue label="Conversation memory">
-                {s.memory.days} days · {s.memory.max_messages} messages
-              </KeyValue>
-              {Object.entries(s.collections).map(([k, v]) => (
-                <KeyValue key={k} label={`${titleCase(k)} stored`}>
-                  {v.toLocaleString()}
-                </KeyValue>
-              ))}
+              <KeyValue label="Debug mode">{s.environment.debug ? <Badge variant="destructive">On</Badge> : 'Off'}</KeyValue>
+              <KeyValue label="Database"><Status ok={s.database.connected} yes="Connected" no="Disconnected" /></KeyValue>
             </CardContent>
           </Card>
-
           <Card>
-            <CardHeader>
-              <CardTitle>Integrations</CardTitle>
-              <CardDescription>Whether credentials are present (values are never shown).</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Integrations</CardTitle><CardDescription>Whether credentials are present (values are never shown).</CardDescription></CardHeader>
             <CardContent>
               {Object.entries(s.integrations).map(([k, ok]) => (
-                <KeyValue key={k} label={INTEGRATION_LABELS[k] ?? titleCase(k)}>
-                  <Status ok={ok} yes="Configured" no="Missing" />
-                </KeyValue>
+                <KeyValue key={k} label={titleCase(k)}><Status ok={ok} yes="Configured" no="Missing" /></KeyValue>
               ))}
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Feature flags</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {Object.entries(s.features).map(([k, on]) => (
-                <KeyValue key={k} label={FEATURE_LABELS[k] ?? titleCase(k)}>
-                  <Badge variant={on ? 'default' : 'outline'}>{on ? 'On' : 'Off'}</Badge>
-                </KeyValue>
-              ))}
-            </CardContent>
-          </Card>
-
           <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Webhook URLs</CardTitle>
-              <CardDescription>Paste these into the Twilio and Meta developer consoles.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Webhook URLs</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {Object.entries(s.webhooks).map(([k, url]) => (
                 <div key={k} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <div className="text-xs text-muted-foreground">{WEBHOOK_LABELS[k] ?? k}</div>
-                    <div className="truncate font-mono">{url.startsWith('/') ? `(set WEBHOOK_BASE_URL) ${url}` : url}</div>
-                  </div>
-                  <Button size="icon-sm" variant="ghost" aria-label="Copy" disabled={url.startsWith('/')} onClick={() => copy(url)}>
-                    <Copy />
-                  </Button>
+                  <div className="min-w-0"><div className="text-xs text-muted-foreground">{titleCase(k)}</div><div className="truncate font-mono">{url}</div></div>
+                  <Button size="icon-sm" variant="ghost" aria-label="Copy" onClick={() => copy(url)}><Copy /></Button>
                 </div>
               ))}
             </CardContent>
           </Card>
-        </div>
+        </>
       )}
-    </>
+    </div>
   )
 }
 
 function Status({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return ok ? (
-    <span className="inline-flex items-center gap-1 text-emerald-600">
-      <CheckCircle2 className="size-4" /> {yes}
-    </span>
+    <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 className="size-4" /> {yes}</span>
   ) : (
-    <span className="inline-flex items-center gap-1 text-rose-600">
-      <XCircle className="size-4" /> {no}
-    </span>
+    <span className="inline-flex items-center gap-1 text-rose-600"><XCircle className="size-4" /> {no}</span>
   )
 }

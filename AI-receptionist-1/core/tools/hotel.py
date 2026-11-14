@@ -5,6 +5,9 @@ Used by the voice agent, WhatsApp and the dashboard API. AI channels must go thr
 `core.tools.registry.run_tool()` (ownership checks + timeouts); the dashboard API, which is
 authenticated and may see every booking, calls the plain methods directly.
 
+Phase 2: `HotelToolExecutor(tenant)` is scoped to one tenant - every rooms/bookings/guests query
+carries that tenant's id (except for the pre-migration legacy hotel, whose documents have none).
+
 Speed rules (Roadmap Task 1.9): every tool makes as few Mongo round trips as possible
 (availability = one rooms query + one bookings query, alternatives included) and never waits
 on an external HTTP API inside a voice turn.
@@ -23,16 +26,13 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 from config import settings
 from core.phone import digits, phones_match
 from core.timeutils import business_today
+from core.tenancy.models import TenantConfig, legacy_hotel_tenant
 from database.mongodb import get_db
-from database.tenancy import get_hotel_profile
+from database.tenancy import tenant_profile
 from database.models import Booking, BookingStatus, RoomType, PricingBreakdown
 from services.calendar import build_booking_calendar_links, generate_calendar_token
 
 logger = logging.getLogger(__name__)
-
-
-def _hotel_today() -> date:
-    return business_today(get_hotel_profile().get("timezone"))
 
 
 def new_booking_id() -> str:
@@ -87,14 +87,14 @@ async def drain_background_tasks() -> None:
         await asyncio.gather(*list(_background_tasks), return_exceptions=True)
 
 
-async def occupied_nights_by_room(db: Any, start: str, end: str) -> Dict[str, Set[str]]:
+async def occupied_nights_by_room(db: Any, start: str, end: str, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Set[str]]:
     """
     One query: every night in [start, end) that is taken, per room_id.
     A booking occupies the nights [check_in_date, check_out_date) — the check-out day is free.
     """
     taken: Dict[str, Set[str]] = {}
     cursor = db.bookings.find(
-        {"status": {"$in": ACTIVE_STATUSES}, "check_in_date": {"$lt": end}, "check_out_date": {"$gt": start}},
+        {**(scope or {}), "status": {"$in": ACTIVE_STATUSES}, "check_in_date": {"$lt": end}, "check_out_date": {"$gt": start}},
         {"room_id": 1, "check_in_date": 1, "check_out_date": 1},
     )
     for b in await cursor.to_list(length=5000):
@@ -327,11 +327,24 @@ class HotelToolExecutor:
     authenticated dashboard API, which is allowed to see every booking.
     """
 
-    def __init__(self):
+    def __init__(self, tenant: Optional[TenantConfig] = None):
         self.db = None
+        self.tenant = tenant or legacy_hotel_tenant()
+        self.profile = tenant_profile(self.tenant)
+        self.tenant_id = self.tenant.id
 
     def _get_db(self):
         return get_db()
+
+    def _scope(self, q: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Tenant filter for every query. The legacy .env hotel's documents carry no tenant_id."""
+        q = dict(q or {})
+        if not self.tenant.is_legacy:
+            q["tenant_id"] = self.tenant_id
+        return q
+
+    def _today(self) -> date:
+        return business_today(self.tenant.timezone)
 
     async def execute(self, tool_name: str, arguments: Dict, *, caller_phone: Optional[str] = None) -> str:
         """Route an AI tool call to its handler and return a JSON string result."""
@@ -389,7 +402,7 @@ class HotelToolExecutor:
         if not booking_id:
             return {"error": "booking_id_required", "message": "Ask the guest for their booking ID."}
 
-        booking = await db.bookings.find_one({"booking_id": booking_id})
+        booking = await db.bookings.find_one(self._scope({"booking_id": booking_id}))
         if not booking:
             return NOT_FOUND
         owns = _caller_owns(booking, caller_phone)
@@ -429,7 +442,7 @@ class HotelToolExecutor:
         try:
             from whatsapp.meta_handler import _send_meta_whatsapp
 
-            profile = get_hotel_profile()
+            profile = self.profile
             await _send_meta_whatsapp(
                 phone,
                 f"Your booking {booking.get('booking_id')} at {profile['name']} "
@@ -454,21 +467,21 @@ class HotelToolExecutor:
 
         if checkin >= checkout:
             return {"error": "Check-out must be after check-in"}
-        if checkin < _hotel_today():
+        if checkin < self._today():
             return {"error": "Check-in date cannot be in the past"}
 
         nights = (checkout - checkin).days
         total_capacity = int(adults or 1) + int(children or 0)
-        currency = get_hotel_profile()["currency"]
+        currency = self.profile["currency"]
 
         # Round trip 1: every active room that fits the party (all types — alternatives need them).
         rooms = await db.rooms.find(
-            {"is_active": True, "is_maintenance": False, "capacity": {"$gte": total_capacity}}
+            self._scope({"is_active": True, "is_maintenance": False, "capacity": {"$gte": total_capacity}})
         ).to_list(length=500)
 
         # Round trip 2: every booked night in the stay AND in the alternative-dates window.
         window_end = (checkout + timedelta(days=ALTERNATIVE_DATE_WINDOW_DAYS)).isoformat()
-        taken = await occupied_nights_by_room(db, check_in_date, window_end)
+        taken = await occupied_nights_by_room(db, check_in_date, window_end, self._scope())
 
         stay = set(_nights(check_in_date, check_out_date))
 
@@ -575,9 +588,9 @@ class HotelToolExecutor:
 
         room = None
         if room_id:
-            room = await db.rooms.find_one({"_id": room_id, "is_active": True})
+            room = await db.rooms.find_one(self._scope({"_id": room_id, "is_active": True}))
         if not room:
-            room = await db.rooms.find_one({"room_type": room_type, "is_active": True})
+            room = await db.rooms.find_one(self._scope({"room_type": room_type, "is_active": True}))
         if not room:
             return {"error": f"No {room_type} rooms found"}
 
@@ -593,7 +606,7 @@ class HotelToolExecutor:
             "tax_15pct": quote["tax"],          # legacy key name (tax % is per room)
             "tax": quote["tax"],
             "final_total": quote["final_total"],
-            "currency": get_hotel_profile()["currency"],
+            "currency": self.profile["currency"],
             "amenities_included": ["WiFi", "AC", "TV"] + (["Breakfast"] if room["amenities"].get("breakfast_included") else []),
         }
 
@@ -663,7 +676,7 @@ class HotelToolExecutor:
 
     async def _claim_room_nights(self, db: Any, room_id: str, booking_id: str, nights: List[str]) -> bool:
         now = datetime.utcnow()
-        docs = [{"room_id": room_id, "night": n, "booking_id": booking_id, "created_at": now} for n in nights]
+        docs = [self._scope({"room_id": room_id, "night": n, "booking_id": booking_id, "created_at": now}) for n in nights]
         try:
             await db.room_nights.insert_many(docs, ordered=True)
             return True
@@ -692,12 +705,12 @@ class HotelToolExecutor:
             final_total=pricing_data["final_total"],
             per_night_avg=pricing_data["price_per_night"],
             nights=nights,
-            currency=get_hotel_profile()["currency"],
+            currency=self.profile["currency"],
         )
 
         # Upsert guest profile
         await db.guests.update_one(
-            {"phone": guest_phone},
+            self._scope({"phone": guest_phone}),
             {
                 "$set": {
                     "name": guest_name,
@@ -706,7 +719,7 @@ class HotelToolExecutor:
                     "updated_at": datetime.utcnow(),
                 },
                 "$inc": {"total_stays": 0},  # don't increment yet
-                "$setOnInsert": {"created_at": datetime.utcnow(), "vip_tier": "standard"},
+                "$setOnInsert": self._scope({"created_at": datetime.utcnow(), "vip_tier": "standard"}),
             },
             upsert=True,
         )
@@ -737,15 +750,16 @@ class HotelToolExecutor:
         doc["calendar_token"] = generate_calendar_token(booking.booking_id, guest_phone)
         doc["one_day_reminder_sent"] = False
         doc["one_day_reminder_sent_at"] = None
+        doc.update(self._scope())
         await db.bookings.insert_one(doc)
 
         # Update guest stay count
         await db.guests.update_one(
-            {"phone": guest_phone},
+            self._scope({"phone": guest_phone}),
             {"$inc": {"total_stays": 1}}
         )
 
-        profile = get_hotel_profile()
+        profile = self.profile
         calendar_links = build_booking_calendar_links(
             booking_id=booking.booking_id,
             calendar_token=doc["calendar_token"],
@@ -799,7 +813,7 @@ class HotelToolExecutor:
         elif guest_phone:
             query["guest_phone"] = {"$in": phone_variants(guest_phone)}
 
-        bookings = await db.bookings.find(query).sort("created_at", -1).limit(5).to_list(5)
+        bookings = await db.bookings.find(self._scope(query)).sort("created_at", -1).limit(5).to_list(5)
 
         if not bookings:
             return {"found": False, "message": "No bookings found"}
@@ -826,7 +840,7 @@ class HotelToolExecutor:
         cancellation_reason: Optional[str] = None,
     ) -> Dict:
         db = self._get_db()
-        booking = await db.bookings.find_one({"booking_id": booking_id.upper()})
+        booking = await db.bookings.find_one(self._scope({"booking_id": booking_id.upper()}))
 
         if not booking:
             return {"error": f"Booking {booking_id} not found"}
@@ -836,7 +850,7 @@ class HotelToolExecutor:
 
         # Check-in is today or passed - no free cancellation
         checkin = date.fromisoformat(str(booking["check_in_date"]))
-        today = _hotel_today()
+        today = self._today()
         days_until_checkin = (checkin - today).days
 
         cancellation_fee = 0
@@ -850,7 +864,7 @@ class HotelToolExecutor:
             note = "Free cancellation"
 
         await db.bookings.update_one(
-            {"booking_id": booking_id.upper()},
+            self._scope({"booking_id": booking_id.upper()}),
             {
                 "$set": {
                     "status": "cancelled",
@@ -868,20 +882,20 @@ class HotelToolExecutor:
             "booking_id": booking_id.upper(),
             "status": "cancelled",
             "cancellation_fee": cancellation_fee,
-            "currency": get_hotel_profile()["currency"],
+            "currency": self.profile["currency"],
             "note": note,
         }
 
     async def get_hotel_info(self, info_type: str) -> Dict:
         info_map = {
             "general": {
-                "name": get_hotel_profile()["name"],
-                "address": get_hotel_profile()["address"],
-                "phone": get_hotel_profile()["phone"],
-                "check_in_time": get_hotel_profile()["checkin_time"],
-                "check_out_time": get_hotel_profile()["checkout_time"],
+                "name": self.profile["name"],
+                "address": self.profile["address"],
+                "phone": self.profile["phone"],
+                "check_in_time": self.profile["checkin_time"],
+                "check_out_time": self.profile["checkout_time"],
                 "stars": 5,
-                "description": f"{get_hotel_profile()['name']} offers world-class hospitality.",
+                "description": f"{self.profile['name']} offers world-class hospitality.",
             },
             "amenities": {
                 "facilities": ["Swimming Pool", "Spa & Wellness Center", "Fitness Center", "Business Center",
@@ -890,8 +904,8 @@ class HotelToolExecutor:
                 "dining": ["The Grand Restaurant (International)", "Spice Garden (Bengali & Asian)", "Sky Lounge Bar"],
             },
             "policies": {
-                "check_in": get_hotel_profile()["checkin_time"],
-                "check_out": get_hotel_profile()["checkout_time"],
+                "check_in": self.profile["checkin_time"],
+                "check_out": self.profile["checkout_time"],
                 "early_check_in": "Available from 10:00 AM (subject to availability, extra charge may apply)",
                 "late_check_out": "Until 2:00 PM (subject to availability)",
                 "cancellation": "Free cancellation 3+ days before arrival. 50% fee within 3 days. 100% same day.",
@@ -901,7 +915,7 @@ class HotelToolExecutor:
                 "id_required": "Valid national ID or passport required at check-in",
             },
             "location": {
-                "address": get_hotel_profile()["address"],
+                "address": self.profile["address"],
                 "landmarks": ["5 min from Bashundhara City", "10 min from Hazrat Shahjalal Airport", "Near Gulshan-2"],
                 "transport": "Airport transfer available (please book in advance)",
             },
@@ -930,7 +944,7 @@ class HotelToolExecutor:
         logger.info("📱 Sending WhatsApp confirmation for booking %s", booking_id)
         
         # Find the booking
-        booking = await db.bookings.find_one({"booking_id": booking_id.upper()})
+        booking = await db.bookings.find_one(self._scope({"booking_id": booking_id.upper()}))
         if not booking:
             logger.warning("Booking %s not found", booking_id)
             return {"success": False, "error": f"Booking {booking_id} not found"}
@@ -938,7 +952,7 @@ class HotelToolExecutor:
         
         # Get Meta WhatsApp credentials
         token = (settings.META_WA_ACCESS_TOKEN or "").strip()
-        phone_number_id = (settings.META_WA_PHONE_NUMBER_ID or "").strip()
+        phone_number_id = (self.profile.get("meta_whatsapp_phone_number_id") or settings.META_WA_PHONE_NUMBER_ID or "").strip()
         
         if not token:
             logger.error("META_WA_ACCESS_TOKEN missing")
@@ -949,7 +963,7 @@ class HotelToolExecutor:
             return {"success": False, "error": "WhatsApp not configured - META_WA_PHONE_NUMBER_ID missing"}
         
         # Get hotel profile for message details
-        profile = get_hotel_profile()
+        profile = self.profile
         
         # Build confirmation message
         children_str = f" + {booking.get('children', 0)} children" if booking.get("children", 0) > 0 else ""
@@ -1001,7 +1015,7 @@ class HotelToolExecutor:
                 
                 # Update booking to mark confirmation sent
                 await db.bookings.update_one(
-                    {"booking_id": booking_id.upper()},
+                    self._scope({"booking_id": booking_id.upper()}),
                     {"$set": {"whatsapp_confirmation_sent": True, "whatsapp_confirmation_sent_at": datetime.utcnow()}}
                 )
                 

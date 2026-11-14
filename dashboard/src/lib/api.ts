@@ -1,29 +1,59 @@
-const TOKEN_KEY = 'hotel_admin_token'
-const USER_KEY = 'hotel_admin_user'
+/**
+ * API client.
+ *
+ * Auth (Roadmap Task 2.10): the short-lived access token lives in memory only — never in
+ * localStorage, where any XSS could read it. The refresh token is an httpOnly cookie the browser
+ * sends to /auth/* only. On a 401 the client refreshes once and retries the request.
+ *
+ * Tenant: platform admins (and members of several businesses) pick the business they act on;
+ * it is sent as X-Tenant-Id. Only the id is stored in localStorage — it isn't a secret.
+ */
+
+const TENANT_KEY = 'rcpt_active_tenant'
 
 export const API_BASE: string = (
   (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8002'
 ).replace(/\/$/, '')
 
-export const authStore = {
+let accessToken: string | null = null
+
+function readTenant(): string | null {
+  try {
+    return localStorage.getItem(TENANT_KEY)
+  } catch {
+    return null
+  }
+}
+
+let tenantOverride: string | null = readTenant()
+
+export const session = {
   get token() {
-    return localStorage.getItem(TOKEN_KEY)
+    return accessToken
   },
-  get user() {
-    return localStorage.getItem(USER_KEY)
+  setToken(token: string | null) {
+    accessToken = token
   },
-  set(token: string, user: string) {
-    localStorage.setItem(TOKEN_KEY, token)
-    localStorage.setItem(USER_KEY, user)
+  get tenant() {
+    return tenantOverride
+  },
+  setTenant(tenantId: string | null) {
+    tenantOverride = tenantId
+    try {
+      if (tenantId) localStorage.setItem(TENANT_KEY, tenantId)
+      else localStorage.removeItem(TENANT_KEY)
+    } catch {
+      /* private mode: the override lasts for this tab only */
+    }
   },
   clear() {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USER_KEY)
+    accessToken = null
+    this.setTenant(null)
   },
 }
 
-/** Fired when the API answers 401 on an authenticated call, so the app can return to /login. */
-export const UNAUTHORIZED_EVENT = 'hotel-admin-unauthorized'
+/** Fired when the session can't be renewed, so the app can return to /login. */
+export const UNAUTHORIZED_EVENT = 'rcpt-unauthorized'
 
 export class ApiError extends Error {
   status: number
@@ -40,6 +70,7 @@ interface RequestOptions {
   params?: Params
   body?: unknown
   auth?: boolean
+  tenant?: string | null // override the active tenant for this call
 }
 
 function errorMessage(data: unknown, fallback: string): string {
@@ -58,7 +89,53 @@ function errorMessage(data: unknown, fallback: string): string {
   return fallback
 }
 
-export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
+export interface TokenResponse {
+  access_token: string | null
+  expires_in?: number
+  tenant_id: string | null
+  role: string | null
+  user?: { id: string; email: string; name: string; is_platform_admin: boolean; mfa_enabled?: boolean }
+  memberships?: Membership[]
+  mfa_required?: boolean
+  mfa_token?: string
+}
+
+export interface Membership {
+  tenant_id: string
+  name: string
+  vertical: string
+  status: string
+  role: string
+}
+
+let refreshing: Promise<TokenResponse | null> | null = null
+
+/** Exchange the refresh cookie for a new access token. Single-flight: concurrent 401s share one call. */
+export function refreshSession(tenantId?: string | null): Promise<TokenResponse | null> {
+  if (refreshing && !tenantId) return refreshing
+  const run = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {}),
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as TokenResponse
+      accessToken = data.access_token
+      return data
+    } catch {
+      return null
+    } finally {
+      refreshing = null
+    }
+  })()
+  if (!tenantId) refreshing = run
+  return run
+}
+
+async function send(path: string, opts: RequestOptions): Promise<Response> {
   const { method = 'GET', params, body, auth = true } = opts
   const url = new URL(API_BASE + path)
   if (params) {
@@ -66,20 +143,29 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
     }
   }
-
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  if (auth && authStore.token) headers.Authorization = `Bearer ${authStore.token}`
-
-  let res: Response
+  if (auth && accessToken) headers.Authorization = `Bearer ${accessToken}`
+  const tenant = opts.tenant !== undefined ? opts.tenant : tenantOverride
+  if (auth && tenant) headers['X-Tenant-Id'] = tenant
   try {
-    res = await fetch(url, {
+    return await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      credentials: path.startsWith('/auth/') ? 'include' : 'omit',
     })
   } catch {
     throw new ApiError(0, `Cannot reach the API at ${API_BASE}. Is the backend running?`)
+  }
+}
+
+export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const auth = opts.auth ?? true
+  let res = await send(path, opts)
+  if (res.status === 401 && auth && !path.startsWith('/auth/')) {
+    const renewed = await refreshSession()
+    if (renewed) res = await send(path, opts)
   }
 
   let data: unknown = null
@@ -93,8 +179,8 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
   }
 
   if (!res.ok) {
-    if (res.status === 401 && auth) {
-      authStore.clear()
+    if (res.status === 401 && auth && !path.startsWith('/auth/')) {
+      accessToken = null
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
     }
     throw new ApiError(res.status, errorMessage(data, `Request failed (${res.status})`))

@@ -1,80 +1,28 @@
 """
 The business a call is for, as plain data — built once at call start, read from memory after.
 
-Phase 1 is single-tenant: the profile comes from settings. Phase 2 replaces `load_profile()`
-with a lookup of the tenant that owns the dialled number (`sip.trunkPhoneNumber`).
+Phase 2: the profile wraps the tenant that owns the dialled number (`sip.trunkPhoneNumber`),
+plus a snapshot of its services, staff and FAQs for the prompt. `resolve_profile()` is the
+async lookup the worker uses; `load_profile()` is the synchronous legacy-hotel profile that
+tests and evals build without a database.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime
 from typing import Optional
 
-from config import settings
+from core.prompts.builder import BusinessSnapshot
+from core.prompts.verticals import get_vertical
+from core.repositories import Repos
+from core.services.snapshot import load_snapshot
+from core.tenancy import resolve_by_id, resolve_by_phone_number
+from core.tenancy.models import TenantConfig, legacy_hotel_tenant, parse_hours  # noqa: F401  (re-exported)
 from core.timeutils import business_now
-from database.tenancy import get_hotel_profile
+from database.mongodb import get_db
 
-_HOURS_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
-
-
-@dataclass(frozen=True)
-class VoiceProfile:
-    business_id: str
-    business_name: str
-    business_type: str
-    agent_name: str
-    address: str
-    phone: str
-    timezone: str
-    currency: str
-    checkin_time: str
-    checkout_time: str
-    stt_language: str
-    tts_language: str
-    llm_model: str
-    voice_id: str
-    transfer_number: str = ""
-    transfer_hours: str = ""
-    recording: bool = False
-    keyterms: tuple[str, ...] = field(default_factory=tuple)
-
-    @property
-    def greeting_text(self) -> str:
-        # ⚖ AI disclosure in the first sentence (EU AI Act, US state bot laws, UAE TDRA). Keep ≤ 4 s.
-        text = (f"Thanks for calling {self.business_name}, this is {self.agent_name}, "
-                f"the hotel's virtual assistant.")
-        if self.recording:
-            text += " This call may be recorded."
-        return text + " How can I help?"
-
-    def transfer_open(self, now: Optional[datetime] = None) -> bool:
-        """True when transfer_to_human may ring staff right now (business-local time)."""
-        if not self.transfer_number:
-            return False
-        hours = parse_hours(self.transfer_hours)
-        if hours is None:
-            return True
-        start, end = hours
-        local = business_now(self.timezone, now).time()
-        if start <= end:
-            return start <= local < end
-        return local >= start or local < end      # overnight window, e.g. 20:00-06:00
-
-
-def parse_hours(spec: str) -> Optional[tuple[time, time]]:
-    """'09:00-21:00' → (09:00, 21:00). Empty or malformed → None (no restriction)."""
-    m = _HOURS_RE.match(spec or "")
-    if not m:
-        return None
-    h1, m1, h2, m2 = (int(g) for g in m.groups())
-    if h2 == 24 and m2 == 0:
-        h2, m2 = 23, 59
-    try:
-        return time(h1, m1), time(h2, m2)
-    except ValueError:
-        return None
+UNASSIGNED_MESSAGE = "Sorry, this number isn't set up yet. Please try again later. Goodbye."
 
 
 def _language_base(language: str) -> str:
@@ -83,27 +31,108 @@ def _language_base(language: str) -> str:
     return "en" if base == "multi" else base
 
 
+@dataclass(frozen=True)
+class VoiceProfile:
+    tenant: TenantConfig
+    snapshot: BusinessSnapshot = field(default_factory=BusinessSnapshot)
+
+    # ── Flat accessors (the agent never reaches into nested config) ─────
+    @property
+    def business_id(self) -> str:
+        return self.tenant.id
+
+    @property
+    def business_name(self) -> str:
+        return self.tenant.name
+
+    @property
+    def business_type(self) -> str:
+        return self.tenant.vertical
+
+    @property
+    def agent_name(self) -> str:
+        return self.tenant.agent.name
+
+    @property
+    def timezone(self) -> str:
+        return self.tenant.timezone
+
+    @property
+    def stt_language(self) -> str:
+        return self.tenant.agent.stt_language or "en-US"
+
+    @property
+    def tts_language(self) -> str:
+        return _language_base(self.tenant.agent.language)
+
+    @property
+    def llm_model(self) -> str:
+        return self.tenant.llm_model
+
+    @property
+    def voice_id(self) -> str:
+        return self.tenant.voice_id
+
+    @property
+    def voice_provider(self) -> str:
+        return self.tenant.agent.voice_provider
+
+    @property
+    def transfer_number(self) -> str:
+        return self.tenant.transfer.number
+
+    @property
+    def recording(self) -> bool:
+        return self.tenant.agent.recording.enabled
+
+    @property
+    def large_kb(self) -> bool:
+        return self.snapshot.large_kb
+
+    @property
+    def keyterms(self) -> tuple[str, ...]:
+        """Words STT should expect: business and agent names, vertical vocabulary, service names."""
+        spec = get_vertical(self.tenant.vertical)
+        words = [self.tenant.name, self.tenant.agent.name, *spec.keyterms]
+        words += [s["name"] for s in self.snapshot.services[:20] if s.get("name")]
+        words += [r["name"] for r in self.snapshot.resources[:20] if r.get("name")]
+        seen: set[str] = set()
+        out: list[str] = []
+        for w in words:
+            if w and w.lower() not in seen:
+                seen.add(w.lower())
+                out.append(w)
+        return tuple(out)
+
+    @property
+    def greeting_text(self) -> str:
+        return self.tenant.greeting_text()
+
+    def transfer_open(self, now: Optional[datetime] = None) -> bool:
+        """True when transfer_to_human may ring staff right now (business-local time)."""
+        return self.tenant.transfer_open(business_now(self.tenant.timezone, now))
+
+
 def load_profile(dialed_number: Optional[str] = None) -> VoiceProfile:
-    """Phase 1: the single hotel. `dialed_number` becomes the tenant key in Phase 2."""
-    hotel = get_hotel_profile()
-    return VoiceProfile(
-        business_id=hotel["hotel_id"],
-        business_name=hotel["name"],
-        business_type="hotel",
-        agent_name=hotel["receptionist_name"],
-        address=hotel["address"],
-        phone=hotel["phone"],
-        timezone=hotel["timezone"],
-        currency=hotel["currency"],
-        checkin_time=hotel["checkin_time"],
-        checkout_time=hotel["checkout_time"],
-        stt_language=settings.VOICE_LANGUAGE,
-        tts_language=_language_base(settings.VOICE_LANGUAGE),
-        llm_model=settings.VOICE_LLM_MODEL,
-        voice_id=settings.ELEVENLABS_VOICE_ID,
-        transfer_number=settings.TRANSFER_PHONE_NUMBER.strip(),
-        transfer_hours=settings.TRANSFER_HOURS.strip(),
-        recording=settings.ENABLE_CALL_RECORDING,
-        # Words STT should expect: the business and agent names, and the room types.
-        keyterms=(hotel["name"], hotel["receptionist_name"], "deluxe", "suite", "presidential"),
-    )
+    """The legacy .env hotel, without a database (tests, evals, the pre-migration deployment)."""
+    return VoiceProfile(tenant=legacy_hotel_tenant())
+
+
+def unassigned_profile() -> VoiceProfile:
+    """What a caller to a number nobody owns gets: a neutral message, then goodbye."""
+    t = TenantConfig(_id="unassigned", name="this number", slug="unassigned", vertical="generic")
+    t.agent.greeting = UNASSIGNED_MESSAGE
+    return VoiceProfile(tenant=t)
+
+
+async def resolve_profile(*, dialed_number: Optional[str] = None,
+                          tenant_id: Optional[str] = None) -> Optional[VoiceProfile]:
+    """
+    The tenant for this call, with its business snapshot. None = unknown number / unknown tenant.
+    Phone calls resolve by the dialled number; browser calls carry the tenant id in the token.
+    """
+    tenant = await resolve_by_id(tenant_id) if tenant_id else await resolve_by_phone_number(dialed_number)
+    if tenant is None or not tenant.active:
+        return None
+    snapshot = await load_snapshot(Repos(get_db(), tenant.id), tenant)
+    return VoiceProfile(tenant=tenant, snapshot=snapshot)

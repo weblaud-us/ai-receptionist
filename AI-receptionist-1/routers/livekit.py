@@ -19,7 +19,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from config import settings
 from core.signed_links import CALL_LINK_TTL_SECONDS, verify_call_room
-from database.tenancy import get_hotel_profile
+from core.tenancy import resolve_by_id
+from core.tenancy.models import legacy_hotel_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,13 @@ async def livekit_token(
     room: str = Query(..., min_length=3, max_length=64),
     exp: Optional[int] = Query(default=None),
     sig: Optional[str] = Query(default=None, max_length=64),
+    t: Optional[str] = Query(default=None, max_length=40, description="tenant id the link was signed for"),
 ):
-    if not verify_call_room(room, exp, sig):
+    if not verify_call_room(room, exp, sig, tenant_id=t):
         raise HTTPException(status_code=403, detail="This call link is invalid or has expired.")
+    tenant = (await resolve_by_id(t)) if t else legacy_hotel_tenant()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="This business is no longer available.")
 
     if not settings.LIVEKIT_API_KEY or not settings.LIVEKIT_API_SECRET or not settings.LIVEKIT_URL:
         logger.error("LiveKit not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)")
@@ -57,12 +62,13 @@ async def livekit_token(
     from livekit import api
 
     identity = f"guest_{uuid.uuid4().hex[:8]}"  # server-chosen; never trust a client identity
-    profile = get_hotel_profile()
 
     token = (
         api.AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
         .with_identity(identity)
         .with_ttl(timedelta(seconds=CALL_LINK_TTL_SECONDS))
+        # Server-signed, so the worker can trust it: which business this browser call is for.
+        .with_attributes({"tenant_id": tenant.id})
         .with_grants(api.VideoGrants(
             room_join=True,
             room=room,                # this room only
@@ -83,7 +89,8 @@ async def livekit_token(
         "url": settings.LIVEKIT_URL,
         "room": room,
         "identity": identity,
-        "hotel_name": profile["name"],
-        "receptionist_name": profile["receptionist_name"],
-        "hotel_phone": profile["phone"],
+        "hotel_name": tenant.name,
+        "business_name": tenant.name,
+        "receptionist_name": tenant.agent.name,
+        "hotel_phone": tenant.phone,
     }, headers={"Cache-Control": "no-store"})

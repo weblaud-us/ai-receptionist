@@ -10,15 +10,19 @@ from typing import Any, Optional
 from agent.profile import VoiceProfile
 from core.tools.registry import ToolContext
 
+# A booking beats 'completed', a transfer beats everything.
+_OUTCOME_RANK = {"completed": 0, "faq": 1, "cancelled": 2, "message": 3, "rescheduled": 4, "booked": 5,
+                 "voicemail": 5, "transferred": 6}
+
 
 @dataclass
 class CallState:
     call_id: str                              # the LiveKit room name
     profile: VoiceProfile
-    channel: str = "phone"                    # "phone" (SIP) | "browser" (WhatsApp call link)
+    channel: str = "phone"                    # "phone" (SIP) | "browser" (dashboard test / WhatsApp call link)
     direction: str = "inbound"                # "inbound" | "outbound" (Phase 4)
     caller_phone: Optional[str] = None        # SIP caller ID; None for browser calls
-    dialed_number: Optional[str] = None       # sip.trunkPhoneNumber → tenant key in Phase 2
+    dialed_number: Optional[str] = None       # sip.trunkPhoneNumber → the tenant's number
     sip_call_id: Optional[str] = None
     sip_trunk_id: Optional[str] = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -32,12 +36,16 @@ class CallState:
     recording: Optional[dict[str, Any]] = None
     ended_reason: Optional[str] = None
 
+    @property
+    def tenant_id(self) -> str:
+        return self.profile.tenant.id
+
     def tool_context(self) -> ToolContext:
         tool_channel = "voice" if self.channel == "phone" else "browser"
-        return ToolContext(channel=tool_channel, caller_phone=self.caller_phone, call_id=self.call_id)
+        return ToolContext(channel=tool_channel, caller_phone=self.caller_phone, call_id=self.call_id,
+                           tenant=self.profile.tenant)
 
     def set_outcome(self, outcome: str, *, override: bool = False) -> None:
         """Keep the most meaningful outcome: a booking beats 'completed', a transfer beats both."""
-        rank = {"completed": 0, "faq": 1, "cancelled": 2, "message": 3, "booked": 4, "transferred": 5}
-        if override or self.outcome is None or rank.get(outcome, 0) >= rank.get(self.outcome, 0):
+        if override or self.outcome is None or _OUTCOME_RANK.get(outcome, 0) >= _OUTCOME_RANK.get(self.outcome, 0):
             self.outcome = outcome

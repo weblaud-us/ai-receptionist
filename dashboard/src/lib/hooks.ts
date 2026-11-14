@@ -102,8 +102,9 @@ export const useGuest = (phone: string | null) =>
     enabled: !!phone,
   })
 
-export const useLiveCalls = () =>
+export const useLiveCalls = (enabled = true) =>
   useQuery({
+    enabled,
     queryKey: ['live-calls'],
     queryFn: () => api<{ calls: LiveCall[]; total: number }>('/admin/calls/live'),
     refetchInterval: 5_000,

@@ -45,6 +45,13 @@ _TEST_ENV = {
     "OWNER_NOTIFY_WHATSAPP": "",
     "HOTEL_NAME": "Grand Azure Hotel",
     "RECEPTIONIST_NAME": "Aria",
+    "REQUIRE_ADMIN_MFA": "false",
+    "ENABLE_TENANT_JOBS": "false",
+    "GOOGLE_OAUTH_CLIENT_ID": "",
+    "GOOGLE_OAUTH_CLIENT_SECRET": "",
+    "TOKEN_ENCRYPTION_KEY": "",
+    "TWILIO_SMS_FROM": "",
+    "RESEND_API_KEY": "",
 }
 os.environ.update(_TEST_ENV)
 

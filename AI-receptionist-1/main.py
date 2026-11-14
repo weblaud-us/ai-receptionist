@@ -50,12 +50,16 @@ _ROUTERS = [
     ("routers.api", "calendar_router"),
     ("routers.admin", "admin_router"),
     ("routers.livekit", "livekit_router"),
+    ("routers.auth", "auth_router"),          # Phase 2: users, sessions, invites
+    ("routers.tenant", "tenant_router"),      # Phase 2: the business's own settings and data
+    ("routers.platform", "platform_router"),  # Phase 2: platform super-admin
+    ("routers.integrations", "integrations_router"),  # Phase 2: OAuth callbacks (Google Calendar)
 ]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("%s AI Receptionist starting (env=%s)", settings.HOTEL_NAME, settings.APP_ENV)
+    logger.info("AI Receptionist starting (env=%s)", settings.APP_ENV)
 
     await connect_db()
 
@@ -63,6 +67,9 @@ async def lifespan(app: FastAPI):
     get_llm_provider()
     reminder_service = get_booking_reminder_service()
     reminder_service.start()
+    from services.tenant_jobs import get_tenant_jobs
+    tenant_jobs = get_tenant_jobs()
+    tenant_jobs.start()          # appointment reminders, owner digests, calendar sync
 
     # Legacy phone path: pre-warm its TTS audio cache so the first caller hears the greeting.
     if settings.LEGACY_TWILIO_VOICE:
@@ -76,6 +83,7 @@ async def lifespan(app: FastAPI):
     logger.info("AI Receptionist is live on port %s", settings.PORT)
     yield
 
+    await tenant_jobs.stop()
     await reminder_service.stop()
     await disconnect_db()
     logger.info("AI Receptionist stopped")
@@ -83,7 +91,7 @@ async def lifespan(app: FastAPI):
 
 _docs = not settings.is_production
 app = FastAPI(
-    title=f"{settings.HOTEL_NAME} - AI Receptionist",
+    title="AI Receptionist",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs" if _docs else None,
@@ -96,7 +104,8 @@ if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        # Dashboard auth uses a Bearer header, not cookies; credentials only with explicit origins.
+        # Access tokens travel in a Bearer header; the refresh token is an httpOnly cookie scoped to
+        # /auth, so credentials are allowed — only ever with explicit origins (never "*").
         allow_credentials="*" not in _cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],

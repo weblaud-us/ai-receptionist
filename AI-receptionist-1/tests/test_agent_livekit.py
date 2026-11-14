@@ -31,7 +31,7 @@ def _name(tool) -> str:
 
 
 def test_voice_uses_the_shared_schemas_unchanged():
-    tools = {_name(t): t for t in shared_tools()}
+    tools = {_name(t): t for t in shared_tools(load_profile())}
     assert set(tools) == {s["function"]["name"] for s in AI_TOOL_SCHEMAS}
     for schema in AI_TOOL_SCHEMAS:
         assert tools[schema["function"]["name"]].info.raw_schema["parameters"] == schema["function"]["parameters"]
@@ -41,7 +41,7 @@ async def test_voice_tool_runs_the_shared_implementation(db):
     class Ctx:
         userdata = _state(caller_phone="+8801711111111")
 
-    take_message = next(t for t in shared_tools() if _name(t) == "take_message")
+    take_message = next(t for t in shared_tools(load_profile()) if _name(t) == "take_message")
     result = json.loads(await take_message(raw_arguments={
         "caller_name": "Rahim", "callback_number": "+8801711111111", "message": "Late check-out?"}, context=Ctx()))
     assert result["success"]

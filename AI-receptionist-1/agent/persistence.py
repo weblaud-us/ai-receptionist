@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -19,6 +20,8 @@ from agent.state import CallState
 from agent.telemetry import summarise
 from config import settings
 from core.phone import mask_phone
+from core.repositories import Repos
+from core.services import availability as av
 from core.tools.hotel import phone_variants
 from database.mongodb import get_db
 
@@ -44,6 +47,8 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "sip_trunk_id": state.sip_trunk_id,
         "agent_name": settings.LIVEKIT_AGENT_NAME,
         "business_id": state.profile.business_id,
+        "tenant_id": state.profile.business_id,
+        "vertical": state.profile.business_type,
         "started_at": state.started_at,
         "status": "completed" if final else "in_progress",
         "outcome": state.outcome or ("completed" if final else None),
@@ -93,7 +98,7 @@ class CallRecorder:
 
     async def _write(self, *, final: bool) -> None:
         try:
-            await get_db().calls.update_one(
+            await Repos(get_db(), self.state.profile.business_id).calls.update_one(
                 {"call_id": self.state.call_id},
                 {"$set": call_document(self.state, final=final),
                  "$setOnInsert": {"created_at": self.state.started_at}},
@@ -109,21 +114,62 @@ class CallRecorder:
                 await self._task
         self.state.ended_reason = reason or self.state.ended_reason
         await self._write(final=True)
+        await self._record_usage()
         latency = summarise(self.state.turns)
         logger.info("Call %s ended: outcome=%s turns=%s p50=%ss p95=%ss tool_p50=%ss greeting=%ss",
                     self.state.call_id, self.state.outcome or "completed", latency["turns"],
                     latency["p50_s"], latency["p95_s"], latency["tool_p50_s"], self.state.greeting_latency_s)
 
 
+    async def _record_usage(self) -> None:
+        """One usage event per call, in whole minutes (Phase 5 billing reads `usage_events`)."""
+        tenant_id = self.state.profile.business_id
+        if tenant_id == "unassigned":
+            return
+        seconds = (_utcnow() - self.state.started_at).total_seconds()
+        try:
+            await Repos(get_db(), tenant_id).usage.update_one(
+                {"call_id": self.state.call_id, "kind": "voice_minute"},
+                {"$set": {"quantity": max(1, math.ceil(seconds / 60)), "seconds": round(seconds, 1),
+                          "direction": self.state.direction, "at": _utcnow()},
+                 "$setOnInsert": {"invoiced": False}},
+                upsert=True)
+        except Exception:
+            logger.warning("Usage event for call %s failed", self.state.call_id, exc_info=True)
+
+
 async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
-    """Returning-caller context: name and a one-line booking history. One round trip each."""
+    """Returning-caller context: name and a one-line history. Two round trips, in parallel."""
     if not state.caller_phone:
         return None
-    db = get_db()
+    tenant = state.profile.tenant
     variants = phone_variants(state.caller_phone)
+    if tenant.vertical == "hotel":
+        return await _load_hotel_guest(state, variants)
+    repos = Repos(get_db(), tenant.id)
+    contact, appts = await asyncio.gather(
+        repos.contacts.find_one({"phone": {"$in": variants}}, {"name": 1, "notes": 1, "do_not_contact": 1}),
+        repos.appointments.find({"phone": {"$in": variants}}, sort=[("start", -1)], limit=3,
+                                projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
+    )
+    if not contact and not appts:
+        return None
+    parts = []
+    for a in appts:
+        when = av.spoken(a["start"], tenant.timezone) if isinstance(a.get("start"), datetime) else "?"
+        who = f" with {a['resource_name']}" if a.get("resource_name") else ""
+        parts.append(f"{a.get('service_name') or 'appointment'}{who} {when} ({a.get('status')})")
+    logger.info("Returning caller %s (%d recent appointments)", mask_phone(state.caller_phone), len(appts))
+    return {"name": (contact or {}).get("name"), "summary": "; ".join(parts)}
+
+
+async def _load_hotel_guest(state: CallState, variants: list[str]) -> Optional[dict[str, Any]]:
+    db = get_db()
+    tenant = state.profile.tenant
+    scope: dict[str, Any] = {} if tenant.is_legacy else {"tenant_id": tenant.id}
     guest, bookings = await asyncio.gather(
-        db.guests.find_one({"phone": {"$in": variants}}, {"name": 1, "total_stays": 1}),
-        db.bookings.find({"guest_phone": {"$in": variants}},
+        db.guests.find_one({**scope, "phone": {"$in": variants}}, {"name": 1, "total_stays": 1}),
+        db.bookings.find({**scope, "guest_phone": {"$in": variants}},
                          {"booking_id": 1, "check_in_date": 1, "status": 1, "room_type": 1})
         .sort("created_at", -1).limit(3).to_list(3),
     )
@@ -135,3 +181,16 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
     )
     logger.info("Returning caller %s (%d recent bookings)", mask_phone(state.caller_phone), len(bookings))
     return {"name": (guest or {}).get("name"), "summary": summary}
+
+
+async def record_contact_call(state: CallState) -> None:
+    """Upsert the caller in `contacts` and count the call. Background; never on the hot path."""
+    tenant = state.profile.tenant
+    if not state.caller_phone or tenant.is_legacy or tenant.id == "unassigned":
+        return
+    try:
+        repos = Repos(get_db(), tenant.id)
+        await repos.contacts.upsert_by_phone(state.caller_phone, {})
+        await repos.contacts.update_one({"phone": state.caller_phone}, {"$inc": {"stats.calls": 1}})
+    except Exception:
+        logger.debug("contact call count failed", exc_info=True)

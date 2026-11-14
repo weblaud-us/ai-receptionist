@@ -1,15 +1,16 @@
 """
-LiveKit agent worker — one job per call (Roadmap Task 1.4.c).
+LiveKit agent worker — one job per call (Roadmap Task 1.4.c, tenant-aware since Phase 2).
 
     python -m agent.worker dev      # local development
     python -m agent.worker start    # production (systemd unit: receptionist-agent)
 
-Phone calls arrive through the SIP trunk + dispatch rule (telephony/), browser calls through the
-signed WhatsApp link; both dispatch to LIVEKIT_AGENT_NAME and run the same agent.
+Phone calls arrive through the SIP trunk + dispatch rule (telephony/), browser calls through a
+signed link or the dashboard's test call; both dispatch to LIVEKIT_AGENT_NAME and run the same
+agent for whichever tenant owns the dialled number (or is named in the browser token).
 
 What happens per call, in order — nothing slow sits before the greeting:
-    connect → caller attributes → session (STT/LLM/TTS, pre-warmed by LiveKit) → greeting
-    → in the background: caller history, periodic call-record flush, recording.
+    connect → caller attributes → tenant + business snapshot (cached 60 s) → session → greeting
+    → in the background: caller history, contact bookkeeping, periodic flush, recording.
 """
 
 from __future__ import annotations
@@ -38,9 +39,9 @@ from livekit.agents import (  # noqa: E402
 )
 from livekit.plugins import noise_cancellation, silero  # noqa: E402
 
-from agent.persistence import CallRecorder, load_contact  # noqa: E402
-from agent.profile import load_profile  # noqa: E402
-from agent.receptionist import ReceptionistAgent, SilenceWatcher  # noqa: E402
+from agent.persistence import CallRecorder, load_contact, record_contact_call  # noqa: E402
+from agent.profile import VoiceProfile, resolve_profile, unassigned_profile  # noqa: E402
+from agent.receptionist import ReceptionistAgent, SilenceWatcher, UnassignedNumberAgent  # noqa: E402
 from agent.recording import start_recording  # noqa: E402
 from agent.session_factory import build_session  # noqa: E402
 from agent.state import CallState  # noqa: E402
@@ -51,6 +52,7 @@ from database import mongodb  # noqa: E402
 logger = logging.getLogger("agent.worker")
 
 CONTACT_LOAD_TIMEOUT_S = 2.0
+TENANT_RESOLVE_TIMEOUT_S = 3.0
 _db_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
@@ -84,22 +86,42 @@ server = AgentServer(
 )
 
 
-def _caller_state(ctx: JobContext, participant: rtc.RemoteParticipant) -> CallState:
+def _caller_attributes(participant: rtc.RemoteParticipant) -> dict[str, Any]:
     attrs = dict(participant.attributes or {})
     is_sip = participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-    dialed = attrs.get("sip.trunkPhoneNumber") if is_sip else None
     if is_sip:
         # ⚠ Confirm attribute names on the first real SIP call (Roadmap Task 1.2.c). Keys only:
         # values carry phone numbers.
         logger.info("SIP participant attributes: %s", sorted(attrs))
+    return {
+        "is_sip": is_sip,
+        "dialed": attrs.get("sip.trunkPhoneNumber") if is_sip else None,
+        "caller": attrs.get("sip.phoneNumber") if is_sip else None,
+        "sip_call_id": attrs.get("sip.callID"),
+        "sip_trunk_id": attrs.get("sip.trunkID"),
+        "tenant_id": None if is_sip else attrs.get("tenant_id"),   # browser calls: from the signed token
+    }
+
+
+async def _resolve(caller: dict[str, Any]) -> Optional[VoiceProfile]:
+    try:
+        return await asyncio.wait_for(
+            resolve_profile(dialed_number=caller["dialed"], tenant_id=caller["tenant_id"]),
+            TENANT_RESOLVE_TIMEOUT_S)
+    except Exception:
+        logger.error("Tenant resolution failed (dialed %s)", mask_phone(caller["dialed"]), exc_info=True)
+        return None
+
+
+def _call_state(ctx: JobContext, caller: dict[str, Any], profile: VoiceProfile) -> CallState:
     return CallState(
         call_id=ctx.room.name,
-        profile=load_profile(dialed),
-        channel="phone" if is_sip else "browser",
-        caller_phone=attrs.get("sip.phoneNumber") if is_sip else None,
-        dialed_number=dialed,
-        sip_call_id=attrs.get("sip.callID"),
-        sip_trunk_id=attrs.get("sip.trunkID"),
+        profile=profile,
+        channel="phone" if caller["is_sip"] else "browser",
+        caller_phone=caller["caller"],
+        dialed_number=caller["dialed"],
+        sip_call_id=caller["sip_call_id"],
+        sip_trunk_id=caller["sip_trunk_id"],
     )
 
 
@@ -112,15 +134,15 @@ async def _load_history(agent: ReceptionistAgent, state: CallState) -> None:
         logger.debug("Caller history unavailable", exc_info=True)
 
 
-async def _start_background_audio(ctx: JobContext, session: Any) -> None:
-    if not (settings.VOICE_THINKING_SOUND or settings.VOICE_AMBIENT_SOUND):
+async def _start_background_audio(ctx: JobContext, session: Any, profile: VoiceProfile) -> None:
+    ambience = profile.tenant.agent.ambience or settings.VOICE_AMBIENT_SOUND
+    if not (settings.VOICE_THINKING_SOUND or ambience):
         return
     player = BackgroundAudioPlayer(
         thinking_sound=[AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.5),
                         AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING2, volume=0.4)]
         if settings.VOICE_THINKING_SOUND else None,
-        ambient_sound=AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.15)
-        if settings.VOICE_AMBIENT_SOUND else None,
+        ambient_sound=AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.15) if ambience else None,
     )
     try:
         await player.start(room=ctx.room, agent_session=session)
@@ -129,7 +151,19 @@ async def _start_background_audio(ctx: JobContext, session: Any) -> None:
 
 
 async def _record(ctx: JobContext, state: CallState) -> None:
+    if not state.profile.recording:
+        return
     state.recording = await start_recording(ctx.api, state)
+
+
+def _alert_unassigned(caller: dict[str, Any], room: str) -> None:
+    logger.warning("Call %s to an unassigned number %s", room, mask_phone(caller["dialed"]) or "(browser)")
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_message("Call to unassigned number", level="warning")
+    except Exception:
+        pass
 
 
 @server.rtc_session(agent_name=settings.LIVEKIT_AGENT_NAME)
@@ -138,8 +172,22 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()                       # no database work before this line
     db_ready = asyncio.create_task(ensure_db())
     participant = await ctx.wait_for_participant()
-    state = _caller_state(ctx, participant)
-    logger.info("Call %s started (%s, caller %s)", state.call_id, state.channel,
+    caller = _caller_attributes(participant)
+    await db_ready                            # the client is lazy; this is near-instant
+    profile = await _resolve(caller)
+
+    if profile is None:                       # unknown number: neutral message, hang up, alert
+        _alert_unassigned(caller, ctx.room.name)
+        state = _call_state(ctx, caller, unassigned_profile())
+        session = build_session(ctx.proc.userdata, state)
+        recorder = CallRecorder(state)
+        ctx.add_shutdown_callback(recorder.finish)
+        await session.start(agent=UnassignedNumberAgent(state), room=ctx.room,
+                            room_options=room_io.RoomOptions(delete_room_on_close=True))
+        return
+
+    state = _call_state(ctx, caller, profile)
+    logger.info("Call %s started for %s (%s, caller %s)", state.call_id, profile.business_id, state.channel,
                 mask_phone(state.caller_phone) or "unknown")
 
     session = build_session(ctx.proc.userdata, state)  # providers pre-warm when the agent starts
@@ -166,10 +214,10 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
 
-    await db_ready                            # the client is lazy; this is near-instant
     recorder.start()
     asyncio.create_task(_load_history(agent, state))
-    asyncio.create_task(_start_background_audio(ctx, session))
+    asyncio.create_task(record_contact_call(state))
+    asyncio.create_task(_start_background_audio(ctx, session, profile))
     asyncio.create_task(_record(ctx, state))
 
 
@@ -178,9 +226,8 @@ def main() -> None:
                if not getattr(settings, v)]
     if missing:
         raise SystemExit(f"Missing settings for the voice agent: {', '.join(missing)}")
-    logger.info("Voice agent '%s' for %s (LLM %s, STT %s, TTS %s)", settings.LIVEKIT_AGENT_NAME,
-                settings.HOTEL_NAME, settings.VOICE_LLM_MODEL, settings.VOICE_STT_PROVIDER,
-                settings.VOICE_TTS_PROVIDER)
+    logger.info("Voice agent '%s' (LLM %s, STT %s, TTS %s)", settings.LIVEKIT_AGENT_NAME,
+                settings.VOICE_LLM_MODEL, settings.VOICE_STT_PROVIDER, settings.VOICE_TTS_PROVIDER)
     cli.run_app(server)
 
 

@@ -29,7 +29,10 @@ from config import settings
 from core.integrations.meta_auth import verify_meta
 from core.signed_links import build_call_link
 from database.mongodb import get_db
-from database.tenancy import get_hotel_profile
+from core.tenancy import resolve_by_whatsapp_phone_number_id
+from core.tenancy.models import TenantConfig, legacy_hotel_tenant
+from database.tenancy import tenant_profile
+from core.repositories.scoped import scoped_db
 from whatsapp.handler import _get_or_create_whatsapp_session
 from voice.stt_tts import get_stt, get_tts
 
@@ -204,19 +207,19 @@ def _is_off_topic(text: str) -> bool:
     return not any(kw in norm for kw in _HOTEL_KEYWORDS)
 
 
-def _build_call_options_message(profile: dict, room_id: str) -> str:
+def _build_call_options_message(profile: dict, room_id: str, tenant_id: Optional[str] = None) -> str:
     """Build message offering both Twilio PSTN and LiveKit browser call options."""
     twilio_number = (profile.get("twilio_voice_number") or settings.TWILIO_PHONE_NUMBER or "").strip()
     base = _get_call_base_url()
 
     lines = [
         f"You can speak with our receptionist *{profile.get('receptionist_name', 'Aria')}* "
-        f"from *{profile.get('name', 'the hotel')}* in two ways:\n"
+        f"from *{profile.get('name', 'us')}* in two ways:\n"
     ]
     if twilio_number:
         lines.append(f"\ud83d\udcde *Real Phone Call:*\nCall us directly at *{twilio_number}*")
     if base:
-        call_link = build_call_link(base, room_id)  # signed, expires in 15 minutes
+        call_link = build_call_link(base, room_id, tenant_id)  # signed (incl. tenant), expires in 15 minutes
         lines.append(f"\ud83c\udf10 *Browser Call (no phone needed):*\nTap this link (valid for 15 minutes):\n{call_link}")
 
     if not twilio_number and not base:
@@ -454,6 +457,11 @@ async def _handle_webhook_payload(payload: dict) -> None:
                 value = change.get("value", {}) or {}
                 metadata = value.get("metadata", {}) or {}
                 phone_number_id = metadata.get("phone_number_id") or settings.META_WA_PHONE_NUMBER_ID
+                # Phase 2: which business owns the number that received this message?
+                tenant = await resolve_by_whatsapp_phone_number_id(metadata.get("phone_number_id"))
+                if tenant is None or not tenant.active:
+                    logger.warning("WhatsApp message for an unassigned number id; ignored")
+                    continue
 
                 messages = value.get("messages", []) or []
                 contacts = value.get("contacts", []) or []
@@ -494,6 +502,7 @@ async def _handle_webhook_payload(payload: dict) -> None:
                         msg_type=msg_type,
                         profile_name=profile_name,
                         phone_number_id=phone_number_id,
+                        tenant=tenant,
                     )
     except Exception as e:
         logger.error("Meta webhook processing error: %s", e, exc_info=True)
@@ -505,8 +514,12 @@ async def _process_incoming_message(
     msg_type: str,
     profile_name: Optional[str],
     phone_number_id: str,
+    tenant: Optional[TenantConfig] = None,
 ) -> None:
     db = get_db()
+    tenant = tenant or legacy_hotel_tenant()
+    profile = tenant_profile(tenant)
+    is_hotel = tenant.vertical == "hotel"
 
     if msg_type != "text" and not message_body:
         await _send_meta_whatsapp(
@@ -522,18 +535,17 @@ async def _process_incoming_message(
 
     # ── Call request ──────────────────────────────────────────────────────────
     if msg_type == "text" and _is_call_request(message_body):
-        profile = get_hotel_profile()
         room_id = f"wa_{uuid.uuid4().hex[:16]}"  # no phone number in URLs
-        await _send_meta_whatsapp(phone, _build_call_options_message(profile, room_id), phone_number_id)
+        link_tenant = None if tenant.is_legacy else tenant.id
+        await _send_meta_whatsapp(phone, _build_call_options_message(profile, room_id, link_tenant), phone_number_id)
         return
 
-    session = await _get_or_create_whatsapp_session(db, phone, profile_name)
+    session = await _get_or_create_whatsapp_session(db, phone, profile_name, tenant)
     session_id = session["session_id"]
 
     # ── Quick greetings & casual pleasantries → human-like warm response ─────
     if msg_type == "text" and _is_quick_greeting(message_body):
         import random
-        profile = get_hotel_profile()
         has_history = bool(session.get("messages"))
         if has_history:
             # Returning guest — vary the response so it doesn’t feel like a bot
@@ -552,10 +564,14 @@ async def _process_incoming_message(
             greeting = GREETING_WHATSAPP.format(
                 hotel_name=profile["name"],
                 receptionist_name=profile["receptionist_name"],
+            ) if is_hotel else (
+                f"Hello! Welcome to {profile['name']}. 😊\n"
+                f"This is {profile['receptionist_name']}, {profile['name']}'s virtual assistant.\n"
+                "How may I help you today?"
             )
         sent = await _send_meta_whatsapp(phone, greeting, phone_number_id)
         if sent:
-            await db.conversations.update_one(
+            await scoped_db(tenant).conversations.update_one(
                 {"session_id": session_id},
                 {
                     "$push": {
@@ -573,9 +589,9 @@ async def _process_incoming_message(
 
     # ── Off-topic check: reply instantly, skip agent & tool calls ─────────────
     # Saves ~400-700 tokens per off-topic message.
-    if msg_type == "text" and _is_off_topic(message_body):
+    # The keyword filter is tuned for hotels; other businesses always go to the agent.
+    if is_hotel and msg_type == "text" and _is_off_topic(message_body):
         import random
-        profile = get_hotel_profile()
         if _is_name_question(message_body):
             receptionist_name = (profile.get("receptionist_name") or settings.RECEPTIONIST_NAME or "Aria").strip()
             hotel_name = (profile.get("name") or settings.HOTEL_NAME or "the hotel").strip()
@@ -589,7 +605,7 @@ async def _process_incoming_message(
             off_reply = random.choice(_OFF_TOPIC_REPLIES)
         logger.info("Off-topic message from %s — returning canned reply", phone)
         await _send_meta_whatsapp(phone, off_reply, phone_number_id)
-        await db.conversations.update_one(
+        await scoped_db(tenant).conversations.update_one(
             {"session_id": session_id},
             {"$set": {"updated_at": datetime.utcnow()}},
         )
@@ -602,13 +618,14 @@ async def _process_incoming_message(
             session_id=session_id,
             user_message=message_body,
             phone=phone,
+            tenant=tenant,
         )
 
         for tc in tool_calls:
             if tc["name"] == "create_booking":
                 result = json.loads(tc["result"])
                 if result.get("success"):
-                    await _send_booking_confirmation_meta(phone, result, phone_number_id)
+                    await _send_booking_confirmation_meta(phone, result, phone_number_id, profile)
                     return
 
         if msg_type == "audio":
@@ -631,48 +648,19 @@ async def _process_incoming_message(
 
 
 async def _send_meta_whatsapp(phone: str, message: str, phone_number_id: Optional[str]) -> bool:
-    """Send a WhatsApp text message via Meta Cloud API."""
-    token = _get_meta_access_token()
-    if not token:
-        logger.warning("Meta WhatsApp send skipped: access token missing")
-        return False
+    """Send a WhatsApp text message via Meta Cloud API (one sender: core.integrations.whatsapp)."""
+    from core.integrations.whatsapp import send_text
 
-    pnid = phone_number_id or settings.META_WA_PHONE_NUMBER_ID
-    if not pnid:
-        logger.warning("Meta WhatsApp send skipped: phone_number_id missing")
-        return False
-
-    url = f"{_get_meta_base_url()}/{pnid}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    parts = _chunk_message(message, 1500)
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            for part in parts:
-                payload = {
-                    "messaging_product": "whatsapp",
-                    "to": phone.replace("+", ""),
-                    "type": "text",
-                    "text": {"body": part},
-                }
-                resp = await client.post(url, headers=headers, json=payload)
-                logger.info("Meta WA send → %s | status=%s", phone, resp.status_code)
-                if resp.status_code >= 400:
-                    logger.error("Meta WA send failed: %s %s", resp.status_code, resp.text)
-                    return False
-        return True
-    except Exception as e:
-        logger.error("Meta WA send error: %s", e, exc_info=True)
-        return False
+    return await send_text(phone, message, phone_number_id)
 
 
 async def _send_booking_confirmation_meta(
-    phone: str, booking: dict, phone_number_id: str
+    phone: str, booking: dict, phone_number_id: str, profile: Optional[dict] = None
 ) -> bool:
     """Send rich booking confirmation via Meta WhatsApp."""
     children_count = booking.get("children", 0) or 0
     children_str = f" + {children_count} children" if children_count > 0 else ""
-    profile = get_hotel_profile()
+    profile = profile or tenant_profile(legacy_hotel_tenant())
 
     msg = BOOKING_CONFIRMATION_WHATSAPP.format(
         booking_id=booking.get("booking_id", ""),

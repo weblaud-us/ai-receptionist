@@ -8,6 +8,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ApiError } from '@/lib/api'
 import { initSentry } from '@/lib/sentry'
+import { TenantProvider } from '@/lib/tenant'
 import { ThemeProvider } from '@/lib/theme'
 import App from './App.tsx'
 import './index.css'
@@ -37,10 +38,12 @@ createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AuthProvider>
-            <TooltipProvider>
-              <App />
-              <Toaster richColors position="top-right" />
-            </TooltipProvider>
+            <TenantProvider>
+              <TooltipProvider>
+                <App />
+                <Toaster richColors position="top-right" />
+              </TooltipProvider>
+            </TenantProvider>
           </AuthProvider>
         </BrowserRouter>
       </QueryClientProvider>

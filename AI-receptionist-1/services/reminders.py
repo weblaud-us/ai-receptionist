@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-import httpx
 
 from config import settings
 from database.mongodb import get_db
@@ -27,33 +26,9 @@ def _meta_base_url() -> str:
 
 
 async def _send_meta_whatsapp(phone: str, message: str, phone_number_id: Optional[str]) -> bool:
-    token = (settings.META_WA_ACCESS_TOKEN or "").strip()
-    if not token:
-        logger.warning("Reminder skipped: META_WA_ACCESS_TOKEN missing")
-        return False
-    pnid = (phone_number_id or settings.META_WA_PHONE_NUMBER_ID or "").strip()
-    if not pnid:
-        logger.warning("Reminder skipped: phone_number_id missing")
-        return False
+    from core.integrations.whatsapp import send_text
 
-    url = f"{_meta_base_url()}/{pnid}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone.replace("+", ""),
-        "type": "text",
-        "text": {"body": message},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code >= 400:
-                logger.error("Reminder WhatsApp send failed: %s %s", resp.status_code, resp.text)
-                return False
-        return True
-    except Exception as e:
-        logger.error("Reminder WhatsApp send error: %s", e, exc_info=True)
-        return False
+    return await send_text(phone, message, phone_number_id)
 
 
 def _build_reminder_message(booking: Dict[str, Any], hotel: Dict[str, Any]) -> str:

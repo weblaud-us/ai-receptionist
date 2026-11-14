@@ -137,11 +137,13 @@ async def test_take_message_notifies_owner_in_background(db, monkeypatch):
         sent.append((phone, text))
         return True
 
-    import whatsapp.meta_handler as meta
+    import core.integrations.whatsapp as wa
+    from core.notifications import drain
 
     monkeypatch.setattr(settings, "OWNER_NOTIFY_WHATSAPP", "+8801900000000")
-    monkeypatch.setattr(meta, "_send_meta_whatsapp", fake_send)
+    monkeypatch.setattr(wa, "send_text", fake_send)
     await run_tool(VOICE, "take_message", {"caller_name": "Rahim", "callback_number": "+8801711111111",
                                            "message": "Call me back", "urgent": True})
     await drain_background_tasks()
+    await drain()
     assert sent and sent[0][0] == "+8801900000000" and "URGENT" in sent[0][1]

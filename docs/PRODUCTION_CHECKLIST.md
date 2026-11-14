@@ -159,3 +159,25 @@ Development and testing use a dev LiveKit project and a dev Twilio trunk. For pr
 - [ ] **Cutover (Task 1.13):** move one number to the SIP trunk, run a week, move the rest, then set
       `LEGACY_TWILIO_VOICE=false`. One release later, delete `voice/twilio_handler.py`,
       `voice/stt_tts.py`, the `/voice/*` routes, `call_sessions` and `audioop-lts`.
+
+
+## Phase 2 — multi-tenant core
+
+- [ ] Atlas snapshot, then `migrations.m0003_hotel_to_tenant --dry-run`, then the real run with
+      `--owner-email`. Send the owner the printed link.
+- [ ] `scripts.create_admin` for each platform admin; each turns on two-factor; clear `ADMIN_PASSWORD`
+      and `ADMIN_SECRET_KEY` once nothing uses them.
+- [ ] `TOKEN_ENCRYPTION_KEY` set (Fernet key) and stored in the secret manager. Losing it means
+      every calendar must be reconnected and every two-factor setup redone.
+- [ ] `COOKIE_SECURE=true`; `COOKIE_SAMESITE=lax` if dashboard and API share a site (app./api.),
+      otherwise `none`; `CORS_ORIGINS` lists the dashboard origin; `DASHBOARD_URL` set for links.
+- [ ] Google Calendar: OAuth client (Web), redirect URI `{WEBHOOK_BASE_URL}/integrations/google/callback`,
+      **app verification submitted** (weeks). ⚠ Verify the current scope classification.
+- [ ] SMS: `TWILIO_SMS_FROM` on an A2P 10DLC-registered campaign or a verified toll-free number (US);
+      per-country sender rules elsewhere. E-mail: `RESEND_API_KEY`, `EMAIL_FROM`, SPF/DKIM/DMARC.
+- [ ] WhatsApp per tenant: set `integrations.whatsapp.phone_number_id` with `PATCH /platform/tenants/{id}`.
+      Business-initiated messages outside 24 h need approved templates (not built yet).
+- [ ] Every number on the SIP trunk is assigned in `phone_numbers` (Platform page); call an
+      unassigned one and confirm the neutral message and the Sentry warning.
+- [ ] Remove the `HOTEL_*` variables after the hotel works as tenant #1.
+- [ ] ⚠ No US healthcare tenants until BAAs are signed with every vendor (ROADMAP Task 2.1).

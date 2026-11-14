@@ -62,6 +62,23 @@ class Settings(BaseSettings):
     VERIFY_TWILIO_SIGNATURE:    bool = Field(default=True)
     VERIFY_TWILIO_WS_SIGNATURE: bool = Field(default=True)  # media-stream handshake (legacy voice path)
     OUTBOUND_TTS_VOICE:         str  = Field(default="Polly.Joanna")  # legacy /voice/outbound only
+    TWILIO_SMS_FROM:            str  = Field(default="")   # platform's registered SMS sender (A2P 10DLC / toll-free)
+
+    # ── Calendar integrations (Phase 2, Task 2.8) ─────────
+    GOOGLE_OAUTH_CLIENT_ID:     str = Field(default="")
+    GOOGLE_OAUTH_CLIENT_SECRET: str = Field(default="")
+    TOKEN_ENCRYPTION_KEY:       str = Field(default="")   # Fernet key(s), comma-separated, newest first
+    CALENDAR_SYNC_MINUTES:      int = Field(default=10)   # how often busy times are refreshed
+
+    # ── Background jobs (reminders, digests, calendar sync) ─
+    ENABLE_TENANT_JOBS:      bool = Field(default=True)
+    TENANT_JOBS_POLL_SECONDS: int = Field(default=300)
+    DAILY_DIGEST_HOUR:       int = Field(default=18)      # business-local hour the owner digest goes out
+    REQUIRE_ADMIN_MFA:       bool = Field(default=True)   # platform admins must use TOTP two-factor
+
+    # ── Transactional e-mail (Resend) ─────────────────────
+    RESEND_API_KEY: str = Field(default="")
+    EMAIL_FROM:     str = Field(default="")   # e.g. "Receptionist <hello@yourdomain.com>" — set SPF/DKIM/DMARC first
 
     # ── Meta WhatsApp Cloud API ───────────────────────────
     META_WA_VERIFY_TOKEN:    str = Field(default="")
@@ -132,6 +149,11 @@ class Settings(BaseSettings):
     ADMIN_USERNAME:      str = Field(default="admin")
     ADMIN_PASSWORD:      str = Field(default="")   # empty => dashboard login disabled
     ADMIN_TOKEN_TTL_MIN: int = Field(default=480)
+    ACCESS_TOKEN_TTL_MIN:    int = Field(default=15)    # dashboard access JWT lifetime
+    REFRESH_TOKEN_TTL_DAYS:  int = Field(default=30)    # httpOnly refresh cookie / session lifetime
+    COOKIE_SECURE:           bool = Field(default=True) # Secure flag on the refresh cookie (false only on http://localhost)
+    COOKIE_SAMESITE:         Literal["lax", "strict", "none"] = Field(default="lax")  # "none" if dashboard and API are on different sites
+    DASHBOARD_URL:           str = Field(default="")    # public dashboard URL, for invite / password-reset links
     # Comma-separated browser origins allowed to call the API. Empty = no cross-origin access.
     CORS_ORIGINS:        str = Field(default="")
 
@@ -178,6 +200,12 @@ class Settings(BaseSettings):
             problems.append("META_APP_SECRET is required when ENABLE_WHATSAPP=true")
         if self.ENABLE_CALL_RECORDING and not (self.RECORDING_S3_BUCKET and self.RECORDING_S3_SECRET):
             problems.append("ENABLE_CALL_RECORDING needs RECORDING_S3_BUCKET and credentials")
+        if self.GOOGLE_OAUTH_CLIENT_ID and len(self.TOKEN_ENCRYPTION_KEY) < 40:
+            problems.append("TOKEN_ENCRYPTION_KEY (a Fernet key) is required with Google Calendar")
+        if not self.REQUIRE_ADMIN_MFA:
+            problems.append("REQUIRE_ADMIN_MFA must be true")
+        if not self.COOKIE_SECURE:
+            problems.append("COOKIE_SECURE must be true")
         if self.LOG_LEVEL.upper() == "DEBUG":
             problems.append("LOG_LEVEL=DEBUG would log transcripts; use INFO")
         if problems:

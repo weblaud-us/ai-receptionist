@@ -43,6 +43,9 @@ dependencies = [
     "tzdata==2026.6",                    # IANA timezones on Windows
     # stdlib audioop was removed in 3.13; only the legacy Twilio path needs it
     "audioop-lts==0.2.2; python_version >= '3.13'",
+    # Security
+    "argon2-cffi==25.1.0",             # password hashing (argon2id) for dashboard users
+    "cryptography==50.0.2",            # Fernet encryption of OAuth refresh tokens (calendar integrations)
 ]
 
 [dependency-groups]

@@ -1,5 +1,6 @@
 """
-Admin authentication for the dashboard.
+Legacy admin authentication (pre-Phase-2). Kept for the debug routes and old tokens;
+Phase 2 dashboard auth lives in core/auth (users, roles, refresh cookies).
 
 - Login with ADMIN_USERNAME / ADMIN_PASSWORD (from .env) -> signed JWT (HS256, SECRET_KEY).
 - `require_admin` FastAPI dependency accepts either
@@ -86,22 +87,13 @@ async def require_admin(
     authorization: str = Header(default=""),
     x_admin_key: str = Header(default="", alias="X-Admin-Key"),
 ) -> dict:
-    """FastAPI dependency protecting admin/dashboard routes."""
-    if authorization.lower().startswith("bearer "):
-        payload = decode_access_token(authorization[7:].strip())
-        if payload:
-            return payload
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    """
+    Platform-admin guard for the remaining debug routes. Accepts Phase 2 access tokens of platform
+    admins, pre-Phase-2 dashboard tokens, and X-Admin-Key. Tenant routes use core.auth instead.
+    """
+    from core.auth.deps import current_user
 
-    if (
-        x_admin_key
-        and settings.ADMIN_SECRET_KEY not in _DEFAULT_SECRETS
-        and hmac.compare_digest(x_admin_key.encode("utf-8"), settings.ADMIN_SECRET_KEY.encode("utf-8"))
-    ):
-        return {"sub": "api-key", "role": "admin"}
-
-    raise HTTPException(
-        status_code=401,
-        detail="Authentication required",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    principal = await current_user(authorization=authorization, x_admin_key=x_admin_key)
+    if not principal.platform_admin:
+        raise HTTPException(status_code=403, detail="Platform administrators only")
+    return {"sub": principal.email or principal.user_id, "role": "admin"}

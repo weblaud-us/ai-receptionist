@@ -4,7 +4,8 @@
 > `whatsapp/prompts.py` and `utils/logger.py`. It will be rewritten at the end of Phase 2
 > (see ROADMAP.md §2.3). For the current state, start with `AI-receptionist-1/README.md`.
 > Phase 1 replaced `livekit_agent.py` with the `agent/` package (phone via SIP + browser calls)
-> and moved the tools to `core/tools/`.
+> and moved the tools to `core/tools/`. Phase 2 made it multi-tenant: see
+> [PHASE_2_TESTING.md](PHASE_2_TESTING.md) and the backend README for the current layout.
 
 # Backend Map — AI Hotel Receptionist
 

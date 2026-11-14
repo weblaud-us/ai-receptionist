@@ -1,7 +1,8 @@
 """
-MongoDB Async Connection via Motor — Single-Tenant Setup.
+MongoDB Async Connection via Motor.
 Collections: rooms, bookings, room_nights, guests, conversations, call_sessions (legacy),
-calls (voice agent), messages (take_message).
+calls (voice agent), messages (take_message), and the Phase 2 tenant collections (tenants, users,
+phone_numbers, services, resources, appointments, slot_locks, contacts, knowledge_items, …).
 
 Indexes are created by `python -m migrations.m0002_indexes` (run by deploy.sh), not at every
 startup — index builds slow down boot and must never run inside a call. In development the API
@@ -65,8 +66,10 @@ def get_db() -> AsyncIOMotorDatabase:
 async def create_indexes(db: AsyncIOMotorDatabase):
     """Create indexes for all collections. Idempotent."""
 
+    # Room numbers are unique per business, not globally (m0003 drops the old room_number_1).
     await db.rooms.create_indexes([
-        IndexModel([("room_number", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("room_number", ASCENDING)], unique=True,
+                   name="uniq_tenant_room_number"),
         IndexModel([("room_type", ASCENDING)]),
         IndexModel([("is_active", ASCENDING)]),
     ])
@@ -92,7 +95,7 @@ async def create_indexes(db: AsyncIOMotorDatabase):
     ])
 
     await db.guests.create_indexes([
-        IndexModel([("phone", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING)], unique=True, name="uniq_tenant_phone"),
         IndexModel([("email", ASCENDING)]),
         IndexModel([("name", ASCENDING)]),
     ])
@@ -122,9 +125,99 @@ async def create_indexes(db: AsyncIOMotorDatabase):
     await db.messages.create_indexes([
         IndexModel([("message_id", ASCENDING)], unique=True),
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)]),
     ])
 
+    await _create_tenant_indexes(db)
     logger.info("✅ DB indexes created")
+
+
+async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
+    """Phase 2 collections. Every compound index starts with tenant_id (Roadmap Task 2.2)."""
+
+    await db.tenants.create_indexes([
+        IndexModel([("slug", ASCENDING)], unique=True),
+        IndexModel([("status", ASCENDING)]),
+        IndexModel([("integrations.whatsapp.phone_number_id", ASCENDING)]),
+    ])
+    await db.users.create_indexes([
+        IndexModel([("email", ASCENDING)], unique=True),
+        IndexModel([("memberships.tenant_id", ASCENDING)]),
+    ])
+    await db.sessions.create_indexes([                    # refresh tokens (hashed)
+        IndexModel([("token_hash", ASCENDING)], unique=True),
+        IndexModel([("user_id", ASCENDING)]),
+        IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0),
+    ])
+    await db.phone_numbers.create_indexes([
+        IndexModel([("e164", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING)]),
+    ])
+    await db.services.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("active", ASCENDING), ("sort", ASCENDING)]),
+    ])
+    await db.resources.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("active", ASCENDING)]),
+    ])
+    await db.schedule_exceptions.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("start", ASCENDING)]),
+    ])
+    await db.appointments.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("start", ASCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("resource_id", ASCENDING), ("start", ASCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("contact_id", ASCENDING), ("start", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING), ("start", DESCENDING)]),
+        IndexModel([("appointment_id", ASCENDING)], unique=True),
+    ])
+    # One document per resource per 5-minute block. The UNIQUE index is what makes double booking
+    # impossible for every vertical (generalised room_nights).
+    await db.slot_locks.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("resource_id", ASCENDING), ("block", ASCENDING)],
+                   unique=True, name="uniq_tenant_resource_block"),
+        IndexModel([("appointment_id", ASCENDING)]),
+    ])
+    await db.contacts.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("last_seen_at", DESCENDING)]),
+    ])
+    await db.knowledge_items.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("active", ASCENDING), ("updated_at", DESCENDING)]),
+    ])
+    await db.unanswered_questions.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)]),
+    ])
+    await db.leads.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("created_at", DESCENDING)]),
+    ])
+    await db.usage_events.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("invoiced", ASCENDING), ("at", ASCENDING)]),
+    ])
+    await db.audit_log.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
+    ])
+    await db.password_resets.create_indexes([
+        IndexModel([("token_hash", ASCENDING)], unique=True),
+        IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0),
+    ])
+    await db.invites.create_indexes([
+        IndexModel([("token_hash", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("email", ASCENDING)]),
+    ])
+    # Legacy hotel collections and the shared ones: tenant-prefixed indexes for scoped queries.
+    await db.rooms.create_indexes([IndexModel([("tenant_id", ASCENDING), ("is_active", ASCENDING)])])
+    await db.bookings.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("check_in_date", ASCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("guest_phone", ASCENDING)]),
+    ])
+    await db.conversations.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING), ("updated_at", DESCENDING)]),
+    ])
+    await db.calls.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("started_at", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("outcome", ASCENDING), ("started_at", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("caller_phone", ASCENDING), ("started_at", DESCENDING)]),
+    ])
 
 
 _create_indexes = create_indexes  # backwards-compatible name (tests, migrations)
