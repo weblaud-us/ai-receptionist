@@ -4,6 +4,7 @@ REST API Routers (all protected by `require_admin`, except the tokenised .ics li
 - /rooms     — room inventory: list, create, edit, deactivate, availability
 """
 
+import hmac
 import logging
 import re
 from datetime import date, datetime
@@ -12,7 +13,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from ai.tools import get_tool_executor
+from ai.tools import get_tool_executor, release_room_nights
+from core.timeutils import business_today
 from database.models import (
     BedType, BookingCreateRequest, BookingStatus, Room, RoomAmenities,
     RoomPricing, RoomType,
@@ -171,7 +173,7 @@ async def download_booking_calendar_ics(
         raise HTTPException(status_code=404, detail="Booking not found")
 
     expected = doc.get("calendar_token")
-    if not expected or token != expected:
+    if not expected or not hmac.compare_digest(token.encode("utf-8"), str(expected).encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid calendar token")
 
     profile = get_hotel_profile()
@@ -303,6 +305,12 @@ async def update_booking_status(booking_id: str, status: str):
     result = await db.bookings.update_one({"booking_id": booking_id.upper()}, {"$set": sets})
     if result.matched_count == 0:
         raise HTTPException(404, "Booking not found")
+    # Free the room for nights the guest will no longer use.
+    if status == BookingStatus.NO_SHOW.value:
+        await release_room_nights(db, booking_id.upper())
+    elif status == BookingStatus.CHECKED_OUT.value:
+        today = business_today(get_hotel_profile()["timezone"]).isoformat()
+        await release_room_nights(db, booking_id.upper(), from_night=today)
     return {"success": True, "booking_id": booking_id.upper(), "status": status}
 
 
@@ -353,7 +361,7 @@ async def _ensure_no_upcoming_bookings(db, room_id: str) -> None:
     upcoming = await db.bookings.count_documents({
         "room_id": room_id,
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "check_out_date": {"$gte": date.today().isoformat()},
+        "check_out_date": {"$gte": business_today(get_hotel_profile()["timezone"]).isoformat()},
     })
     if upcoming:
         raise HTTPException(

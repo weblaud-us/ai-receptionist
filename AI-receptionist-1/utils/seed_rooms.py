@@ -8,7 +8,6 @@ Total: 100 rooms
 
 import asyncio
 import logging
-from datetime import datetime
 from database.mongodb import connect_db, disconnect_db, get_db
 from database.models import Room, RoomType, BedType, RoomPricing, RoomAmenities
 
@@ -138,7 +137,14 @@ def generate_rooms():
 
 
 async def seed_rooms():
-    """Seed database with 20 rooms per type (100 total)"""
+    """Seed database with 20 rooms per type (100 total). DELETES all existing rooms first."""
+    from config import settings
+
+    if settings.APP_ENV == "production":
+        raise SystemExit(
+            "Refusing to seed: APP_ENV=production. This script deletes every room. "
+            "Use it only on a development or staging database."
+        )
     try:
         await connect_db()
         db = get_db()

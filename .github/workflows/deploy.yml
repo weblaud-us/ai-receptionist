@@ -1,0 +1,35 @@
+name: deploy
+
+# Manual-only until production exists (see docs/PRODUCTION_CHECKLIST.md, section 5).
+# To deploy automatically after CI is green on main, restore this trigger:
+#   workflow_run:
+#     workflows: [ci]
+#     types: [completed]
+#     branches: [main]
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never interrupt a deploy half-way
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.APP_DIR }}"
+            git fetch --quiet origin main
+            git checkout --quiet "${{ github.event.workflow_run.head_sha || github.sha }}"
+            ./AI-receptionist-1/deploy.sh

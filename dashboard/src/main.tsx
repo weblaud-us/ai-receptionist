@@ -7,9 +7,12 @@ import { AuthProvider } from '@/auth/auth'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ApiError } from '@/lib/api'
+import { initSentry } from '@/lib/sentry'
 import { ThemeProvider } from '@/lib/theme'
 import App from './App.tsx'
 import './index.css'
+
+initSentry()
 
 const queryClient = new QueryClient({
   // Every failed mutation surfaces as a toast (401s are handled by the auth layer).

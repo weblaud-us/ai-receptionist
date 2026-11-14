@@ -1,241 +1,98 @@
-# 🏨 AI-Powered Hotel Receptionist — Complete Setup Guide
+# AI Receptionist — backend
 
-## Architecture Overview
+FastAPI API + LiveKit voice agent for a single hotel (multi-tenant arrives in Phase 2 — see
+[../ROADMAP.md](../ROADMAP.md)). This README describes what exists **today**.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI Application                      │
-│  main.py  (uvicorn, lifespan, routers, middleware)          │
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐   ┌──────────────────┐    │
-│  │  WhatsApp   │  │    Voice    │   │   Admin REST +   │    │
-│  │  Handlers   │  │   Twilio/   │   │   WebSocket API  │    │
-│  │  (Twilio +  │  │   LiveKit)  │   │   /admin/ws      │    │
-│  │   Meta)     │  │             │   │                  │    │
-│  └──────┬──────┘  └──────┬──────┘   └────────┬─────────┘    │
-│         │                │                  │               │
-│         └────────────────┴──────────────────┘               │
-│                          │                                  │
-│              ┌───────────▼───────────┐                      │
-│              │     AI Agent (LLM)    │                      │
-│              │     OpenAI GPT-4o     │                      │
-│              └───────────┬───────────┘                      │
-│                          │                                  │
-│              ┌───────────▼───────────┐                      │
-│              │   Tool Executor       │                      │
-│              │  check_availability   │                      │
-│              │  create_booking       │                      │
-│              │  cancel_booking       │                      │
-│              └───────────┬───────────┘                      │
-│                          │                                  │
-│              ┌───────────▼───────────┐                      │
-│              │      MongoDB          │                      │
-│              │  bookings / rooms /   │                      │
-│              │  conversations /      │                      │
-│              │  knowledge_items /    │                      │
-│              │  agent_settings       │                      │
-│              └───────────────────────┘                      │
-└─────────────────────────────────────────────────────────────┘
-```
+## What it does
 
-## Quick Start
+| Channel | Path | How |
+|---|---|---|
+| Phone calls (legacy) | Twilio → `POST /voice/incoming` → media-stream WebSocket `/voice/stream` | batch Whisper STT → GPT → ElevenLabs TTS. Replaced by LiveKit SIP in Phase 1. |
+| Browser calls | WhatsApp "call me" → signed link `/call/{room}?exp&sig` → LiveKit room | `livekit_agent.py` (Whisper → GPT → OpenAI TTS pipeline, or OpenAI Realtime) |
+| WhatsApp | Meta Cloud API → `POST /webhook` | text and voice notes; replies by text or audio |
+| Dashboard API | `/admin/*`, `/bookings/*`, `/rooms/*` | JWT login (`ADMIN_USERNAME`/`ADMIN_PASSWORD`) or `X-Admin-Key` |
+| Reminders | background task in the API | WhatsApp reminder one day before check-in |
+
+The AI can check availability, quote prices, book, look up and cancel bookings, and send a
+WhatsApp confirmation. It always introduces itself as a **virtual assistant** and answers
+honestly if asked whether it is an AI.
+
+## Security model (Phase 0)
+
+- Twilio webhooks need a valid `X-Twilio-Signature`; Meta webhooks need a valid
+  `X-Hub-Signature-256` (`META_APP_SECRET`). Forged requests get 403.
+- `/livekit/token` only works with a signed link that expires after 15 minutes.
+- Booking tools only return or change a booking when the caller's phone matches it, or the
+  caller gives the booking ID **and** the full name (or check-in date). Otherwise: `not_found`.
+- Double booking is impossible: each booked room-night is a row in `room_nights` with a unique
+  `(room_id, night)` index — the database refuses the second claim.
+- "Today" is the hotel's date (`HOTEL_TIMEZONE`), never the server's.
+- Logs are JSON on stdout with phone numbers and e-mails masked; transcripts only at DEBUG.
+- Production refuses to boot with unsafe config (see `config.py → _production_guard`).
+
+## Run locally
+
+Needs [uv](https://docs.astral.sh/uv/) and a MongoDB (Atlas dev database or local).
 
 ```bash
-# 1. Clone and enter project
-cd "AI-powered hotel receptionist with calling and messaging"
-
-py -3.12 -m venv .venv
-# 2. Activate virtual environment
-.venv\Scripts\activate          # Windows
-.venv\Scripts\Activate.ps1
-source .venv/bin/activate       # Linux/Mac
-
-# 3. Copy and fill environment variables
-cp .env.example .env
-# Edit .env with your API keys
-
-# 4. Seed room data
-python -m utils.seed_rooms
-
-# 5. Start server
-uvicorn main:app --host 0.0.0.0 --port 8002 --reload
-
-# 6. Open API docs
-http://localhost:8002/docs
+cd AI-receptionist-1
+cp .env.example .env              # fill in dev values; APP_ENV=development, LOG_FORMAT=text
+uv sync                           # installs Python 3.12 + exact versions from uv.lock
+uv run python -m utils.seed_rooms # dev DB only — deletes and recreates rooms
+uv run uvicorn main:app --reload --port 8002      # API, docs at http://localhost:8002/docs
+uv run python livekit_agent.py dev                # LiveKit agent (separate terminal)
 ```
 
-## Environment Variables (Key Ones)
+For webhooks from Twilio/Meta to reach your machine, expose port 8002 with a tunnel (ngrok,
+cloudflared) and set `WEBHOOK_BASE_URL` to the tunnel's https URL:
+Twilio voice → `{WEBHOOK_BASE_URL}/voice/incoming`, Meta WhatsApp → `{WEBHOOK_BASE_URL}/webhook`.
 
-| Variable | Description | Required |
-|---|---|---|
-| `MONGODB_URI` | MongoDB Atlas or local URI | ✅ |
-| `LLM_PROVIDER` | `openai` \| `gemini` | ✅ |
-| `OPENAI_API_KEY` | GPT-4o for LLM + Whisper STT + TTS | If using OpenAI |
-| `META_WA_ACCESS_TOKEN` | Meta WhatsApp Cloud API token | For WhatsApp |
-| `META_WA_PHONE_NUMBER_ID` | Your WA phone number ID | For WhatsApp |
-| `META_WA_VERIFY_TOKEN` | Webhook verify token | For WhatsApp |
-| `TWILIO_ACCOUNT_SID` | Twilio credentials | For voice calls |
-| `TWILIO_AUTH_TOKEN` | Twilio auth token | For voice calls |
-| `LIVEKIT_URL` | LiveKit server URL | For browser calls |
-| `WEBHOOK_BASE_URL` | Public URL (ngrok for local dev) | For webhooks |
+> Windows note: `import livekit.agents` crashes on some Windows machines (native
+> `livekit.local_inference`). Run the agent worker under WSL or Linux; the API is unaffected.
 
-## API Endpoints Reference
-
-### Health
-| Method | Path | Description |
-|---|---|---|
-| GET | `/` | Service info |
-| GET | `/health` | Health + DB status |
-
-### Admin Dashboard
-| Method | Path | Description |
-|---|---|---|
-| GET | `/admin/dashboard` | Stats: bookings, revenue, occupancy, conversations |
-| GET | `/admin/conversations` | List conversations with filter/pagination |
-| GET | `/admin/conversations/{id}` | Full conversation with messages |
-| POST | `/admin/conversations/{id}/handover` | Toggle AI ↔ Human handover |
-| POST | `/admin/conversations/{id}/reply` | Send manual WhatsApp reply |
-| POST | `/admin/conversations/{id}/mark-read` | Reset unread count |
-| GET | `/admin/bookings` | List bookings with search/filter |
-| GET | `/admin/bookings/{id}` | Booking detail |
-| POST | `/admin/bookings/{id}/confirm` | Confirm + send WhatsApp |
-| POST | `/admin/bookings/{id}/cancel` | Cancel booking |
-| GET | `/admin/settings` | Agent settings |
-| POST | `/admin/settings` | Save agent settings |
-| GET | `/admin/knowledge` | List knowledge items |
-| POST | `/admin/knowledge` | Add knowledge item |
-| PUT | `/admin/knowledge/{id}` | Update knowledge item |
-| DELETE | `/admin/knowledge/{id}` | Delete knowledge item |
-
-### Admin Extras (new)
-| Method | Path | Description |
-|---|---|---|
-| WS | `/admin/ws` | Real-time push events (new messages, bookings) |
-| GET | `/admin/bookings/export-csv` | Export all bookings as CSV |
-| GET | `/admin/conversations/analytics` | Daily conversation volume (last N days) |
-| POST | `/admin/knowledge/test` | Test AI answer against knowledge base |
-| GET | `/admin/bookings/revenue-chart` | Daily revenue data for charting |
-
-### Bookings & Rooms
-| Method | Path | Description |
-|---|---|---|
-| GET | `/bookings/` | List bookings |
-| GET | `/bookings/{id}` | Get booking |
-| POST | `/bookings/` | Create booking |
-| PATCH | `/bookings/{id}/status` | Update status |
-| DELETE | `/bookings/{id}` | Cancel booking |
-| GET | `/bookings/{id}/calendar.ics` | Download ICS file |
-| GET | `/bookings/lookup/search` | Search by phone/name/ID |
-| GET | `/rooms/` | List rooms |
-| POST | `/rooms/` | Create room |
-| GET | `/rooms/availability` | Check availability |
-
-### WhatsApp
-| Method | Path | Description |
-|---|---|---|
-| POST | `/whatsapp/incoming` | Twilio WhatsApp webhook |
-| GET | `/webhook` | Meta WA webhook verification |
-| POST | `/webhook` | Meta WA inbound messages |
-
-### Voice
-| Method | Path | Description |
-|---|---|---|
-| POST | `/voice/incoming` | Twilio voice call webhook |
-| GET | `/call/{room_id}` | LiveKit room metadata for frontend integration |
-| GET | `/livekit/token` | Generate LiveKit join token |
-
-## Dashboard Features
-
-### 💬 Conversations Inbox
-- Live WhatsApp inbox with unread badges
-- Filter by All / Active / Resolved tabs
-- Click any conversation to view full chat history
-- **Take Over** button — disable AI and handle manually
-- **Send Reply** — sends WhatsApp directly from dashboard
-- Real-time updates via WebSocket (no manual refresh needed)
-- Browser notifications for new messages
-
-### 📅 Bookings Manager
-- Full booking table with search + status filter
-- Confirm pending bookings (triggers WhatsApp confirmation to guest)
-- Cancel bookings
-- Export all bookings to CSV
-- Stats cards: Confirmed / Pending / Cancelled / Revenue
-
-### 🧠 Knowledge Base
-- Add/edit/delete training knowledge for the AI agent
-- Coverage score and gap detection
-- **AI Test Preview** — ask a question and see what the AI would answer (uses real `/admin/knowledge/test` endpoint)
-- Query count tracking per item
-
-### ⚙️ Agent Settings
-- Customize greeting message (live preview on phone mockup)
-- Personality: Professional / Friendly / Luxury
-- Response language: English / Arabic / Hindi / Auto-detect
-- Toggles: Agent Active, Auto-Booking, Reminders, Escalation Notify, Away Mode
-- Business hours per day
-- Escalation email
-- Share Aria QR code / WhatsApp link
-
-### 📊 Overview
-- Full stats dashboard
-- Revenue chart (last 14 days)
-- Conversation volume chart (last 14 days)
-
-## WebSocket Events
-
-Connect to `ws://localhost:8002/admin/ws` for real-time events:
-
-```json
-// New inbound WhatsApp message
-{ "type": "new_message", "session_id": "...", "phone": "+971...", "preview": "Hi I want to book...", "label": "Booking" }
-
-// New booking created by AI
-{ "type": "new_booking", "booking_id": "HTL1A2B3C4D", "guest_name": "Ahmed K.", "status": "confirmed", "amount": 1008 }
-```
-
-## ngrok Setup (Local Dev)
+## Test, lint, type-check
 
 ```bash
-# Run ngrok
-ngrok http 8002
-
-# Copy HTTPS URL to .env
-WEBHOOK_BASE_URL=https://xxxx.ngrok-free.app
-
-# Set Meta WhatsApp webhook to:
-# https://xxxx.ngrok-free.app/webhook
-
-# Set Twilio WhatsApp webhook to:
-# https://xxxx.ngrok-free.app/whatsapp/incoming
+uv run pytest          # in-memory MongoDB; no network, no real credentials
+uv run ruff check .
+uv run mypy            # core/ only for now
 ```
 
-## Key Files
+CI (`.github/workflows/ci.yml` at the repo root) runs all three plus the dashboard build on
+every PR; `deploy.yml` deploys `main` only after CI is green. Deployment: [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md).
+
+## Health
+
+- `GET /livez` — process is up
+- `GET /readyz` — MongoDB reachable within 1 s, else **503** (`/health` is an alias)
+
+## Layout
 
 ```
-main.py                     ← FastAPI app entry point
-config.py                   ← All settings (pydantic-settings)
-ai/
-  agent.py                  ← Conversation AI agent
-  tools.py                  ← Hotel tools (availability, booking, cancellation)
-  prompts.py                ← System prompts
-  llm_provider.py           ← OpenAI / Gemini / LM Studio switch
-whatsapp/
-  meta_handler.py           ← Meta WhatsApp Cloud API (recommended)
-  handler.py                ← Twilio WhatsApp (alternative)
-voice/
-  twilio_handler.py         ← Inbound voice calls
-  stt_tts.py                ← Speech-to-text / text-to-speech
-routers/
-  admin.py                  ← Admin dashboard REST API
-  admin_extras.py           ← WebSocket + CSV + analytics (new)
-  api.py                    ← Public bookings/rooms API
-  livekit.py                ← LiveKit room/token API
-database/
-  models.py                 ← Pydantic + MongoDB schemas
-  mongodb.py                ← Async Motor connection
-  tenancy.py                ← Hotel profile config
-services/
-  reminders.py              ← 24h check-in reminder scheduler
-  calendar.py               ← ICS calendar file generation
+main.py                 FastAPI app, middleware, health
+config.py               every setting + production guard (documented in .env.example)
+core/                   framework-light shared logic
+  integrations/         Twilio + Meta signature checks
+  log.py                JSON logging, PII redaction, request/call ids
+  observability.py      Sentry
+  phone.py, timeutils.py, signed_links.py
+ai/                     agent loop, prompts, tools (shared by voice + WhatsApp)
+voice/                  legacy Twilio media-stream path, STT/TTS clients
+whatsapp/               Meta webhook + sending
+routers/                dashboard API, LiveKit token/call page
+services/               reminders, calendar links
+database/               Mongo connection + indexes, models, tenancy stubs
+migrations/             one-off data migrations (python -m migrations.<name>)
+deploy/systemd/         unit files for the API and the agent worker
+tests/                  pytest suite
+livekit_agent.py        LiveKit voice agent worker
+```
+
+## Data migrations
+
+After the first Phase 0 deploy, backfill the double-booking guard once:
+
+```bash
+uv run python -m migrations.m0001_room_nights          # dry run, lists existing conflicts
+uv run python -m migrations.m0001_room_nights --apply
 ```

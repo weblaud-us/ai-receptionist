@@ -28,12 +28,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException, Header, Depends
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from twilio.twiml.voice_response import VoiceResponse, Connect
 
 from ai.agent import get_voice_agent, create_conversation_with_memory
+from core.integrations.twilio_auth import verify_twilio, verify_twilio_websocket
+from core.log import call_id_var
 from ai.prompts import GREETING_VOICE
 from voice.stt_tts import get_stt, get_tts
 from database.mongodb import get_db
@@ -92,7 +94,7 @@ def _build_ws_url(request: Request) -> str:
         else f"wss://{base}"
     )
     url = f"{ws}/voice/stream"
-    logger.info("🌐 Twilio WS URL: %s", url)
+    logger.debug("Twilio WS URL: %s", url)
     return url
 
 
@@ -210,7 +212,7 @@ async def incoming_call_get_fallback():
     return Response(content="Voice webhook expects POST", media_type="text/plain")
 
 
-@router.post("/incoming")
+@router.post("/incoming", dependencies=[Depends(verify_twilio)])
 async def incoming_call(request: Request):
     """IDEMPOTENT — Twilio retries on 5xx. Slot reserved before any await."""
     try:
@@ -268,7 +270,7 @@ async def incoming_call(request: Request):
         return _twiml_connect(request)
 
 
-@router.post("/status")
+@router.post("/status", dependencies=[Depends(verify_twilio)])
 async def call_status(request: Request):
     form     = await request.form()
     call_sid = form.get("CallSid")
@@ -310,7 +312,9 @@ async def media_stream(websocket: WebSocket):
     Filler   → plays immediately after STT while LLM runs in background.
     All audio is native mulaw — no ffmpeg, no conversion.
     """
-    logger.info("🔌 WS connecting from %s", websocket.client)
+    if not verify_twilio_websocket(websocket):
+        await websocket.close(code=1008)  # before accept() → handshake rejected with 403
+        return
     await websocket.accept()
 
     stt   = get_stt()
@@ -341,6 +345,7 @@ async def media_stream(websocket: WebSocket):
                 meta       = msg.get("start", {})
                 call_sid   = meta.get("callSid")
                 stream_sid = meta.get("streamSid")
+                call_id_var.set(call_sid)
                 logger.info("🎙 Stream START callSid=%s", call_sid)
 
                 sd = active_sessions.get(call_sid)
@@ -521,7 +526,7 @@ async def _process_turn(
             logger.debug("🔇 Empty STT, skipping turn")
             return
 
-        logger.info("👤 Caller: %s", user_txt)
+        logger.debug("👤 Caller: %s", user_txt)  # transcripts: DEBUG only
 
         # 2. Launch LLM in background
         sd["ai_speaking"] = True
@@ -545,7 +550,7 @@ async def _process_turn(
 
         # 4. Wait for LLM
         response_text, tool_calls = await llm_task
-        logger.info("🤖 AI: %s", response_text[:120])
+        logger.debug("🤖 AI: %s", response_text[:120])
 
         # 5. TTS — ElevenLabs returns mulaw directly
         mulaw = await tts.synthesize(response_text)
@@ -595,7 +600,7 @@ async def make_outbound_call(
         from_num = profile.get("twilio_voice_number") or settings.TWILIO_PHONE_NUMBER
         client   = TwilioClient(sid, auth)
         twiml    = VoiceResponse()
-        twiml.say(message, voice="Polly.Joanna", language="en-US")
+        twiml.say(message, voice=settings.OUTBOUND_TTS_VOICE, language="en-US")
         call = client.calls.create(
             twiml=str(twiml), to=to_phone, from_=from_num,
             status_callback=f"{settings.WEBHOOK_BASE_URL}/voice/status",
@@ -611,10 +616,12 @@ async def make_outbound_call(
 async def outbound_call(req: OutboundCallRequest, _auth=Depends(_require_admin_key)):
     if not settings.TWILIO_ACCOUNT_SID or not settings.TWILIO_PHONE_NUMBER:
         raise HTTPException(400, "Twilio settings missing")
-    msg = req.message.strip() or (
-        f"Hello, this is Aria from {get_hotel_profile()['name']}. "
-        "Please let us know how we can assist you."
+    profile = get_hotel_profile()
+    # ⚖ AI disclosure: an automated voice must say it is one, even on a one-way message.
+    disclosure = (
+        f"Hello, this is {profile['receptionist_name']}, the virtual assistant for {profile['name']}. "
     )
+    msg = disclosure + (req.message.strip() or "Please let us know how we can assist you.")
     result = await make_outbound_call(to_phone=req.to_phone.strip(), message=msg)
     if not result.get("success"):
         raise HTTPException(500, result.get("error"))

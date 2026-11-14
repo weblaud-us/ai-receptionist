@@ -1,0 +1,28 @@
+# /etc/systemd/system/receptionist-agent.service — LiveKit voice agent worker
+# Before Phase 0 nothing kept livekit_agent.py running; this unit does.
+[Unit]
+Description=Receptionist LiveKit agent worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=receptionist
+Group=receptionist
+WorkingDirectory=/opt/receptionist/AI-receptionist-1
+EnvironmentFile=/etc/receptionist/prod.env
+EnvironmentFile=-/opt/receptionist/AI-receptionist-1/.env.release
+# Phase 1 replaces this with: .venv/bin/python -m agent.worker start
+ExecStart=/opt/receptionist/AI-receptionist-1/.venv/bin/python livekit_agent.py start
+Restart=always
+RestartSec=3
+# Let in-flight calls finish on deploy: the worker stops taking new jobs on SIGTERM and drains.
+# A short timeout would cut customers off mid-call on every deploy.
+KillSignal=SIGTERM
+TimeoutStopSec=600
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

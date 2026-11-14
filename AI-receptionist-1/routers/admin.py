@@ -20,12 +20,12 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from config import settings
+from core.timeutils import business_today
 from database.mongodb import get_db
 from database.tenancy import get_hotel_profile
 from utils.auth import (
@@ -43,10 +43,7 @@ REVENUE_STATUSES = ["confirmed", "pending", "checked_in", "checked_out"]
 
 
 def _hotel_today() -> date:
-    try:
-        return datetime.now(ZoneInfo(settings.HOTEL_TIMEZONE or "UTC")).date()
-    except Exception:
-        return datetime.utcnow().date()
+    return business_today(settings.HOTEL_TIMEZONE)
 
 
 def _strip_id(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -572,6 +569,7 @@ async def system():
             "name", "receptionist_name", "phone", "address",
             "checkin_time", "checkout_time", "currency", "timezone")},
         "environment": {"app_env": settings.APP_ENV, "debug": settings.DEBUG,
+                        "sentry": bool(settings.SENTRY_DSN),
                         "llm_model": settings.OPENAI_MODEL, "db_name": settings.MONGODB_DB_NAME},
         "database": {"connected": db_ok},
         "integrations": {
@@ -581,6 +579,8 @@ async def system():
                             and has(settings.TWILIO_PHONE_NUMBER),
             "meta_whatsapp": has(settings.META_WA_ACCESS_TOKEN) and has(settings.META_WA_PHONE_NUMBER_ID),
             "meta_webhook_verify_token": has(settings.META_WA_VERIFY_TOKEN),
+            "meta_webhook_signature": has(settings.META_APP_SECRET),
+            "twilio_signature_check": settings.VERIFY_TWILIO_SIGNATURE,
             "livekit": has(settings.LIVEKIT_URL) and has(settings.LIVEKIT_API_KEY)
                        and has(settings.LIVEKIT_API_SECRET),
             "public_base_url": has(settings.WEBHOOK_BASE_URL) or has(settings.CALL_BASE_URL),
@@ -596,7 +596,6 @@ async def system():
             "voice_calls": settings.ENABLE_VOICE_CALLS,
             "call_recording": settings.ENABLE_CALL_RECORDING,
             "livekit_realtime": settings.LIVEKIT_USE_REALTIME,
-            "api_key_required": settings.API_KEY_REQUIRED,
         },
         "memory": {"days": settings.CONVERSATION_MEMORY_DAYS,
                    "max_messages": settings.CONVERSATION_MEMORY_MAX_MESSAGES},

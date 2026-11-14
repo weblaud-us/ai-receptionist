@@ -11,20 +11,23 @@ Token-cost optimisations applied:
 
 import json
 import logging
-import time
 import os
 import tempfile
+import time
+import uuid
 from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from ai.agent import get_whatsapp_agent
 from ai.prompts import GREETING_WHATSAPP, BOOKING_CONFIRMATION_WHATSAPP
 from config import settings
+from core.integrations.meta_auth import verify_meta
+from core.signed_links import build_call_link
 from database.mongodb import get_db
 from database.tenancy import get_hotel_profile
 from whatsapp.handler import _get_or_create_whatsapp_session
@@ -213,8 +216,8 @@ def _build_call_options_message(profile: dict, room_id: str) -> str:
     if twilio_number:
         lines.append(f"\ud83d\udcde *Real Phone Call:*\nCall us directly at *{twilio_number}*")
     if base:
-        call_link = f"{base}/call/{room_id}"
-        lines.append(f"\ud83c\udf10 *Browser Call (no phone needed):*\nTap this link:\n{call_link}")
+        call_link = build_call_link(base, room_id)  # signed, expires in 15 minutes
+        lines.append(f"\ud83c\udf10 *Browser Call (no phone needed):*\nTap this link (valid for 15 minutes):\n{call_link}")
 
     if not twilio_number and not base:
         return "Sorry, call options are not configured yet. Please ask your query here."
@@ -430,9 +433,16 @@ async def verify_webhook(request: Request):
 
 
 @router.post("/webhook")
-async def inbound_webhook(request: Request):
-    payload = await request.json()
-    await _handle_webhook_payload(payload)
+async def inbound_webhook(background: BackgroundTasks, body: bytes = Depends(verify_meta)):
+    """
+    Acknowledge immediately, process after the response. Meta retries webhooks that don't get
+    a fast 200, which used to cause duplicate replies. (Moves onto the Redis queue in Phase 3.)
+    """
+    try:
+        payload = json.loads(body or b"{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid json")
+    background.add_task(_handle_webhook_payload, payload)
     return Response(content="ok", media_type="text/plain")
 
 
@@ -475,10 +485,9 @@ async def _handle_webhook_payload(payload: dict) -> None:
                         if not text_body:
                             logger.warning("Audio transcription empty for %s", phone)
 
-                    logger.info(
-                        "Meta inbound | pnid=%s | from=%s | type=%s | text=%s",
-                        phone_number_id, phone, msg_type, (text_body or "")[:120],
-                    )
+                    logger.info("Meta inbound | from=%s | type=%s | chars=%s",
+                                phone, msg_type, len(text_body or ""))
+                    logger.debug("Meta inbound text: %s", (text_body or "")[:120])  # DEBUG only
                     await _process_incoming_message(
                         phone=phone,
                         message_body=text_body,
@@ -514,7 +523,7 @@ async def _process_incoming_message(
     # ── Call request ──────────────────────────────────────────────────────────
     if msg_type == "text" and _is_call_request(message_body):
         profile = get_hotel_profile()
-        room_id = f"wa_{phone.replace('+', '')}_{int(time.time())}"
+        room_id = f"wa_{uuid.uuid4().hex[:16]}"  # no phone number in URLs
         await _send_meta_whatsapp(phone, _build_call_options_message(profile, room_id), phone_number_id)
         return
 
@@ -570,9 +579,11 @@ async def _process_incoming_message(
         if _is_name_question(message_body):
             receptionist_name = (profile.get("receptionist_name") or settings.RECEPTIONIST_NAME or "Aria").strip()
             hotel_name = (profile.get("name") or settings.HOTEL_NAME or "the hotel").strip()
+            # ⚖ honest about being an AI assistant
             off_reply = (
-                f"Sir, my name is {receptionist_name}, the front desk receptionist at {hotel_name}. "
-                "How may I assist you with your stay today?"
+                f"I'm {receptionist_name}, the virtual assistant for {hotel_name}. "
+                "I can help with bookings and questions about your stay, or pass a message to our team. "
+                "How may I help you today?"
             )
         else:
             off_reply = random.choice(_OFF_TOPIC_REPLIES)

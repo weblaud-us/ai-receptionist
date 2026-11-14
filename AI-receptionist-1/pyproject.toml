@@ -1,0 +1,84 @@
+[project]
+name = "ai-receptionist-backend"
+version = "0.1.0"
+description = "AI receptionist: FastAPI API, LiveKit voice worker, WhatsApp"
+requires-python = ">=3.12,<3.14"
+# Exact pins: an unpinned deploy can pull a breaking release on any day.
+# Upgrade deliberately: change a pin, `uv lock`, run the tests, commit both files.
+dependencies = [
+    # Core framework
+    "fastapi==0.162.3",
+    "starlette==1.6.0",
+    "uvicorn[standard]==0.54.0",
+    "python-multipart==0.0.33",          # form parsing for Twilio webhooks
+    "pydantic==2.9.2",
+    "pydantic-settings==2.6.0",
+    "python-dotenv==1.0.1",
+    "protobuf==5.29.6",
+    # Database
+    "motor==3.6.0",
+    "pymongo==4.9.2",
+    # LLM / speech
+    "openai==2.54.0",
+    "elevenlabs==2.78.0",
+    # Telephony / messaging
+    "twilio==9.3.7",
+    "httpx==0.27.2",
+    # LiveKit
+    "livekit==1.1.20",
+    "livekit-api==1.2.2",
+    "livekit-agents==1.8.6",
+    "livekit-plugins-openai==1.8.6",
+    "livekit-plugins-elevenlabs==1.8.6",
+    "livekit-plugins-silero==1.8.6",
+    # Ops
+    "sentry-sdk==2.75.0",
+    "tzdata==2026.6",                    # IANA timezones on Windows
+    # stdlib audioop was removed in 3.13; only the legacy Twilio path needs it
+    "audioop-lts==0.2.2; python_version >= '3.13'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<0.26",
+    "mongomock-motor>=0.0.34",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv]
+package = false
+
+# ── Tests ───────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]  # legacy utcnow()/audioop noise; revisit in Phase 1
+markers = [
+    "integration: needs a real MongoDB (MONGODB_TEST_URI)",
+]
+
+# ── Lint ────────────────────────────────────────────────
+# Start lenient on the legacy code (real errors only); new code in core/ gets the full set.
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".venv", ".venv-*"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"core/**" = []
+
+# ── Types ───────────────────────────────────────────────
+# Lenient to start: only core/ is checked; tighten as modules move into core/.
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+files = ["core"]

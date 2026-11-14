@@ -22,10 +22,7 @@ Start:
     python livekit_agent.py dev
 """
 
-import asyncio
-import json
 import logging
-import sys
 import warnings
 from typing import Annotated
 
@@ -35,15 +32,16 @@ warnings.filterwarnings("ignore", message="Field .model_provider.", category=Use
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
 from config import settings
-from ai.prompts import get_system_prompt
+from core.log import configure_logging
+from core.observability import init_sentry
+
+configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
+init_sentry("agent")
+
+from ai.prompts import GREETING_VOICE, get_system_prompt
 from database.mongodb import connect_db
+from database.tenancy import get_hotel_profile
 
 from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions, function_tool
 from livekit.plugins import openai as lk_openai
@@ -63,10 +61,20 @@ class HotelReceptionistAgent(Agent):
     on_enter() sends the greeting AFTER session is fully started — no race condition.
     """
 
-    def __init__(self, instructions: str):
+    def __init__(self, instructions: str, caller_phone: str | None = None):
         super().__init__(instructions=instructions)
         from ai.tools import get_tool_executor
         self._executor = get_tool_executor()
+        # Browser calls (WhatsApp link) have no verified phone number, so booking lookups
+        # require booking ID + name. SIP calls will pass the caller's number here (Phase 1).
+        self._caller_phone = caller_phone
+
+    async def _run(self, tool: str, **args) -> str:
+        """All tools go through execute(): it enforces caller-ownership rules on bookings."""
+        return await self._executor.execute(
+            tool, {k: v for k, v in args.items() if v not in ("", None)},
+            caller_phone=self._caller_phone,
+        )
 
     # ── Greeting ──────────────────────────────────────────────────────────────
 
@@ -76,10 +84,10 @@ class HotelReceptionistAgent(Agent):
         Greeting is sent ONCE here — the system prompt instructs the LLM
         never to re-greet on subsequent turns.
         """
-        greeting = (
-            f"Good day, thank you for calling {settings.HOTEL_NAME}. "
-            f"This is {settings.RECEPTIONIST_NAME} from the front desk. "
-            "How may I assist you today?"
+        profile = get_hotel_profile()
+        # The greeting discloses that this is an AI assistant (legal requirement).
+        greeting = GREETING_VOICE.format(
+            hotel_name=profile["name"], receptionist_name=profile["receptionist_name"],
         )
         logger.info("🗣 on_enter → sending greeting (once only)")
         await self.session.say(greeting, allow_interruptions=True)
@@ -98,12 +106,10 @@ class HotelReceptionistAgent(Agent):
         adults: Annotated[int, "Number of adults"] = 1,
         children: Annotated[int, "Number of children"] = 0,
     ) -> str:
-        kwargs = dict(check_in_date=check_in_date, check_out_date=check_out_date,
-                      adults=adults, children=children)
-        if room_type:
-            kwargs["room_type"] = room_type.lower()
-        result = await self._executor.check_room_availability(**kwargs)
-        return json.dumps(result, default=str)
+        return await self._run(
+            "check_room_availability", check_in_date=check_in_date, check_out_date=check_out_date,
+            room_type=room_type.lower(), adults=adults, children=children,
+        )
 
     @function_tool(description="Get detailed pricing for a specific room type including taxes.")
     async def get_room_pricing(
@@ -112,12 +118,10 @@ class HotelReceptionistAgent(Agent):
         check_in_date: Annotated[str, "Check-in YYYY-MM-DD"],
         check_out_date: Annotated[str, "Check-out YYYY-MM-DD"],
     ) -> str:
-        result = await self._executor.get_room_pricing(
-            room_type=room_type.lower(),
-            check_in_date=check_in_date,
-            check_out_date=check_out_date,
+        return await self._run(
+            "get_room_pricing", room_type=room_type.lower(),
+            check_in_date=check_in_date, check_out_date=check_out_date,
         )
-        return json.dumps(result, default=str)
 
     @function_tool(description=(
         "Create a confirmed hotel room booking. "
@@ -134,56 +138,62 @@ class HotelReceptionistAgent(Agent):
         children: Annotated[int, "Number of children"] = 0,
         special_requests: Annotated[str, "Any special requests"] = "",
     ) -> str:
-        result = await self._executor.create_booking(
-            guest_name=guest_name, guest_phone=guest_phone,
+        return await self._run(
+            "create_booking", guest_name=guest_name, guest_phone=guest_phone,
             room_type=room_type.lower(), check_in_date=check_in_date,
             check_out_date=check_out_date, adults=adults, children=children,
-            special_requests=special_requests or None,
+            special_requests=special_requests,
         )
-        logger.info("📅 Booking: %s", str(result)[:200])
-        return json.dumps(result, default=str)
 
-    @function_tool(description="Get booking details by booking ID or guest phone number.")
+    @function_tool(description=(
+        "Get booking details. Needs the booking ID plus the full name on the booking "
+        "(or its check-in date) to prove it is the guest's own booking."
+    ))
     async def get_booking_details(
         self,
         booking_id: Annotated[str, "Booking reference ID"] = "",
+        guest_name: Annotated[str, "Full name on the booking"] = "",
+        check_in_date: Annotated[str, "Check-in date YYYY-MM-DD"] = "",
         guest_phone: Annotated[str, "Guest phone number"] = "",
     ) -> str:
-        result = await self._executor.get_booking_details(
-            booking_id=booking_id or None,
-            guest_phone=guest_phone or None,
+        return await self._run(
+            "get_booking_details", booking_id=booking_id, guest_name=guest_name,
+            check_in_date=check_in_date, guest_phone=guest_phone,
         )
-        return json.dumps(result, default=str)
 
-    @function_tool(description="Cancel an existing booking by booking ID.")
+    @function_tool(description=(
+        "Cancel an existing booking. Needs the booking ID plus the full name on the booking."
+    ))
     async def cancel_booking(
         self,
         booking_id: Annotated[str, "Booking reference ID"],
+        guest_name: Annotated[str, "Full name on the booking"] = "",
+        check_in_date: Annotated[str, "Check-in date YYYY-MM-DD"] = "",
         cancellation_reason: Annotated[str, "Reason"] = "",
     ) -> str:
-        result = await self._executor.cancel_booking(
-            booking_id=booking_id, cancellation_reason=cancellation_reason or None,
+        return await self._run(
+            "cancel_booking", booking_id=booking_id, guest_name=guest_name,
+            check_in_date=check_in_date, cancellation_reason=cancellation_reason,
         )
-        return json.dumps(result, default=str)
 
     @function_tool(description="Get hotel info: amenities, policies, location.")
     async def get_hotel_info(
         self,
         info_type: Annotated[str, "general|amenities|policies|location|rooms_overview"] = "general",
     ) -> str:
-        result = await self._executor.get_hotel_info(info_type=info_type)
-        return json.dumps(result, default=str)
+        return await self._run("get_hotel_info", info_type=info_type)
 
     @function_tool(description="Send booking confirmation to guest's WhatsApp.")
     async def send_booking_confirmation_whatsapp(
         self,
         booking_id: Annotated[str, "Booking ID"],
         whatsapp_number: Annotated[str, "WhatsApp number with country code"],
+        guest_name: Annotated[str, "Full name on the booking"] = "",
     ) -> str:
-        result = await self._executor.send_booking_confirmation_whatsapp(
-            booking_id=booking_id, whatsapp_number=whatsapp_number,
+        return await self._run(
+            "send_booking_confirmation_whatsapp", booking_id=booking_id,
+            whatsapp_number=whatsapp_number, guest_name=guest_name,
         )
-        return json.dumps(result, default=str)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -205,7 +215,7 @@ def _build_system_prompt() -> str:
     base += (
         "\n\nCRITICAL — LIVEKIT CALL RULE:\n"
         "The greeting is played ONCE automatically via on_enter(). "
-        "NEVER repeat 'Good day', 'Thank you for calling', 'This is [name] from the front desk', "
+        "NEVER repeat 'Thank you for calling', 'This is [name], the hotel's virtual assistant', "
         "or any hotel welcome introduction again — even if the caller says Hi or Hello. "
         "Respond to Hi/Hello with only 'How may I help you?' and proceed immediately."
     )

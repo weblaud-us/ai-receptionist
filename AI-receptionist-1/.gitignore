@@ -8,7 +8,7 @@ dist/
 build/
 .venv/
 venv/
-.python-version
+# .python-version is committed: it pins the interpreter for uv
 ngrok-v3-stable
 
 # Pytest / coverage

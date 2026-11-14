@@ -6,20 +6,92 @@ Each tool directly queries/writes MongoDB.
 
 import json
 import logging
+import re
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any
-from bson import ObjectId
+
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from config import settings
+from core.phone import digits, phones_match
+from core.timeutils import business_today
 from database.mongodb import get_db
 from database.tenancy import get_hotel_profile
-from database.models import (
-    Booking, BookingStatus, Room, RoomType,
-    GuestProfile, PricingBreakdown
-)
+from database.models import Booking, BookingStatus, RoomType, PricingBreakdown
 from services.calendar import build_booking_calendar_links, generate_calendar_token
 
 logger = logging.getLogger(__name__)
+
+
+def _hotel_today() -> date:
+    return business_today(get_hotel_profile().get("timezone"))
+
+
+def new_booking_id() -> str:
+    return f"HTL{uuid.uuid4().hex[:8].upper()}"
+
+
+def _nights(check_in_date: str, check_out_date: str) -> List[str]:
+    """Each night a stay occupies, as local YYYY-MM-DD strings (check-out day excluded)."""
+    start, end = date.fromisoformat(check_in_date), date.fromisoformat(check_out_date)
+    return [(start + timedelta(days=i)).isoformat() for i in range((end - start).days)]
+
+
+def phone_variants(phone: str) -> List[str]:
+    """Stored formats a phone might be saved in: E.164, digits only, and BD national (0…)."""
+    d = digits(phone)
+    variants = {phone.replace(" ", "").replace("-", ""), d, f"+{d}"}
+    if d.startswith("880"):
+        variants.add("0" + d[3:])            # +8801712345678 → 01712345678
+    elif d.startswith("0"):
+        variants.update({"880" + d[1:], "+880" + d[1:]})
+    return sorted(v for v in variants if v)
+
+
+async def release_room_nights(db: Any, booking_id: str, from_night: Optional[str] = None) -> int:
+    """Free a booking's room-nights (all, or from `from_night` on). Returns how many were freed."""
+    query: Dict[str, Any] = {"booking_id": booking_id}
+    if from_night:
+        query["night"] = {"$gte": from_night}
+    result = await db.room_nights.delete_many(query)
+    return result.deleted_count
+
+
+# ─────────────────────────────────────────────
+# Caller-ownership rules for booking tools (voice + WhatsApp)
+# ─────────────────────────────────────────────
+
+BOOKING_ACCESS_TOOLS = {"get_booking_details", "cancel_booking", "send_booking_confirmation_whatsapp"}
+
+# Same answer whether the booking doesn't exist or belongs to someone else: never leak existence.
+NOT_FOUND: Dict[str, Any] = {
+    "error": "not_found",
+    "message": (
+        "No matching booking found. If the guest is calling from a different number than the "
+        "one on the booking, ask for the booking ID and the full name on the booking."
+    ),
+}
+
+
+def _norm_name(name: Optional[str]) -> List[str]:
+    return sorted(re.sub(r"[^\w\s]", " ", (name or "").casefold()).split())
+
+
+def _names_match(a: Optional[str], b: Optional[str]) -> bool:
+    ta, tb = _norm_name(a), _norm_name(b)
+    return bool(ta) and ta == tb
+
+
+def _caller_owns(booking: Dict[str, Any], caller_phone: Optional[str]) -> bool:
+    return bool(caller_phone) and phones_match(booking.get("guest_phone"), caller_phone)
+
+
+def _identity_proven(booking: Dict[str, Any], guest_name: Optional[str], check_in_date: Optional[str]) -> bool:
+    """Booking ID (already used to find it) + full name or check-in date = two factors."""
+    if _names_match(booking.get("guest_name"), guest_name):
+        return True
+    return bool(check_in_date) and str(booking.get("check_in_date")) == str(check_in_date).strip()
 
 
 # ─────────────────────────────────────────────
@@ -115,12 +187,18 @@ HOTEL_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_booking_details",
-            "description": "Retrieve existing booking details by booking ID or guest phone number.",
+            "description": (
+                "Retrieve the caller's existing bookings. Without a booking ID it looks up bookings "
+                "made with the caller's own phone number. If the guest is contacting you from a "
+                "different number, ask for the booking ID and the full name on the booking."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "booking_id": {"type": "string", "description": "Booking ID like HTL3A4B5C6D"},
-                    "guest_phone": {"type": "string", "description": "Guest phone number to find their bookings"}
+                    "guest_phone": {"type": "string", "description": "Guest phone number to find their bookings"},
+                    "guest_name": {"type": "string", "description": "Full name on the booking (needed when calling from another number)"},
+                    "check_in_date": {"type": "string", "description": "Check-in date YYYY-MM-DD (alternative proof of identity)"}
                 }
             }
         }
@@ -129,12 +207,17 @@ HOTEL_TOOLS = [
         "type": "function",
         "function": {
             "name": "cancel_booking",
-            "description": "Cancel an existing booking by booking ID.",
+            "description": (
+                "Cancel an existing booking by booking ID. If the guest is contacting you from a "
+                "different number than the one on the booking, also pass the full name on the booking."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "booking_id": {"type": "string"},
-                    "cancellation_reason": {"type": "string"}
+                    "cancellation_reason": {"type": "string"},
+                    "guest_name": {"type": "string", "description": "Full name on the booking"},
+                    "check_in_date": {"type": "string", "description": "Check-in date YYYY-MM-DD"}
                 },
                 "required": ["booking_id"]
             }
@@ -167,7 +250,8 @@ HOTEL_TOOLS = [
                 "type": "object",
                 "properties": {
                     "booking_id": {"type": "string", "description": "The booking ID to send confirmation for"},
-                    "whatsapp_number": {"type": "string", "description": "Guest's WhatsApp number with country code (e.g., +8801712345678)"}
+                    "whatsapp_number": {"type": "string", "description": "Guest's WhatsApp number with country code (e.g., +8801712345678)"},
+                    "guest_name": {"type": "string", "description": "Full name on the booking (needed when calling from another number)"}
                 },
                 "required": ["booking_id", "whatsapp_number"]
             }
@@ -181,7 +265,13 @@ HOTEL_TOOLS = [
 # ─────────────────────────────────────────────
 
 class HotelToolExecutor:
-    """Executes AI agent tool calls against MongoDB"""
+    """
+    Executes AI agent tool calls against MongoDB.
+
+    `execute()` is the ONLY entry point for the AI (voice + WhatsApp). It enforces the
+    caller-ownership rules for booking tools. The plain methods below are also called by the
+    authenticated dashboard API, which is allowed to see every booking.
+    """
 
     def __init__(self):
         self.db = None
@@ -189,17 +279,19 @@ class HotelToolExecutor:
     def _get_db(self):
         return get_db()
 
-    async def execute(self, tool_name: str, arguments: Dict) -> str:
-        """Route tool call to correct handler, return JSON string result"""
+    async def execute(self, tool_name: str, arguments: Dict, *, caller_phone: Optional[str] = None) -> str:
+        """Route an AI tool call to its handler and return a JSON string result."""
         try:
+            arguments = dict(arguments or {})
+            if tool_name in BOOKING_ACCESS_TOOLS:
+                result = await self._execute_booking_access(tool_name, arguments, caller_phone)
+                return json.dumps(result, default=str)
+
             handlers = {
                 "check_room_availability": self.check_room_availability,
                 "get_room_pricing": self.get_room_pricing,
                 "create_booking": self.create_booking,
-                "get_booking_details": self.get_booking_details,
-                "cancel_booking": self.cancel_booking,
                 "get_hotel_info": self.get_hotel_info,
-                "send_booking_confirmation_whatsapp": self.send_booking_confirmation_whatsapp,
             }
             handler = handlers.get(tool_name)
             if not handler:
@@ -208,9 +300,82 @@ class HotelToolExecutor:
             result = await handler(**arguments)
             return json.dumps(result, default=str)
 
+        except (ValueError, TypeError) as e:
+            # Bad arguments from the model (e.g. a malformed date): tell it so it can retry.
+            logger.warning("Tool %s got invalid arguments: %s", tool_name, type(e).__name__)
+            return json.dumps({"error": "invalid_arguments", "message": str(e)[:200]})
         except Exception as e:
-            logger.error(f"Tool {tool_name} failed: {e}", exc_info=True)
-            return json.dumps({"error": str(e)})
+            logger.error("Tool %s failed: %s", tool_name, type(e).__name__, exc_info=True)
+            return json.dumps({"error": "tool_failed", "message": "Something went wrong. Apologise and offer to try again."})
+
+    # ── Booking access (ownership-checked) ────────────────────────────────
+
+    async def _execute_booking_access(
+        self, tool_name: str, args: Dict[str, Any], caller_phone: Optional[str]
+    ) -> Dict[str, Any]:
+        """
+        Rule (Task 0.9): a booking may be read or changed only if
+          - its guest_phone matches the caller's phone, or
+          - the caller gives the booking ID plus the full name (or check-in date) on it.
+        Anything else returns NOT_FOUND — identical to a booking that doesn't exist.
+        """
+        db = self._get_db()
+        booking_id = (args.get("booking_id") or "").strip().upper()
+        guest_name = args.get("guest_name")
+        check_in_date = args.get("check_in_date")
+
+        if tool_name == "get_booking_details" and not booking_id:
+            # Lookup by phone: only ever the caller's own phone.
+            requested = args.get("guest_phone")
+            if not caller_phone or (requested and not phones_match(requested, caller_phone)):
+                return NOT_FOUND
+            result = await self.get_booking_details(guest_phone=caller_phone)
+            return result if result.get("found") else NOT_FOUND
+
+        if not booking_id:
+            return {"error": "booking_id_required", "message": "Ask the guest for their booking ID."}
+
+        booking = await db.bookings.find_one({"booking_id": booking_id})
+        if not booking:
+            return NOT_FOUND
+        owns = _caller_owns(booking, caller_phone)
+        if not owns and not _identity_proven(booking, guest_name, check_in_date):
+            return NOT_FOUND
+
+        if tool_name == "get_booking_details":
+            return await self.get_booking_details(booking_id=booking_id)
+
+        if tool_name == "cancel_booking":
+            result = await self.cancel_booking(booking_id, args.get("cancellation_reason"))
+            if result.get("success") and not owns:
+                # Cancelled by someone calling from another number: tell the phone on file.
+                await self._notify_cancellation_to_phone_on_file(booking)
+            return result
+
+        # send_booking_confirmation_whatsapp
+        destination = args.get("whatsapp_number") if owns else None
+        return await self.send_booking_confirmation_whatsapp(
+            booking_id=booking_id,
+            whatsapp_number=destination or booking.get("guest_phone", ""),
+        )
+
+    async def _notify_cancellation_to_phone_on_file(self, booking: Dict[str, Any]) -> None:
+        phone = booking.get("guest_phone")
+        if not phone or not settings.ENABLE_WHATSAPP:
+            return
+        try:
+            from whatsapp.meta_handler import _send_meta_whatsapp
+
+            profile = get_hotel_profile()
+            await _send_meta_whatsapp(
+                phone,
+                f"Your booking {booking.get('booking_id')} at {profile['name']} "
+                f"(check-in {booking.get('check_in_date')}) has been cancelled. "
+                f"If you did not request this, please contact us at {profile['phone']}.",
+                None,
+            )
+        except Exception:
+            logger.warning("Cancellation notice to phone on file failed", exc_info=True)
 
     async def check_room_availability(
         self,
@@ -226,7 +391,7 @@ class HotelToolExecutor:
 
         if checkin >= checkout:
             return {"error": "Check-out must be after check-in"}
-        if checkin < date.today():
+        if checkin < _hotel_today():
             return {"error": "Check-in date cannot be in the past"}
 
         nights = (checkout - checkin).days
@@ -502,18 +667,61 @@ class HotelToolExecutor:
 
         if room_id:
             # Caller asked for a specific room — it must still be free.
-            chosen = next((r for r in rooms if r["room_id"] == room_id), None)
-            if not chosen:
+            candidates = [r for r in rooms if r["room_id"] == room_id]
+            if not candidates:
                 return {"error": "The selected room is no longer available for those dates"}
         else:
-            chosen = rooms[0]
+            candidates = rooms
 
+        # Claim the room-nights. The unique (room_id, night) index means the DATABASE refuses a
+        # second booking for the same room and night — two concurrent callers can't both win.
+        # If another booking grabbed a room between the availability check and now, try the next.
+        booking_id = new_booking_id()
+        nights_list = _nights(check_in_date, check_out_date)
+        chosen = None
+        for candidate in candidates:
+            if await self._claim_room_nights(db, candidate["room_id"], booking_id, nights_list):
+                chosen = candidate
+                break
+        if chosen is None:
+            return {
+                "error": "no_longer_available",
+                "message": "That room was just booked by someone else. Offer the guest other rooms or dates.",
+            }
+
+        try:
+            return await self._finalise_booking(
+                db, booking_id, chosen, guest_phone=guest_phone, guest_name=guest_name,
+                guest_email=guest_email, room_type=room_type, check_in_date=check_in_date,
+                check_out_date=check_out_date, adults=adults, children=children,
+                special_requests=special_requests, source=source, nights=avail["nights"],
+            )
+        except Exception:
+            await release_room_nights(db, booking_id)  # don't leave orphan claims
+            raise
+
+    async def _claim_room_nights(self, db: Any, room_id: str, booking_id: str, nights: List[str]) -> bool:
+        now = datetime.utcnow()
+        docs = [{"room_id": room_id, "night": n, "booking_id": booking_id, "created_at": now} for n in nights]
+        try:
+            await db.room_nights.insert_many(docs, ordered=True)
+            return True
+        except (DuplicateKeyError, BulkWriteError):
+            await release_room_nights(db, booking_id)  # undo any nights inserted before the clash
+            return False
+
+    async def _finalise_booking(
+        self, db: Any, booking_id: str, chosen: Dict[str, Any], *, guest_phone: str,
+        guest_name: str, guest_email: Optional[str], room_type: str, check_in_date: str,
+        check_out_date: str, adults: int, children: int, special_requests: Optional[str],
+        source: str, nights: int,
+    ) -> Dict[str, Any]:
         # Calculate pricing from the room actually being booked
-        nights = avail["nights"]
         pricing_data = await self.get_room_pricing(
             room_type, check_in_date, check_out_date, room_id=chosen["room_id"]
         )
         if pricing_data.get("error"):
+            await release_room_nights(db, booking_id)
             return {"error": pricing_data["error"]}
 
         pricing = PricingBreakdown(
@@ -542,8 +750,9 @@ class HotelToolExecutor:
             upsert=True,
         )
 
-        # Create booking
+        # Create booking (its room-nights are already claimed under this booking_id)
         booking = Booking(
+            booking_id=booking_id,
             guest_phone=guest_phone,
             guest_name=guest_name,
             guest_email=guest_email,
@@ -589,7 +798,7 @@ class HotelToolExecutor:
             room_type=room_type,
         )
 
-        logger.info(f"✅ Booking created: {booking.booking_id} for {guest_name}")
+        logger.info("✅ Booking created: %s (room %s)", booking.booking_id, chosen["room_number"])
 
         return {
             "success": True,
@@ -627,21 +836,7 @@ class HotelToolExecutor:
         if booking_id:
             query["booking_id"] = booking_id.upper()
         elif guest_phone:
-            # Normalize phone: try multiple formats (E.164, local BD, without +)
-            raw = guest_phone.replace(" ", "").replace("-", "")
-            phone_variants = {raw}
-            if raw.startswith("+"):
-                no_plus = raw[1:]
-                phone_variants.add(no_plus)
-                if raw.startswith("+880"):
-                    phone_variants.add("0" + raw[4:])   # +8801712345678 → 01712345678
-            elif raw.startswith("880"):
-                phone_variants.add("+" + raw)           # 8801712345678 → +8801712345678
-                phone_variants.add("0" + raw[3:])       # 8801712345678 → 01712345678
-            elif raw.startswith("0"):
-                phone_variants.add("880" + raw[1:])     # 01712345678 → 8801712345678
-                phone_variants.add("+880" + raw[1:])    # 01712345678 → +8801712345678
-            query["guest_phone"] = {"$in": list(phone_variants)}
+            query["guest_phone"] = {"$in": phone_variants(guest_phone)}
 
         bookings = await db.bookings.find(query).sort("created_at", -1).limit(5).to_list(5)
 
@@ -664,52 +859,6 @@ class HotelToolExecutor:
 
         return {"found": True, "bookings": result, "count": len(result)}
 
-    async def _get_guest_bookings_by_phone(
-        self,
-        phone: str,
-        limit: int = 5,
-    ) -> List[Dict]:
-        """
-        Retrieve guest's recent bookings by phone (used by Twilio voice to inject into greeting).
-        Returns minimal info for prompt context (not for display).
-        """
-        db = self._get_db()
-        
-        # Normalize phone: same logic as get_booking_details
-        raw = phone.replace(" ", "").replace("-", "")
-        phone_variants = {raw}
-        if raw.startswith("+"):
-            no_plus = raw[1:]
-            phone_variants.add(no_plus)
-            if raw.startswith("+880"):
-                phone_variants.add("0" + raw[4:])  # +8801712345678 → 01712345678
-        elif raw.startswith("880"):
-            phone_variants.add("+" + raw)          # 8801712345678 → +8801712345678
-            phone_variants.add("0" + raw[3:])      # 8801712345678 → 01712345678
-        elif raw.startswith("0"):
-            phone_variants.add("880" + raw[1:])    # 01712345678 → 8801712345678
-            phone_variants.add("+880" + raw[1:])   # 01712345678 → +8801712345678
-        
-        # Query recent bookings
-        bookings = await db.bookings.find(
-            {"guest_phone": {"$in": list(phone_variants)}}
-        ).sort("created_at", -1).limit(limit).to_list(limit)
-        
-        # Return simplified format for voice greeting context
-        result = []
-        for b in bookings:
-            result.append({
-                "booking_id": b["booking_id"],
-                "guest_name": b.get("guest_name", "Guest"),
-                "check_in_date": str(b["check_in_date"]),
-                "check_out_date": str(b["check_out_date"]),
-                "room_type": b["room_type"],
-                "room_number": b.get("room_number", "TBD"),
-                "status": b["status"],  # confirmed, checked_in, checked_out, cancelled, etc
-            })
-        
-        return result
-
     async def cancel_booking(
         self,
         booking_id: str,
@@ -726,7 +875,7 @@ class HotelToolExecutor:
 
         # Check-in is today or passed - no free cancellation
         checkin = date.fromisoformat(str(booking["check_in_date"]))
-        today = date.today()
+        today = _hotel_today()
         days_until_checkin = (checkin - today).days
 
         cancellation_fee = 0
@@ -751,8 +900,7 @@ class HotelToolExecutor:
                 }
             }
         )
-        booking["status"] = "cancelled"
-        booking["updated_at"] = datetime.utcnow()
+        await release_room_nights(db, booking_id.upper())  # the room is bookable again
 
         return {
             "success": True,
@@ -815,19 +963,17 @@ class HotelToolExecutor:
     ) -> Dict:
         """Send booking confirmation to guest's WhatsApp via Meta API"""
         import httpx
-        from database.tenancy import get_hotel_profile
         
         db = self._get_db()
         
-        logger.info(f"📱 Attempting to send WhatsApp confirmation for booking {booking_id} to {whatsapp_number}")
+        logger.info("📱 Sending WhatsApp confirmation for booking %s", booking_id)
         
         # Find the booking
         booking = await db.bookings.find_one({"booking_id": booking_id.upper()})
         if not booking:
-            logger.error(f"Booking {booking_id} not found in database")
+            logger.warning("Booking %s not found", booking_id)
             return {"success": False, "error": f"Booking {booking_id} not found"}
         
-        logger.info(f"Found booking: {booking.get('booking_id')} for {booking.get('guest_name')}")
         
         # Get Meta WhatsApp credentials
         token = (settings.META_WA_ACCESS_TOKEN or "").strip()
@@ -882,16 +1028,15 @@ class HotelToolExecutor:
         }
         
         try:
-            logger.info(f"Sending WhatsApp to {to_phone} via Meta API")
             
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 
                 if resp.status_code >= 400:
-                    logger.error(f"Meta WhatsApp send failed: {resp.status_code} {resp.text}")
-                    return {"success": False, "error": f"WhatsApp send failed: {resp.text}"}
+                    logger.error("Meta WhatsApp send failed: HTTP %s", resp.status_code)
+                    return {"success": False, "error": f"WhatsApp send failed (HTTP {resp.status_code})"}
                 
-                logger.info(f"✅ WhatsApp sent successfully: {resp.status_code}")
+                logger.info("✅ WhatsApp confirmation sent for %s", booking_id)
                 
                 # Update booking to mark confirmation sent
                 await db.bookings.update_one(
@@ -906,13 +1051,8 @@ class HotelToolExecutor:
                 }
                 
         except Exception as e:
-            logger.error(f"WhatsApp send error: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
-
-
-# Backward compatibility: older modules may still import ToolExecutor.
-class ToolExecutor(HotelToolExecutor):
-    pass
+            logger.error("WhatsApp send error: %s", type(e).__name__, exc_info=True)
+            return {"success": False, "error": "WhatsApp send failed"}
 
 
 # Singleton executor

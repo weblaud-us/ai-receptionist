@@ -238,13 +238,7 @@ class CallSession(BaseModel):
     call_sid: str
     phone: str
     session_id: str                       # links to Conversation
-    websocket_connected: bool = False
-    audio_buffer: List[str] = []          # base64 audio chunks (temp)
-    partial_transcript: str = ""
-    is_speaking: bool = False
-    silence_counter: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_activity: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         populate_by_name = True
@@ -253,22 +247,6 @@ class CallSession(BaseModel):
 # ─────────────────────────────────────────────
 # API Request/Response Models
 # ─────────────────────────────────────────────
-
-class AvailabilityRequest(BaseModel):
-    check_in_date: date
-    check_out_date: date
-    room_type: Optional[RoomType] = None
-    adults: int = 1
-    children: int = 0
-
-
-class AvailabilityResponse(BaseModel):
-    available_rooms: List[Dict]
-    check_in_date: date
-    check_out_date: date
-    nights: int
-    currency: str = "BDT"
-
 
 class BookingCreateRequest(BaseModel):
     guest_name: str
@@ -281,9 +259,3 @@ class BookingCreateRequest(BaseModel):
     children: int = 0
     special_requests: Optional[str] = None
 
-
-class BookingResponse(BaseModel):
-    success: bool
-    booking: Optional[Dict] = None
-    message: str = ""
-    error: Optional[str] = None

@@ -9,7 +9,10 @@ Human-like receptionist behaviour:
 - Remembers everything said earlier in the session
 """
 from datetime import date, timedelta
-import re
+from typing import Optional
+
+from config import settings
+from core.timeutils import business_today
 
 
 # ──────────────────────────────────────────────
@@ -79,7 +82,7 @@ def _resolve_relative_date(phrase: str, today: date) -> str | None:
 VOICE_BREVITY_REMINDER = (
     "VOICE RULE: Reply in 1–2 short spoken sentences only. "
     "Ask exactly one question. No lists or bullet points. "
-    "Use sir/ma'am or guest's name. Sound like a warm human receptionist on the phone."
+    "Use sir/ma'am or guest's name. Sound warm and natural, like a good receptionist on the phone."
 )
 
 
@@ -90,7 +93,7 @@ VOICE_BREVITY_REMINDER = (
 def build_greeting_whatsapp(hotel_name: str, receptionist_name: str) -> str:
     return (
         f"Hello! Welcome to {hotel_name}. 😊\n"
-        f"This is {receptionist_name} from the front desk.\n"
+        f"This is {receptionist_name}, the hotel's virtual assistant.\n"
         "I can help you with room bookings, pricing, reservation details, and hotel info.\n\n"
         "How may I assist you today?"
     )
@@ -98,14 +101,15 @@ def build_greeting_whatsapp(hotel_name: str, receptionist_name: str) -> str:
 
 GREETING_WHATSAPP = (
     "Hello! Welcome to {hotel_name}. 😊\n"
-    "This is {receptionist_name} from the front desk.\n"
+    "This is {receptionist_name}, the hotel's virtual assistant.\n"
     "I can help with room bookings, pricing, reservation details, and hotel information.\n\n"
     "How may I assist you today?"
 )
 
+# ⚖ AI disclosure at the start of every call (EU AI Act, US state bot-disclosure laws, UAE TDRA).
 GREETING_VOICE = (
-    "Good day, thank you for calling {hotel_name}. "
-    "This is {receptionist_name} from the front desk. How may I help you today?"
+    "Thank you for calling {hotel_name}. "
+    "This is {receptionist_name}, the hotel's virtual assistant. How may I help you today?"
 )
 
 
@@ -160,9 +164,10 @@ def get_system_prompt(
     checkout_time: str,
     currency: str,
     hotel_phone: str,
-    context: dict = None,
+    context: Optional[dict] = None,
+    timezone: Optional[str] = None,
 ) -> str:
-    today      = date.today()
+    today      = business_today(timezone or settings.HOTEL_TIMEZONE)
     today_str  = today.strftime("%A, %B %d, %Y")
     tomorrow   = (today + timedelta(days=1)).strftime("%Y-%m-%d")
     year       = today.year
@@ -182,15 +187,18 @@ def get_system_prompt(
 
     prev_bookings_text = _format_previous_bookings(context.get("previous_bookings", []))
 
-    prompt = f"""You are {receptionist_name}, the front-desk receptionist at {hotel_name} ({hotel_address}).
+    prompt = f"""You are {receptionist_name}, the virtual front-desk assistant (an AI) for {hotel_name} ({hotel_address}).
 Today is {today_str}. Tomorrow's date is {tomorrow}. Year: {year}.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 IDENTITY & PERSONA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You are a REAL HUMAN RECEPTIONIST — warm, professional, conversational.
-NEVER say "AI", "bot", "automated", "language model", or mention any tools/APIs.
-If asked whether you are an AI or bot, say "I'm {receptionist_name} from the front desk — happy to help!"
+Warm, professional and conversational — a great receptionist who happens to be an AI.
+Never mention tools, APIs, databases or system internals.
+HONESTY: If the guest asks whether you are a person, a robot or an AI, answer honestly in one
+short sentence — "I'm an AI assistant for {hotel_name}." — then offer to take a message for the
+team or give them the hotel's direct number ({hotel_phone}), and carry on helping.
+Never claim or imply that you are human.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GUEST ADDRESS
@@ -276,7 +284,7 @@ VOICE CALL RULES (STRICTLY FOLLOW)
 • If you didn't catch something, ask the guest to kindly repeat it once.
 • Booking confirmed: "Your booking is confirmed, {salutation}. ID is [X]. Check-in is [date] at {checkin_time}. Is there anything else I can help you with?"
 • End call warmly: "Thank you for calling {hotel_name}. Have a wonderful day!"
-• NEVER mention tools, APIs, databases, or the word 'AI'."""
+• NEVER mention tools, APIs or databases. If asked, say honestly that you are an AI assistant."""
 
     else:
         prompt += """

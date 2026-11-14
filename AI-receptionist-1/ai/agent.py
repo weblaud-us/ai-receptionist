@@ -76,7 +76,7 @@ async def create_conversation_with_memory(
         if channel == ConversationChannel.VOICE:
             _greeting_kw = (
                 "thank you for calling", "good day", "from the front desk",
-                "how may i assist", "how may i help you today",
+                "virtual assistant", "how may i assist", "how may i help you today",
             )
             filtered = []
             first_asst_done = False
@@ -210,9 +210,12 @@ class HotelAgent:
                 except json.JSONDecodeError:
                     args = {}
 
-                logger.info("🔧 Tool call: %s(%s)", fn_name, str(args)[:120])
-                result = await self.executor.execute(fn_name, args)
-                logger.info("🔧 Tool result: %s", result[:200])
+                logger.info("🔧 Tool call: %s", fn_name)
+                logger.debug("🔧 Tool args: %s", str(args)[:200])  # may contain guest PII
+                # The caller's phone is the identity proof for booking reads/changes.
+                caller_phone = conv_doc.get("phone") or phone
+                result = await self.executor.execute(fn_name, args, caller_phone=caller_phone)
+                logger.debug("🔧 Tool result: %s", result[:200])
 
                 tool_results.append({
                     "role":         "tool",
@@ -284,6 +287,7 @@ class HotelAgent:
                 "thank you for calling",
                 "good day",
                 "from the front desk",
+                "virtual assistant",
                 "how may i assist",
                 "how may i help you today",
             )
@@ -335,7 +339,6 @@ class HotelAgent:
     def _enforce_style(self, text: str) -> str:
         """
         Post-process LLM reply:
-        - Strip AI/bot self-references
         - For voice: strip re-greeting openers that the LLM produces despite instructions
         - Strip robotic out-of-scope refusals
         - Normalise whitespace
@@ -343,12 +346,8 @@ class HotelAgent:
         if not text:
             return "How may I assist you today?"
 
-        cleaned = re.sub(
-            r"\b(A\.I\.|AI|artificial intelligence|language model|chatbot|virtual assistant)\b",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
+        # ⚖ Never strip "AI" / "virtual assistant": honest disclosure is a legal requirement.
+        cleaned = text
 
         # Voice-only: strip re-greeting openers at the START of a response
         if self.is_voice:
@@ -356,6 +355,7 @@ class HotelAgent:
                 r"^(Hello|Hi|Good (morning|afternoon|evening|day))[,!.]?\s*(thank you for calling[^.]*\.)?\s*",
                 r"^Welcome to [^.]+\.\s*",
                 r"^(This is|I'?m) \w+ from the front desk[.,]?\s*",
+                r"^(This is|I'?m) \w+, the (hotel's )?virtual assistant[.,]?\s*",
                 r"^Thank you for calling [^.]+\.\s*",
                 r"^(How may I|How can I) (assist|help) you today[,?]?\s*",
             ]

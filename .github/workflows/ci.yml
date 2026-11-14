@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AI-receptionist-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install (exact versions from uv.lock)
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run --frozen ruff check .
+      - name: Type check
+        run: uv run --frozen mypy
+      - name: Tests
+        run: uv run --frozen pytest
+        env:
+          APP_ENV: development
+      - name: .env.example lists every setting
+        env:
+          APP_ENV: development
+        run: |
+          uv run --frozen python - <<'EOF'
+          import re, sys
+          from config import Settings
+          documented = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", open(".env.example", encoding="utf-8").read(), re.M))
+          missing = sorted(set(Settings.model_fields) - documented)
+          if missing:
+              sys.exit(f".env.example is missing: {', '.join(missing)}")
+          print(f"OK: {len(documented)} variables documented")
+          EOF
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build

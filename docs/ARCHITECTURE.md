@@ -1,3 +1,9 @@
+> **Snapshot from before Phase 0** (formerly `BACKEND_MAP.md`). Parts are outdated: Phase 0 added
+> webhook signature checks, signed call links, the `room_nights` double-booking guard, `core/`,
+> JSON logging and `/livez` + `/readyz`, and removed `/livekit/send-whatsapp`, `webhook.py`,
+> `whatsapp/prompts.py` and `utils/logger.py`. It will be rewritten at the end of Phase 2
+> (see ROADMAP.md §2.3). For the current state, start with `AI-receptionist-1/README.md`.
+
 # Backend Map — AI Hotel Receptionist
 
 Location: `AI-receptionist-1/` (Python 3.12, FastAPI, MongoDB/Motor, OpenAI, ElevenLabs, Twilio, Meta WhatsApp Cloud API, LiveKit).

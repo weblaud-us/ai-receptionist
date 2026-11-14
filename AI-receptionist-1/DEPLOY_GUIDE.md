@@ -1,179 +1,143 @@
-# 🚀 VPS Auto-Deploy Setup Guide
+# Deploy guide (VPS, systemd) — valid until Phase 3 moves to containers
 
-GitHub-এ push করলেই VPS server automatically update হবে।
+Push to `main` → **CI** (lint, types, tests, dashboard build) → if green, **deploy** SSHes to the
+server, checks out that exact commit and runs `AI-receptionist-1/deploy.sh`, which installs the
+locked dependencies, restarts both services and waits for `/readyz`.
 
----
+Server layout:
 
-## ধাপ ১ — VPS-এ একবার Manual Setup
-
-### SSH দিয়ে VPS-এ login করুন
-```bash
-ssh ubuntu@YOUR_VPS_IP
 ```
-
-### Project clone করুন (যদি না থাকে)
-```bash
-git clone https://github.com/ruhul-cse-duet/Hotel-AI-Receptionist-Agent-voice-and-message.git
-cd AI-receptionist
-```
-
-### Python venv তৈরি করুন
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### .env file তৈরি করুন (GitHub-এ push হয় না)
-```bash
-cp .env.example .env
-nano .env   # সব API keys দিন
+/opt/receptionist/                    ← clone of the monorepo (weblaud-us/ai-receptionist)
+/opt/receptionist/AI-receptionist-1/  ← backend (API + LiveKit worker), .venv created by uv
+/etc/receptionist/prod.env            ← secrets (NOT in git), chmod 640, owner root:receptionist
 ```
 
 ---
 
-## ধাপ ২ — systemd Service Setup (Server auto-start)
+## 1. One-time server setup
 
-### Service file copy করুন
 ```bash
-# ai-receptionist.service ফাইলে আপনার username ও path ঠিক করুন
-nano ai-receptionist.service
+# A dedicated, unprivileged user owns and runs the app
+sudo useradd --system --create-home --shell /bin/bash receptionist
+sudo mkdir -p /opt/receptionist /etc/receptionist
+sudo chown receptionist:receptionist /opt/receptionist
 
-# তারপর copy করুন
-sudo cp ai-receptionist.service /etc/systemd/system/
+# uv (Python + dependency manager) for that user
+sudo -iu receptionist bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+sudo ln -sf /home/receptionist/.local/bin/uv /usr/local/bin/uv
 
-# Enable ও start করুন
+# The repo is private: give the server a read-only deploy key
+sudo -iu receptionist ssh-keygen -t ed25519 -N "" -f ~receptionist/.ssh/id_ed25519
+sudo cat ~receptionist/.ssh/id_ed25519.pub
+#   → GitHub repo → Settings → Deploy keys → Add (read-only)
+sudo -iu receptionist git clone git@github.com:weblaud-us/ai-receptionist.git /opt/receptionist
+
+# Install dependencies (Python 3.12 is pinned in .python-version; uv downloads it)
+sudo -iu receptionist bash -c 'cd /opt/receptionist/AI-receptionist-1 && uv sync --frozen --no-dev'
+```
+
+### Secrets
+
+```bash
+sudo cp /opt/receptionist/AI-receptionist-1/.env.example /etc/receptionist/prod.env
+sudo nano /etc/receptionist/prod.env       # fill in the production values
+sudo chown root:receptionist /etc/receptionist/prod.env
+sudo chmod 640 /etc/receptionist/prod.env
+```
+
+Production refuses to boot with unsafe settings (`DEBUG=true`, default `SECRET_KEY`, `CORS_ORIGINS=*`,
+no `META_APP_SECRET`, …) — read the error in `journalctl` and fix the file.
+Once Doppler/Infisical is set up (Task 0.3), the unit files run `doppler run -- …` instead.
+
+### Services
+
+```bash
+sudo cp /opt/receptionist/AI-receptionist-1/deploy/systemd/receptionist-*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable ai-receptionist
-sudo systemctl start ai-receptionist
-
-# Status check
-sudo systemctl status ai-receptionist
+sudo systemctl enable --now receptionist-api receptionist-agent
 ```
 
-### Deploy script permission দিন
+Let the deploy user restart them without a password (and nothing else):
+
 ```bash
-chmod +x deploy.sh
+echo 'receptionist ALL=(root) NOPASSWD: /usr/bin/systemctl restart receptionist-api, /usr/bin/systemctl restart receptionist-agent, /usr/bin/journalctl -u receptionist-api *' \
+  | sudo tee /etc/sudoers.d/receptionist-deploy
+sudo chmod 440 /etc/sudoers.d/receptionist-deploy
+```
+
+### First data migration (once, after the first Phase 0 deploy)
+
+```bash
+sudo -iu receptionist bash -c 'cd /opt/receptionist/AI-receptionist-1 && set -a && . /etc/receptionist/prod.env && set +a && \
+  .venv/bin/python -m migrations.m0001_room_nights'          # dry run: lists existing double bookings
+# fix any CONFLICT lines from the dashboard, then:
+#   … .venv/bin/python -m migrations.m0001_room_nights --apply
 ```
 
 ---
 
-## ধাপ ৩ — GitHub Secrets Setup
-
-GitHub repo → Settings → Secrets and variables → Actions → **New repository secret**
-
-| Secret Name | Value | Example |
-|---|---|---|
-| `VPS_HOST` | আপনার VPS IP | `123.456.789.10` |
-| `VPS_USER` | VPS username | `ubuntu` |
-| `VPS_SSH_KEY` | SSH private key | (নিচে দেখুন) |
-| `VPS_PORT` | SSH port | `22` |
-| `APP_DIR` | Project path on VPS | `/home/ubuntu/AI-receptionist` |
-
-### SSH Key তৈরি (যদি না থাকে)
-
-**VPS-এ run করুন:**
-```bash
-ssh-keygen -t ed25519 -C "github-deploy" -f ~/.ssh/github_deploy
-cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-```
-
-**Private key copy করুন GitHub Secret-এ:**
-```bash
-cat ~/.ssh/github_deploy
-# এই পুরো output কপি করে VPS_SSH_KEY secret-এ paste করুন
-```
-
----
-
-## ধাপ ৪ — Test করুন
-
-**Local machine থেকে:**
-```bash
-git add .
-git commit -m "test: auto-deploy"
-git push origin main
-```
-
-**GitHub → Actions tab দেখুন** → Deploy job running দেখাবে
-
-✅ সফল হলে VPS automatically update হয়ে যাবে!
-
----
-
-## Manual Deploy (যেকোনো সময়)
-
-VPS-এ SSH করে:
-```bash
-cd /home/ubuntu/AI-receptionist
-./deploy.sh
-```
-
----
-
-## Logs দেখুন
-
-```bash
-# App logs
-sudo journalctl -u ai-receptionist -f
-
-# শেষ ৫০ লাইন
-sudo journalctl -u ai-receptionist -n 50
-
-# Error logs only
-sudo journalctl -u ai-receptionist -p err
-```
-
----
-
-## Nginx Reverse Proxy (Recommended)
+## 2. Nginx + TLS
 
 ```nginx
 server {
-    listen 80;
-    server_name YOUR_DOMAIN.com;
+    listen 443 ssl http2;
+    server_name api.YOUR_DOMAIN.com;
+    # certificates: sudo certbot --nginx -d api.YOUR_DOMAIN.com
 
     location / {
         proxy_pass http://127.0.0.1:8002;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;          # Twilio media stream WebSocket
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # real client IP
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300;
     }
 }
+server {
+    listen 80;
+    server_name api.YOUR_DOMAIN.com;
+    return 301 https://$host$request_uri;
+}
 ```
 
-```bash
-sudo nano /etc/nginx/sites-available/ai-receptionist
-# উপরের config paste করুন
-
-sudo ln -s /etc/nginx/sites-available/ai-receptionist /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
+The API unit runs uvicorn with `--proxy-headers --forwarded-allow-ips=127.0.0.1`, so with the
+`X-Forwarded-For` header above the login rate limiter sees real client IPs (before, every client
+looked like `127.0.0.1`). `WEBHOOK_BASE_URL` must be exactly the public `https://` URL Twilio and
+Meta call — signature checks are computed over it.
 
 ---
 
-## Troubleshooting
+## 3. GitHub secrets (repo → Settings → Secrets and variables → Actions)
 
-**Service fail করলে:**
+Create an environment called `production` (Settings → Environments) and add:
+
+| Secret | Value |
+|---|---|
+| `VPS_HOST` | server IP or hostname |
+| `VPS_USER` | `receptionist` |
+| `VPS_SSH_KEY` | private key whose public half is in `~receptionist/.ssh/authorized_keys` |
+| `VPS_PORT` | `22` |
+| `APP_DIR` | `/opt/receptionist` |
+
+---
+
+## 4. Day-to-day
+
 ```bash
-sudo systemctl status ai-receptionist
-sudo journalctl -u ai-receptionist -n 100
+# Manual deploy of whatever is checked out
+sudo -iu receptionist /opt/receptionist/AI-receptionist-1/deploy.sh
+
+# Logs (JSON lines; phone numbers and e-mails are already masked)
+sudo journalctl -u receptionist-api -f
+sudo journalctl -u receptionist-agent -f
+
+# Health
+curl -s http://127.0.0.1:8002/livez     # process up
+curl -s http://127.0.0.1:8002/readyz    # dependencies OK (503 if not)
 ```
 
-**Permission error:**
-```bash
-sudo chown -R ubuntu:ubuntu /home/ubuntu/AI-receptionist
-chmod +x deploy.sh
-```
-
-**Git pull fail:**
-```bash
-git remote -v   # remote check
-git fetch --all
-git reset --hard origin/main
-```
+Restarting `receptionist-agent` waits up to 10 minutes for active calls to finish — that is
+intended, not a hang.

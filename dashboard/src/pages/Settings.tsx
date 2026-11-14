@@ -15,6 +15,8 @@ const INTEGRATION_LABELS: Record<string, string> = {
   twilio_voice: 'Twilio voice',
   meta_whatsapp: 'Meta WhatsApp Cloud API',
   meta_webhook_verify_token: 'WhatsApp webhook verify token',
+  meta_webhook_signature: 'WhatsApp webhook signature check (app secret)',
+  twilio_signature_check: 'Twilio webhook signature check',
   livekit: 'LiveKit (browser calls)',
   public_base_url: 'Public base URL (webhooks, links)',
 }
@@ -25,7 +27,6 @@ const FEATURE_LABELS: Record<string, string> = {
   voice_calls: 'Voice calls',
   call_recording: 'Call recording',
   livekit_realtime: 'LiveKit realtime model',
-  api_key_required: 'API key required',
 }
 
 const WEBHOOK_LABELS: Record<string, string> = {

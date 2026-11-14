@@ -1,10 +1,9 @@
 """
 MongoDB Async Connection via Motor — Single-Tenant Setup.
-Collections: rooms, bookings, guests, conversations, call_sessions
+Collections: rooms, bookings, room_nights, guests, conversations, call_sessions
 """
 
 import logging
-import asyncio
 from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -66,6 +65,15 @@ async def _create_indexes(db: AsyncIOMotorDatabase):
                     ("one_day_reminder_sent", ASCENDING)]),
         IndexModel([("status", ASCENDING)]),
         IndexModel([("created_at", DESCENDING)]),
+    ])
+
+    # One document per (room, night) a booking occupies. The UNIQUE index is what makes double
+    # booking impossible: the database refuses the second claim. Backfill existing bookings
+    # with `python -m migrations.m0001_room_nights`.
+    await db.room_nights.create_indexes([
+        IndexModel([("room_id", ASCENDING), ("night", ASCENDING)], unique=True,
+                   name="uniq_room_night"),
+        IndexModel([("booking_id", ASCENDING)]),
     ])
 
     await db.guests.create_indexes([

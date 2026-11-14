@@ -1,48 +1,36 @@
 #!/usr/bin/env bash
 # =============================================================
-# deploy.sh — VPS deployment script
+# deploy.sh — install the checked-out commit and restart services.
+# Called by .github/workflows/deploy.yml after CI is green, from the repo root on the server:
+#     git checkout <sha> && ./AI-receptionist-1/deploy.sh
+# One-time server setup: see DEPLOY_GUIDE.md.
 # =============================================================
-
 set -euo pipefail
-APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$APP_DIR"
 
-echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║   AI Receptionist — Deploy Script    ║"
-echo "╚══════════════════════════════════════╝"
-echo ""
+BACKEND_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$BACKEND_DIR"
 
-# 1. Git pull
-echo "📥 [1/4] Pulling latest code..."
-git pull origin main
-echo "✅ Code updated"
+echo "==> [1/4] Installing exact dependency versions (uv.lock)"
+uv sync --frozen --no-dev
 
-# 2. Activate venv + install packages
-echo ""
-echo "📦 [2/4] Installing Python dependencies..."
-if [[ ! -d ".venv" ]]; then
-    python3 -m venv .venv
-    echo "   Created new virtualenv"
-fi
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt --quiet
-echo "✅ Dependencies installed"
+echo "==> [2/4] Recording release for error tracking"
+echo "GIT_SHA=$(git rev-parse --short HEAD)" > .env.release
 
-# 3. Restart PM2 processes
-echo ""
-echo "🔄 [3/4] Restarting PM2 processes..."
-pm2 restart ecosystem.config.js
-sleep 2
-echo "✅ Services restarted"
+echo "==> [3/4] Restarting services"
+# receptionist-agent drains: it stops taking new calls and lets active calls finish
+# (TimeoutStopSec=600 in its unit), so customers are not cut off mid-call.
+sudo systemctl restart receptionist-api
+sudo systemctl restart receptionist-agent
 
-# 4. Health check
-echo ""
-echo "🩺 [4/4] Connection Check..."
-pm2 status
-echo ""
-echo "═══════════════════════════════════════"
-echo "  Deploy SUCCESS! 🚀"
-echo "  Visit: https://hotel.weblaud.com"
-echo "═══════════════════════════════════════"
+echo "==> [4/4] Waiting for the API to report ready"
+for i in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8002/readyz >/dev/null; then
+    echo "Deploy OK: $(git rev-parse --short HEAD)"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "API did not become ready in 60s. Recent logs:" >&2
+sudo journalctl -u receptionist-api -n 50 --no-pager >&2 || true
+exit 1

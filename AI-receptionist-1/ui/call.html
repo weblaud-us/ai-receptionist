@@ -218,7 +218,12 @@
   <div class="error-box" id="errorBox"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<!-- Pinned version + Subresource Integrity: a compromised CDN can't inject code into the call page.
+     To upgrade: change the version, then recompute the hash:
+     curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A -->
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.24.0/dist/livekit-client.umd.min.js"
+        integrity="sha384-Hl+KHTfsO7AqyofjkXnR+WrOR0RM4MGeruUR9Rulz3adxJKuh0LQUYWvVwgKm0m+"
+        crossorigin="anonymous"></script>
 <script>
   const LK = window.LivekitClient;
   const $ = id => document.getElementById(id);
@@ -310,10 +315,19 @@
 
     try {
       const roomId = getRoomId();
-      const resp = await fetch(`/livekit/token?room=${encodeURIComponent(roomId)}`);
+      // The WhatsApp link is signed and expires: pass exp + sig through to the token endpoint.
+      const link = new URLSearchParams(window.location.search);
+      const qs = new URLSearchParams({
+        room: roomId,
+        exp: link.get("exp") || "",
+        sig: link.get("sig") || "",
+      });
+      const resp = await fetch(`/livekit/token?${qs.toString()}`, { cache: "no-store" });
       if (!resp.ok) {
-        const t = await resp.text();
-        throw new Error(t || "Token request failed (" + resp.status + ")");
+        let msg = "Token request failed (" + resp.status + ")";
+        try { msg = (await resp.json()).detail || msg; } catch (_) {}
+        if (resp.status === 403) msg = "This call link is invalid or has expired. Please ask for a new link on WhatsApp.";
+        throw new Error(msg);
       }
       const data = await resp.json();
 

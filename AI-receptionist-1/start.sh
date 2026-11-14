@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
+# Local development: API with auto-reload. Needs uv (https://docs.astral.sh/uv/).
 set -euo pipefail
-
 cd "$(dirname "$0")"
 
-if [[ ! -d ".venv" ]]; then
-  python3 -m venv .venv
-fi
+uv sync --frozen
 
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+# Seed a dev database by hand when needed: uv run python -m utils.seed_rooms (refuses in production)
 
-if [[ "${SEED_ROOMS_ON_START:-false}" == "true" ]]; then
-  python -m utils.seed_rooms
-fi
-
-exec python -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-8002}"
+exec uv run --frozen uvicorn main:app --host 127.0.0.1 --port "${PORT:-8002}" --reload

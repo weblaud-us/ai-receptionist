@@ -3,9 +3,7 @@ Speech-to-Text (STT) and Text-to-Speech (TTS)
 STT  : OpenAI Whisper
 TTS  : ElevenLabs ONLY  (output_format="ulaw_8000" → no ffmpeg, no audioop)
 """
-import io
 import logging
-import asyncio
 import tempfile
 import os
 from abc import ABC, abstractmethod
@@ -49,7 +47,7 @@ class OpenAIWhisperSTT(BaseSTT):
                     response_format="text",
                 )
             text = (transcript or "").strip()
-            logger.info("🎙 STT result (%d chars): %s", len(text), text[:80])
+            logger.debug("🎙 STT result (%d chars): %s", len(text), text[:80])  # transcripts: DEBUG only
             return text
         except Exception as e:
             logger.error("Whisper STT error: %s", e, exc_info=True)
