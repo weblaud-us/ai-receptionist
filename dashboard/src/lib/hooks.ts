@@ -4,6 +4,8 @@ import type {
   Availability,
   Booking,
   BookingList,
+  CallerMessage,
+  CallRecord,
   ConversationDetail,
   ConversationSummary,
   Guest,
@@ -105,6 +107,20 @@ export const useLiveCalls = () =>
     queryKey: ['live-calls'],
     queryFn: () => api<{ calls: LiveCall[]; total: number }>('/admin/calls/live'),
     refetchInterval: 5_000,
+  })
+
+export const useCallerMessages = () =>
+  useQuery({
+    queryKey: ['caller-messages'],
+    queryFn: () => api<{ messages: CallerMessage[]; total: number; new: number }>('/admin/messages'),
+    refetchInterval: 30_000,
+  })
+
+export const useCallHistory = () =>
+  useQuery({
+    queryKey: ['call-history'],
+    queryFn: () => api<{ calls: CallRecord[]; total: number }>('/admin/calls', { params: { limit: 20 } }),
+    refetchInterval: 30_000,
   })
 
 export const useReminders = () =>
@@ -257,6 +273,15 @@ export const useSendWhatsApp = () =>
     mutationFn: (body: { to: string; message: string }) =>
       api('/admin/whatsapp/send', { method: 'POST', body }),
   })
+
+export function useUpdateMessage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'new' | 'handled' }) =>
+      api(`/admin/messages/${id}`, { method: 'PATCH', body: { status } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['caller-messages'] }),
+  })
+}
 
 export function useRunReminders() {
   const qc = useQueryClient()

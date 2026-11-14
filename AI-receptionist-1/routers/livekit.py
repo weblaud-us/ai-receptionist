@@ -70,6 +70,11 @@ async def livekit_token(
             can_subscribe=True,
             can_publish_data=False,
         ))
+        # The worker registers under an explicit agent name, so rooms aren't auto-dispatched:
+        # joining with this token asks LiveKit to send the receptionist into the room.
+        .with_room_config(api.RoomConfiguration(
+            agents=[api.RoomAgentDispatch(agent_name=settings.LIVEKIT_AGENT_NAME)],
+        ))
         .to_jwt()
     )
 

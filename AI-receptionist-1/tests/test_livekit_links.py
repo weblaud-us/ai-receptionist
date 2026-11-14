@@ -35,6 +35,17 @@ def test_valid_link_gets_a_token(client):
     assert "call_url" not in body
 
 
+def test_token_dispatches_the_receptionist(client):
+    """The worker uses an explicit agent name, so the token itself must request the agent."""
+    from livekit import api
+
+    exp, sig = sign_call_room(ROOM)
+    token = client.get(f"/livekit/token?room={ROOM}&exp={exp}&sig={sig}").json()["token"]
+    claims = api.TokenVerifier("APItestkey", "test-livekit-secret-0123456789abcdef").verify(token)
+    assert [a.agent_name for a in claims.room_config.agents] == ["receptionist"]
+    assert claims.video.room == ROOM
+
+
 def test_built_link_verifies():
     link = build_call_link("https://x.example.com/", ROOM)
     query = dict(p.split("=") for p in link.split("?", 1)[1].split("&"))

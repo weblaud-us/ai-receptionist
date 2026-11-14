@@ -64,13 +64,14 @@ async def lifespan(app: FastAPI):
     reminder_service = get_booking_reminder_service()
     reminder_service.start()
 
-    # Pre-warm TTS audio cache so the first caller hears the greeting instantly.
-    try:
-        from voice.stt_tts import get_tts
-        from voice.twilio_handler import _ensure_audio_cache
-        asyncio.create_task(_ensure_audio_cache(get_tts()))
-    except Exception as _pw_err:
-        logger.warning("TTS prewarm skipped: %s", _pw_err)
+    # Legacy phone path: pre-warm its TTS audio cache so the first caller hears the greeting.
+    if settings.LEGACY_TWILIO_VOICE:
+        try:
+            from voice.stt_tts import get_tts
+            from voice.twilio_handler import _ensure_audio_cache
+            asyncio.create_task(_ensure_audio_cache(get_tts()))
+        except Exception as _pw_err:
+            logger.warning("TTS prewarm skipped: %s", _pw_err)
 
     logger.info("AI Receptionist is live on port %s", settings.PORT)
     yield
@@ -131,6 +132,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 for _module, _attr in _ROUTERS:
+    if _module == "voice.twilio_handler" and not settings.LEGACY_TWILIO_VOICE:
+        logger.info("Legacy Twilio voice path disabled (phone calls go through the LiveKit SIP trunk)")
+        continue
     _router = _import_router(_module, _attr)
     if _router is not None:
         app.include_router(_router)

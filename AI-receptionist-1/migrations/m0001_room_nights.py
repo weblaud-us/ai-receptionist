@@ -66,7 +66,7 @@ async def main() -> None:
     parser.add_argument("--apply", action="store_true", help="write room_nights (default: dry run)")
     args = parser.parse_args()
     configure_logging("WARNING", "text")
-    await connect_db()
+    await connect_db(ensure_indexes=True)
     try:
         conflicts = await run(args.apply)
     finally:

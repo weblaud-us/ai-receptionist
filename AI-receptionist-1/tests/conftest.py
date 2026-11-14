@@ -37,13 +37,39 @@ _TEST_ENV = {
     "HOTEL_TIMEZONE": "Asia/Dhaka",
     "ENABLE_WHATSAPP": "true",
     "ENABLE_ONE_DAY_BOOKING_REMINDER": "false",
+    "ENABLE_CALL_RECORDING": "false",
+    "DEEPGRAM_API_KEY": "",
+    "CARTESIA_API_KEY": "",
+    "TRANSFER_PHONE_NUMBER": "",
+    "TRANSFER_HOURS": "",
+    "OWNER_NOTIFY_WHATSAPP": "",
+    "HOTEL_NAME": "Grand Azure Hotel",
+    "RECEPTIONIST_NAME": "Aria",
 }
 os.environ.update(_TEST_ENV)
+
+import functools  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
 
 import pytest  # noqa: E402
 from mongomock_motor import AsyncMongoMockClient  # noqa: E402
 
 import database.mongodb as mongodb  # noqa: E402
+
+
+@functools.lru_cache(maxsize=1)
+def livekit_agents_importable() -> bool:
+    """
+    livekit-agents' native libraries crash the interpreter on import on some Windows builds.
+    Probe in a child process so a crash can't take pytest down; LiveKit-dependent test modules
+    skip themselves when this is False (they always run in CI on Linux).
+    """
+    try:
+        return subprocess.run([sys.executable, "-c", "import livekit.agents"], capture_output=True,
+                              timeout=180).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 @pytest.fixture

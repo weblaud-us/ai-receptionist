@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from ai.tools import HotelToolExecutor
+from core.tools.hotel import HotelToolExecutor, drain_background_tasks
 from core.timeutils import business_today
 from database.models import BedType, Room, RoomPricing, RoomType
 
@@ -170,6 +170,9 @@ async def test_unknown_caller_needs_id_and_name(booked):
 
 
 async def test_confirmation_from_another_number_goes_to_phone_on_file(booked, monkeypatch):
+    from config import settings
+
+    monkeypatch.setattr(settings, "META_WA_ACCESS_TOKEN", "test-token")
     ex, bid = booked
     sent = {}
 
@@ -178,6 +181,8 @@ async def test_confirmation_from_another_number_goes_to_phone_on_file(booked, mo
         return {"success": True}
 
     monkeypatch.setattr(ex, "send_booking_confirmation_whatsapp", fake_send)
-    await _call(ex, "send_booking_confirmation_whatsapp", CALLER_B, booking_id=bid,
-                whatsapp_number="+15550009999", guest_name="Rahim Uddin")
+    r = await _call(ex, "send_booking_confirmation_whatsapp", CALLER_B, booking_id=bid,
+                    whatsapp_number="+15550009999", guest_name="Rahim Uddin")
+    assert r["queued"]                      # never awaited inside the turn (Task 1.9)
+    await drain_background_tasks()
     assert sent["to"] == CALLER_A

@@ -127,3 +127,35 @@ Follow [DEPLOY_GUIDE.md](../AI-receptionist-1/DEPLOY_GUIDE.md) sections 1 and 2:
 - [ ] Phase 6 legal checklist signed off by a lawyer for each target market.
 - [ ] Atlas backups on and a restore tested.
 - [ ] Uptime monitor on `/readyz`.
+
+---
+
+## Phase 1 — real-time voice (LiveKit SIP)
+
+Development and testing use a dev LiveKit project and a dev Twilio trunk. For production:
+
+- [ ] **Keys:** production keys for Deepgram, ElevenLabs (and Cartesia if used as fallback TTS),
+      and a separate production LiveKit project (`LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`).
+- [ ] **Telephony:** a `livekit-prod` Twilio Elastic SIP trunk plus production inbound trunk,
+      dispatch rule and outbound trunk, created from `AI-receptionist-1/telephony/` with
+      production secrets ([telephony/README.md](../AI-receptionist-1/telephony/README.md)).
+      Set `LIVEKIT_SIP_OUTBOUND_TRUNK_ID`.
+- [ ] **Transfers:** `TRANSFER_PHONE_NUMBER` (and `TRANSFER_HOURS`) set; transfer mode enabled on
+      the Twilio trunk; voicemail set up on the staff line (a cold transfer that nobody answers
+      can't come back to the agent).
+- [ ] **Trust Hub:** Business Profile approved, SHAKEN/STIR A-attestation and CNAM on every number.
+- [ ] **Secure trunking:** TLS + SRTP on both trunks once the plain setup works.
+- [ ] **Worker:** `LIVEKIT_NUM_IDLE_PROCESSES=2` or more; the worker in the same cloud region as
+      LiveKit and MongoDB (measure the ping from the worker host).
+- [ ] **Owner notifications:** `OWNER_NOTIFY_WHATSAPP` set so new messages reach the business.
+- [ ] **Recording (only if offered):** bucket in the customer's region, a lifecycle rule deleting
+      objects after `RECORDING_RETENTION_DAYS`, `ENABLE_CALL_RECORDING=true`, and the legal review
+      of recording consent per market (Phase 6). The greeting then announces recording.
+- [ ] **Acceptance (Roadmap Task 1.12.c), on the production setup:** the 20-call script from real
+      phones, then `python -m scripts.latency_report --channel phone`: p50 ≤ 1.0 s, p95 ≤ 1.8 s,
+      tool turns ≤ 1.6 s, greeting ≤ 0.7 s; 5/5 transfers succeed; a deploy during a live test call
+      drops nothing.
+- [ ] **Evals in CI:** add an `EVAL_OPENAI_API_KEY` repository secret so `tests/evals` runs on every PR.
+- [ ] **Cutover (Task 1.13):** move one number to the SIP trunk, run a week, move the rest, then set
+      `LEGACY_TWILIO_VOICE=false`. One release later, delete `voice/twilio_handler.py`,
+      `voice/stt_tts.py`, the `/voice/*` routes, `call_sessions` and `audioop-lts`.

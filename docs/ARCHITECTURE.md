@@ -3,6 +3,8 @@
 > JSON logging and `/livez` + `/readyz`, and removed `/livekit/send-whatsapp`, `webhook.py`,
 > `whatsapp/prompts.py` and `utils/logger.py`. It will be rewritten at the end of Phase 2
 > (see ROADMAP.md §2.3). For the current state, start with `AI-receptionist-1/README.md`.
+> Phase 1 replaced `livekit_agent.py` with the `agent/` package (phone via SIP + browser calls)
+> and moved the tools to `core/tools/`.
 
 # Backend Map — AI Hotel Receptionist
 

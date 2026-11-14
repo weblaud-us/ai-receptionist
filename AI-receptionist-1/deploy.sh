@@ -10,19 +10,22 @@ set -euo pipefail
 BACKEND_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$BACKEND_DIR"
 
-echo "==> [1/4] Installing exact dependency versions (uv.lock)"
+echo "==> [1/5] Installing exact dependency versions (uv.lock)"
 uv sync --frozen --no-dev
 
-echo "==> [2/4] Recording release for error tracking"
+echo "==> [2/5] Recording release for error tracking"
 echo "GIT_SHA=$(git rev-parse --short HEAD)" > .env.release
 
-echo "==> [3/4] Restarting services"
+echo "==> [3/5] Database indexes (idempotent; never built at startup or inside a call)"
+uv run --frozen --no-dev --env-file /etc/receptionist/prod.env python -m migrations.m0002_indexes
+
+echo "==> [4/5] Restarting services"
 # receptionist-agent drains: it stops taking new calls and lets active calls finish
 # (TimeoutStopSec=600 in its unit), so customers are not cut off mid-call.
 sudo systemctl restart receptionist-api
 sudo systemctl restart receptionist-agent
 
-echo "==> [4/4] Waiting for the API to report ready"
+echo "==> [5/5] Waiting for the API to report ready"
 for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8002/readyz >/dev/null; then
     echo "Deploy OK: $(git rev-parse --short HEAD)"

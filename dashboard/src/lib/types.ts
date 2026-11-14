@@ -263,6 +263,34 @@ export interface LiveCall {
   ai_speaking: boolean
   processing: boolean
   seconds_since_speech: number
+  source?: 'twilio' | 'livekit'
+  channel?: 'phone' | 'browser'
+}
+
+/** A message a caller left for the team (voice agent / WhatsApp `take_message`). */
+export interface CallerMessage {
+  message_id: string
+  caller_name: string
+  callback_number: string
+  message: string
+  urgent: boolean
+  channel: string
+  call_id: string | null
+  status: 'new' | 'handled'
+  created_at: string
+}
+
+/** A voice-agent call (LiveKit), without transcript. */
+export interface CallRecord {
+  call_id: string
+  channel: 'phone' | 'browser'
+  caller_phone: string | null
+  started_at: string
+  duration_s?: number
+  status: 'in_progress' | 'completed'
+  outcome: string | null
+  latency?: { turns: number; p50_s: number | null; p95_s: number | null; tool_p50_s: number | null }
+  greeting_latency_s?: number | null
 }
 
 export interface ReminderRow {

@@ -1,15 +1,22 @@
 """
-Hotel AI Agent Tools
-These are called by the AI agent to perform real hotel operations.
-Each tool directly queries/writes MongoDB.
+Hotel tools — the hotel vertical's tool logic (rooms, bookings, hotel facts).
+
+Used by the voice agent, WhatsApp and the dashboard API. AI channels must go through
+`core.tools.registry.run_tool()` (ownership checks + timeouts); the dashboard API, which is
+authenticated and may see every booking, calls the plain methods directly.
+
+Speed rules (Roadmap Task 1.9): every tool makes as few Mongo round trips as possible
+(availability = one rooms query + one bookings query, alternatives included) and never waits
+on an external HTTP API inside a voice turn.
 """
 
+import asyncio
 import json
 import logging
 import re
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
@@ -47,6 +54,53 @@ def phone_variants(phone: str) -> List[str]:
     elif d.startswith("0"):
         variants.update({"880" + d[1:], "+880" + d[1:]})
     return sorted(v for v in variants if v)
+
+
+ACTIVE_STATUSES = ["confirmed", "pending", "checked_in"]
+ROOM_TYPES = ["standard", "deluxe", "suite", "executive", "presidential"]
+# When a type is full, suggest these instead (upgrades first).
+_TYPE_PRIORITY = {
+    "standard": ["deluxe", "suite", "executive", "presidential"],
+    "deluxe": ["suite", "executive", "presidential", "standard"],
+    "suite": ["executive", "presidential", "deluxe", "standard"],
+    "executive": ["presidential", "suite", "deluxe", "standard"],
+    "presidential": ["executive", "suite", "deluxe", "standard"],
+}
+ALTERNATIVE_DATE_WINDOW_DAYS = 14
+MAX_ALTERNATIVES = 3
+
+# Fire-and-forget work started by tools (e.g. WhatsApp sends). Kept referenced so the event
+# loop doesn't garbage-collect running tasks.
+_background_tasks: Set["asyncio.Task[Any]"] = set()
+
+
+def run_in_background(coro: Any) -> "asyncio.Task[Any]":
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+async def drain_background_tasks() -> None:
+    """Wait for background tool work to finish (tests, graceful shutdown)."""
+    while _background_tasks:
+        await asyncio.gather(*list(_background_tasks), return_exceptions=True)
+
+
+async def occupied_nights_by_room(db: Any, start: str, end: str) -> Dict[str, Set[str]]:
+    """
+    One query: every night in [start, end) that is taken, per room_id.
+    A booking occupies the nights [check_in_date, check_out_date) — the check-out day is free.
+    """
+    taken: Dict[str, Set[str]] = {}
+    cursor = db.bookings.find(
+        {"status": {"$in": ACTIVE_STATUSES}, "check_in_date": {"$lt": end}, "check_out_date": {"$gt": start}},
+        {"room_id": 1, "check_in_date": 1, "check_out_date": 1},
+    )
+    for b in await cursor.to_list(length=5000):
+        nights = taken.setdefault(str(b["room_id"]), set())
+        nights.update(n for n in _nights(str(b["check_in_date"]), str(b["check_out_date"])) if start <= n < end)
+    return taken
 
 
 async def release_room_nights(db: Any, booking_id: str, from_night: Optional[str] = None) -> int:
@@ -266,9 +320,9 @@ HOTEL_TOOLS = [
 
 class HotelToolExecutor:
     """
-    Executes AI agent tool calls against MongoDB.
+    Executes hotel tool calls against MongoDB.
 
-    `execute()` is the ONLY entry point for the AI (voice + WhatsApp). It enforces the
+    AI channels reach `execute()` through `core.tools.registry.run_tool()`; it enforces the
     caller-ownership rules for booking tools. The plain methods below are also called by the
     authenticated dashboard API, which is allowed to see every booking.
     """
@@ -287,7 +341,7 @@ class HotelToolExecutor:
                 result = await self._execute_booking_access(tool_name, arguments, caller_phone)
                 return json.dumps(result, default=str)
 
-            handlers = {
+            handlers: Dict[str, Callable[..., Awaitable[Dict[str, Any]]]] = {
                 "check_room_availability": self.check_room_availability,
                 "get_room_pricing": self.get_room_pricing,
                 "create_booking": self.create_booking,
@@ -349,15 +403,24 @@ class HotelToolExecutor:
             result = await self.cancel_booking(booking_id, args.get("cancellation_reason"))
             if result.get("success") and not owns:
                 # Cancelled by someone calling from another number: tell the phone on file.
-                await self._notify_cancellation_to_phone_on_file(booking)
+                run_in_background(self._notify_cancellation_to_phone_on_file(booking))
             return result
 
-        # send_booking_confirmation_whatsapp
+        # send_booking_confirmation_whatsapp — queued, never awaited inside the turn (Task 1.9.6).
         destination = args.get("whatsapp_number") if owns else None
-        return await self.send_booking_confirmation_whatsapp(
-            booking_id=booking_id,
-            whatsapp_number=destination or booking.get("guest_phone", ""),
-        )
+        if not settings.ENABLE_WHATSAPP or not settings.META_WA_ACCESS_TOKEN:
+            return {"success": False, "error": "whatsapp_unavailable",
+                    "message": "WhatsApp isn't available right now. Offer to read the details out instead."}
+        run_in_background(self._send_confirmation_logged(
+            booking_id, destination or booking.get("guest_phone", "")))
+        return {"success": True, "queued": True, "booking_id": booking_id,
+                "message": "The confirmation is on its way to the guest's WhatsApp."}
+
+    async def _send_confirmation_logged(self, booking_id: str, whatsapp_number: str) -> None:
+        result = await self.send_booking_confirmation_whatsapp(
+            booking_id=booking_id, whatsapp_number=whatsapp_number)
+        if not result.get("success"):
+            logger.warning("Queued WhatsApp confirmation for %s failed: %s", booking_id, result.get("error"))
 
     async def _notify_cancellation_to_phone_on_file(self, booking: Dict[str, Any]) -> None:
         phone = booking.get("guest_phone")
@@ -395,189 +458,87 @@ class HotelToolExecutor:
             return {"error": "Check-in date cannot be in the past"}
 
         nights = (checkout - checkin).days
+        total_capacity = int(adults or 1) + int(children or 0)
+        currency = get_hotel_profile()["currency"]
 
-        # Find all active rooms
-        room_filter: Dict[str, Any] = {"is_active": True, "is_maintenance": False}
-        if room_type:
-            room_filter["room_type"] = room_type
-        total_capacity = adults + children
-        room_filter["capacity"] = {"$gte": total_capacity}
+        # Round trip 1: every active room that fits the party (all types — alternatives need them).
+        rooms = await db.rooms.find(
+            {"is_active": True, "is_maintenance": False, "capacity": {"$gte": total_capacity}}
+        ).to_list(length=500)
 
-        rooms = await db.rooms.find(room_filter).to_list(length=100)
+        # Round trip 2: every booked night in the stay AND in the alternative-dates window.
+        window_end = (checkout + timedelta(days=ALTERNATIVE_DATE_WINDOW_DAYS)).isoformat()
+        taken = await occupied_nights_by_room(db, check_in_date, window_end)
 
-        # Find conflicting bookings
-        # IMPORTANT: For same-day check-out/check-in, checkout is at 12:00, check-in is at 2:00 PM
-        # So a booking that checks out on checkin_date should be considered available for same-day check-in
-        booked_room_ids = set()
-        conflicting = await db.bookings.find({
-            "status": {"$in": ["confirmed", "pending", "checked_in"]},
-            "$or": [
-                # Booking overlaps during check-in period
-                {"check_in_date": {"$lt": check_out_date, "$gt": check_in_date}},  # Starts during stay
-                # Booking overlaps at checkout or after
-                {"check_out_date": {"$gt": check_in_date, "$lt": check_out_date}},  # Ends during stay
-                # Booking completely contains stay period
-                {"check_in_date": {"$lte": check_in_date}, "check_out_date": {"$gte": check_out_date}},
-            ]
-        }).to_list(length=500)
+        stay = set(_nights(check_in_date, check_out_date))
 
-        for b in conflicting:
-            booked_room_ids.add(b["room_id"])
+        def free_for(room: Dict[str, Any], wanted: Set[str]) -> bool:
+            return not (taken.get(str(room.get("_id", ""))) or set()) & wanted
 
+        wanted_rooms = [r for r in rooms if not room_type or r["room_type"] == room_type]
         available = []
-        for room in rooms:
-            room_id = str(room.get("_id", ""))
-            if room_id not in booked_room_ids:
-                price = room["pricing"]["base_price_per_night"]
-                total = self._price_stay(room["pricing"], nights)["final_total"]
-                available.append({
-                    "room_id": room_id,
-                    "room_number": room["room_number"],
-                    "room_type": room["room_type"],
-                    "bed_type": room["bed_type"],
-                    "floor": room["floor"],
-                    "capacity": room["capacity"],
-                    "price_per_night": price,
-                    "total_price": round(total, 2),
-                    "currency": get_hotel_profile()["currency"],
-                    "amenities": room.get("amenities", {}),
-                    "description": room.get("description", ""),
-                })
+        for room in wanted_rooms:
+            if not free_for(room, stay):
+                continue
+            available.append({
+                "room_id": str(room.get("_id", "")),
+                "room_number": room["room_number"],
+                "room_type": room["room_type"],
+                "bed_type": room["bed_type"],
+                "floor": room["floor"],
+                "capacity": room["capacity"],
+                "price_per_night": room["pricing"]["base_price_per_night"],
+                "total_price": self._price_stay(room["pricing"], nights)["final_total"],
+                "currency": currency,
+                "amenities": room.get("amenities", {}),
+                "description": room.get("description", ""),
+            })
 
-        # If requested room_type not available, find alternatives
-        alternative_room_types = None
-        if len(available) == 0 and room_type:
-            # Requested room type not available, try other types
-            alternative_room_types = await self._find_alternative_room_types(
-                db, checkin, checkout, room_type, total_capacity, nights, booked_room_ids
-            )
-
-        # If still not available, find next available dates for same room type
-        alternative_dates = None
-        if len(available) == 0:
-            alternative_dates = await self._find_alternative_dates(
-                db, checkin, checkout, room_type, total_capacity, nights
-            )
+        alternative_room_types: List[Dict] = []
+        alternative_dates: List[Dict] = []
+        if not available:
+            if room_type:
+                # Same dates, other types (in priority order, one room per type).
+                for alt_type in _TYPE_PRIORITY.get(room_type, ROOM_TYPES):
+                    room = next((r for r in rooms if r["room_type"] == alt_type and free_for(r, stay)), None)
+                    if room:
+                        alternative_room_types.append({
+                            "room_type": alt_type,
+                            "room_number": room["room_number"],
+                            "bed_type": room["bed_type"],
+                            "price_per_night": room["pricing"]["base_price_per_night"],
+                            "total_price": self._price_stay(room["pricing"], nights)["final_total"],
+                            "upgrade": True,
+                        })
+                    if len(alternative_room_types) >= MAX_ALTERNATIVES:
+                        break
+            # Same type, later dates — computed in memory from the same bookings query.
+            for offset in range(1, ALTERNATIVE_DATE_WINDOW_DAYS + 1):
+                new_in = checkin + timedelta(days=offset)
+                new_out = new_in + timedelta(days=nights)
+                if new_out.isoformat() > window_end:
+                    break
+                wanted = set(_nights(new_in.isoformat(), new_out.isoformat()))
+                count = sum(1 for r in wanted_rooms if free_for(r, wanted))
+                if count:
+                    alternative_dates.append({
+                        "check_in_date": new_in.isoformat(),
+                        "check_out_date": new_out.isoformat(),
+                        "available_rooms": count,
+                    })
+                    if len(alternative_dates) >= MAX_ALTERNATIVES:
+                        break
 
         return {
-            "available": len(available) > 0,
+            "available": bool(available),
             "rooms": available,
             "check_in_date": check_in_date,
             "check_out_date": check_out_date,
             "nights": nights,
             "total_available": len(available),
-            "alternative_room_types": alternative_room_types or [],  # Different room types for same dates
-            "alternative_dates": alternative_dates or [],  # Same room type for different dates
+            "alternative_room_types": alternative_room_types,  # different types, same dates
+            "alternative_dates": alternative_dates,            # same type, different dates
         }
-
-    async def _find_alternative_room_types(
-        self,
-        db: Any,
-        checkin: date,
-        checkout: date,
-        requested_room_type: str,
-        total_capacity: int,
-        nights: int,
-        booked_room_ids: set,
-    ) -> List[Dict]:
-        """Find available rooms of different types when requested type is booked."""
-        room_types = ["standard", "deluxe", "suite", "executive", "presidential"]
-        alternatives = []
-
-        # Priority: suggest better/cheaper alternatives
-        type_priority = {
-            "standard": ["deluxe", "suite", "executive", "presidential"],
-            "deluxe": ["suite", "executive", "presidential", "standard"],
-            "suite": ["executive", "presidential", "deluxe", "standard"],
-            "executive": ["presidential", "suite", "deluxe", "standard"],
-            "presidential": ["executive", "suite", "deluxe", "standard"],
-        }
-
-        suggested_types = type_priority.get(requested_room_type, room_types)
-
-        for alt_type in suggested_types:
-            if alt_type == requested_room_type:
-                continue
-
-            # Find rooms of this type
-            room_filter = {"is_active": True, "is_maintenance": False, "room_type": alt_type, "capacity": {"$gte": total_capacity}}
-            alt_rooms = await db.rooms.find(room_filter).to_list(length=100)
-
-            for room in alt_rooms:
-                room_id = str(room.get("_id", ""))
-                if room_id not in booked_room_ids:
-                    price = room["pricing"]["base_price_per_night"]
-                    total = price * nights * (1 + room["pricing"].get("tax_pct", 15) / 100)
-                    alternatives.append({
-                        "room_type": alt_type,
-                        "room_number": room["room_number"],
-                        "bed_type": room["bed_type"],
-                        "price_per_night": price,
-                        "total_price": round(total, 2),
-                        "upgrade": alt_type != requested_room_type,  # Is this an upgrade?
-                    })
-                    # Return first available of this type
-                    break
-
-            if len(alternatives) >= 3:  # Max 3 alternatives
-                break
-
-        return alternatives
-
-    async def _find_alternative_dates(
-        self,
-        db: Any,
-        original_checkin: date,
-        original_checkout: date,
-        room_type: Optional[str],
-        total_capacity: int,
-        nights: int,
-    ) -> List[Dict]:
-        """Find alternative available dates when requested dates aren't available."""
-        alternatives = []
-        
-        # Check next 14 days for available dates
-        for offset in range(1, 15):
-            new_checkin = original_checkin + timedelta(days=offset)
-            new_checkout = new_checkin + timedelta(days=nights)
-            
-            # Check if this new date range is available
-            room_filter: Dict[str, Any] = {"is_active": True, "is_maintenance": False}
-            if room_type:
-                room_filter["room_type"] = room_type
-            room_filter["capacity"] = {"$gte": total_capacity}
-            
-            available_count = 0
-            
-            # Count available rooms for this date range
-            all_rooms = await db.rooms.find(room_filter).to_list(length=100)
-            
-            booked_ids = set()
-            conflicts = await db.bookings.find({
-                "status": {"$in": ["confirmed", "pending", "checked_in"]},
-                "$or": [
-                    {"check_in_date": {"$lt": new_checkout.isoformat(), "$gte": new_checkin.isoformat()}},
-                    {"check_out_date": {"$gt": new_checkin.isoformat(), "$lte": new_checkout.isoformat()}},
-                    {"check_in_date": {"$lte": new_checkin.isoformat()}, "check_out_date": {"$gte": new_checkout.isoformat()}},
-                ]
-            }).to_list(length=500)
-            
-            for b in conflicts:
-                booked_ids.add(b["room_id"])
-            
-            available_count = sum(1 for r in all_rooms if str(r.get("_id")) not in booked_ids)
-            
-            if available_count > 0:
-                alternatives.append({
-                    "check_in_date": new_checkin.isoformat(),
-                    "check_out_date": new_checkout.isoformat(),
-                    "available_rooms": available_count,
-                })
-                # Return first 3 alternatives
-                if len(alternatives) >= 3:
-                    break
-        
-        return alternatives
 
     @staticmethod
     def _price_stay(pricing: Dict, nights: int) -> Dict[str, float]:
@@ -832,7 +793,7 @@ class HotelToolExecutor:
         if not booking_id and not guest_phone:
             return {"error": "Provide booking_id or guest_phone"}
 
-        query = {}
+        query: Dict[str, Any] = {}
         if booking_id:
             query["booking_id"] = booking_id.upper()
         elif guest_phone:
@@ -995,7 +956,7 @@ class HotelToolExecutor:
         pricing = booking.get("pricing", {})
         
         message = (
-            f"Sir, booking confirmed! ✅\n\n"
+            f"Booking confirmed! ✅\n\n"
             f"📋 Booking ID: {booking.get('booking_id')}\n"
             f"👤 Guest: {booking.get('guest_name')}\n"
             f"🏨 Room: {str(booking.get('room_type', '')).title()} (Room {booking.get('room_number', '-')})\n"
@@ -1005,7 +966,7 @@ class HotelToolExecutor:
             f"💰 Total: {pricing.get('currency', 'BDT')} {pricing.get('final_total', 0):,.0f}\n\n"
             f"📍 Hotel Address: {profile['address']}\n\n"
             f"Please bring a valid ID at check-in.\n"
-            f"We look forward to welcoming you, sir! 🌟"
+            f"We look forward to welcoming you! 🌟"
         )
         
         # Format phone number (remove + for Meta API)
@@ -1053,13 +1014,3 @@ class HotelToolExecutor:
         except Exception as e:
             logger.error("WhatsApp send error: %s", type(e).__name__, exc_info=True)
             return {"success": False, "error": "WhatsApp send failed"}
-
-
-# Singleton executor
-_executor: Optional[HotelToolExecutor] = None
-
-def get_tool_executor() -> HotelToolExecutor:
-    global _executor
-    if not _executor:
-        _executor = HotelToolExecutor()
-    return _executor

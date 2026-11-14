@@ -1,0 +1,26 @@
+# Local development of the voice worker in Linux.
+# Needed on Windows: livekit-agents' native libraries crash on some Windows builds.
+#
+#   docker compose -f docker-compose.dev.yml up agent          # run the worker (auto-reloads)
+#   docker compose -f docker-compose.dev.yml run --rm tests    # full test suite on Linux
+#
+# Reads .env. A MongoDB on your machine is reachable as host.docker.internal, not localhost:
+# set MONGODB_URI accordingly (Atlas URIs work unchanged).
+services:
+  agent:
+    build: { context: ., target: dev }
+    command: python -m agent.worker dev
+    env_file: .env
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  tests:
+    build: { context: ., target: dev }
+    command: sh -c "ruff check . && mypy && pytest"
+    environment:
+      APP_ENV: development
+    volumes:
+      - .:/app
+    profiles: ["tools"]

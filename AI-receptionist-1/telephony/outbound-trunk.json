@@ -1,0 +1,9 @@
+{
+  "trunk": {
+    "name": "twilio-outbound-${ENVIRONMENT}",
+    "address": "${TWILIO_TERMINATION_URI}",
+    "numbers": ["${PHONE_NUMBER}"],
+    "auth_username": "${SIP_OUTBOUND_USERNAME}",
+    "auth_password": "${SIP_OUTBOUND_PASSWORD}"
+  }
+}

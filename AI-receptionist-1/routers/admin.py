@@ -453,23 +453,91 @@ async def update_guest(body: GuestUpdate, phone: str = Query(..., min_length=3))
 # LIVE CALLS + MESSAGING
 # ─────────────────────────────────────────────
 
+LIVE_CALL_STALE_S = 120  # the worker flushes every 10 s; older "in_progress" rows are crashed calls
+
+
 @protected.get("/calls/live")
 async def live_calls():
-    try:
-        from voice.twilio_handler import active_sessions
-    except Exception as e:
-        raise HTTPException(500, f"Voice module unavailable: {e}")
+    """Calls in progress: LiveKit voice agent (phone + browser) and the legacy Twilio path."""
     now = time.time()
-    calls = [{
-        "call_sid": sid,
-        "phone": s.get("phone"),
-        "session_id": s.get("session_id"),
-        "stream_connected": bool(s.get("websocket")),
-        "ai_speaking": bool(s.get("ai_speaking")),
-        "processing": bool(s.get("busy")),
-        "seconds_since_speech": round(now - s.get("last_speech_ts", now)),
-    } for sid, s in list(active_sessions.items())]
+    calls: List[Dict[str, Any]] = []
+    if settings.LEGACY_TWILIO_VOICE:
+        try:
+            from voice.twilio_handler import active_sessions
+        except Exception:
+            active_sessions = {}
+        calls += [{
+            "call_sid": sid,
+            "phone": s.get("phone"),
+            "session_id": s.get("session_id"),
+            "stream_connected": bool(s.get("websocket")),
+            "ai_speaking": bool(s.get("ai_speaking")),
+            "processing": bool(s.get("busy")),
+            "seconds_since_speech": round(now - s.get("last_speech_ts", now)),
+            "source": "twilio",
+        } for sid, s in list(active_sessions.items())]
+
+    cutoff = datetime.utcnow() - timedelta(seconds=LIVE_CALL_STALE_S)
+    async for c in get_db().calls.find({"status": "in_progress", "updated_at": {"$gte": cutoff}},
+                                       {"transcript": 0, "turns": 0}).sort("started_at", -1).limit(50):
+        calls.append({
+            "call_sid": c["call_id"],
+            "phone": c.get("caller_phone") or "browser call",
+            "session_id": c["call_id"],
+            "stream_connected": True,
+            "ai_speaking": False,
+            "processing": False,
+            "seconds_since_speech": 0,
+            "source": "livekit",
+            "channel": c.get("channel"),
+        })
     return {"calls": calls, "total": len(calls)}
+
+
+@protected.get("/calls")
+async def call_history(
+    limit: int = Query(50, ge=1, le=200),
+    outcome: Optional[str] = Query(None, max_length=32),
+):
+    """Voice-agent call log, newest first (transcripts via /calls/{call_id})."""
+    query: Dict[str, Any] = {"outcome": outcome} if outcome else {}
+    docs = await get_db().calls.find(query, {"transcript": 0, "turns": 0}) \
+        .sort("started_at", -1).limit(limit).to_list(limit)
+    return {"calls": [to_jsonable(_strip_id(d)) for d in docs], "total": len(docs)}
+
+
+@protected.get("/calls/{call_id}")
+async def call_detail(call_id: str):
+    doc = await get_db().calls.find_one({"call_id": call_id})
+    if not doc:
+        raise HTTPException(404, "Call not found")
+    return to_jsonable(_strip_id(doc))
+
+
+@protected.get("/messages")
+async def list_messages(
+    status: Optional[str] = Query(None, pattern="^(new|handled)$"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Messages callers left for the team (take_message), newest first."""
+    query: Dict[str, Any] = {"status": status} if status else {}
+    docs = await get_db().messages.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"messages": [to_jsonable(_strip_id(d)) for d in docs], "total": len(docs),
+            "new": await get_db().messages.count_documents({"status": "new"})}
+
+
+class MessageUpdate(BaseModel):
+    status: str = Field(pattern="^(new|handled)$")
+
+
+@protected.patch("/messages/{message_id}")
+async def update_message(message_id: str, body: MessageUpdate):
+    result = await get_db().messages.update_one(
+        {"message_id": message_id},
+        {"$set": {"status": body.status, "updated_at": datetime.utcnow()}})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Message not found")
+    return {"success": True, "message_id": message_id, "status": body.status}
 
 
 class WhatsAppSend(BaseModel):

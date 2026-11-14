@@ -27,10 +27,17 @@ dependencies = [
     # LiveKit
     "livekit==1.1.20",
     "livekit-api==1.2.2",
+    # 1.1.28–1.1.31 are yanked: they break chat-history upload with livekit-agents 1.7.0–1.8.8.
+    "livekit-protocol==1.1.27",
+    # Every livekit-agents plugin must match the livekit-agents version exactly.
+    # 1.8.7+ needs openai>=3 (a major upgrade) — move the whole family together, on purpose.
     "livekit-agents==1.8.6",
     "livekit-plugins-openai==1.8.6",
     "livekit-plugins-elevenlabs==1.8.6",
     "livekit-plugins-silero==1.8.6",
+    "livekit-plugins-deepgram==1.8.6",          # streaming STT (Nova-3)
+    "livekit-plugins-cartesia==1.8.6",          # fallback TTS
+    "livekit-plugins-noise-cancellation==0.3.3",  # BVCTelephony for SIP audio (LiveKit Cloud)
     # Ops
     "sentry-sdk==2.75.0",
     "tzdata==2026.6",                    # IANA timezones on Windows
@@ -75,10 +82,15 @@ select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
 "core/**" = []
 
 # ── Types ───────────────────────────────────────────────
-# Lenient to start: only core/ is checked; tighten as modules move into core/.
+# Lenient to start: core/ and agent/ are checked; tighten as modules move into core/.
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
-files = ["core"]
+files = ["core", "agent"]
+
+# Legacy modules imported by core/ — not type-checked until they move or are deleted.
+[[tool.mypy.overrides]]
+module = ["ai.*", "database.*", "whatsapp.*", "voice.*", "routers.*", "services.*", "utils.*"]
+ignore_errors = true

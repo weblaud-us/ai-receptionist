@@ -79,6 +79,39 @@ class Settings(BaseSettings):
     LIVEKIT_WORKER_PORT:  int  = Field(default=0)
     LIVEKIT_USE_REALTIME: bool = Field(default=False)
 
+    # ── Voice agent (LiveKit worker, Roadmap Phase 1) ─────
+    LIVEKIT_AGENT_NAME:         str = Field(default="receptionist")  # SIP dispatch rule + call links use it
+    LIVEKIT_NUM_IDLE_PROCESSES: int = Field(default=1)    # warm spare processes; 2+ in production
+    LIVEKIT_SIP_OUTBOUND_TRUNK_ID: str = Field(default="")  # ST_… from `lk sip outbound create` (Phase 4)
+    VOICE_LLM_MODEL:            str   = Field(default="gpt-4.1-mini")
+    VOICE_LLM_TEMPERATURE:      float = Field(default=0.4)
+    VOICE_STT_PROVIDER:         Literal["deepgram", "openai"] = Field(default="deepgram")
+    VOICE_STT_MODEL:            str = Field(default="nova-3")
+    VOICE_LANGUAGE:             str = Field(default="en-US")  # STT language; "multi" = code-switching
+    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "openai"] = Field(default="elevenlabs")
+    ELEVENLABS_TTS_MODEL:       str = Field(default="eleven_flash_v2_5")
+    CARTESIA_API_KEY:           str = Field(default="")   # fallback TTS when set
+    CARTESIA_VOICE_ID:          str = Field(default="")
+    CARTESIA_MODEL:             str = Field(default="sonic-3")
+    VOICE_ENDPOINTING_MIN_DELAY: float = Field(default=0.3)  # raise if callers get cut off mid-number
+    VOICE_ENDPOINTING_MAX_DELAY: float = Field(default=2.5)
+    VOICE_USER_AWAY_TIMEOUT:    float = Field(default=12.0)  # seconds of silence before "are you there?"
+    VOICE_NOISE_CANCELLATION:   bool  = Field(default=True)  # BVCTelephony on SIP calls (LiveKit Cloud)
+    VOICE_THINKING_SOUND:       bool  = Field(default=True)  # soft typing only while a tool runs
+    VOICE_AMBIENT_SOUND:        bool  = Field(default=False)
+    TRANSFER_PHONE_NUMBER:      str = Field(default="")  # E.164 staff line for transfer_to_human; empty = off
+    TRANSFER_HOURS:             str = Field(default="")  # "09:00-21:00" business-local; empty = any time
+    OWNER_NOTIFY_WHATSAPP:      str = Field(default="")  # comma-separated numbers told about new messages
+    LEGACY_TWILIO_VOICE:        bool = Field(default=True)  # /voice/* Media Streams path; off after cutover
+
+    # Call recording via LiveKit Egress (ENABLE_CALL_RECORDING=true). ⚖ consent-sensitive.
+    RECORDING_S3_BUCKET:     str = Field(default="")
+    RECORDING_S3_REGION:     str = Field(default="")
+    RECORDING_S3_ENDPOINT:   str = Field(default="")   # S3-compatible endpoint; empty = AWS
+    RECORDING_S3_ACCESS_KEY: str = Field(default="")
+    RECORDING_S3_SECRET:     str = Field(default="")
+    RECORDING_RETENTION_DAYS: int = Field(default=30)
+
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)
     CONVERSATION_MEMORY_MAX_MESSAGES: int = Field(default=20)
@@ -143,6 +176,8 @@ class Settings(BaseSettings):
             problems.append("WEBHOOK_BASE_URL must be the public https:// URL")
         if self.ENABLE_WHATSAPP and not self.META_APP_SECRET:
             problems.append("META_APP_SECRET is required when ENABLE_WHATSAPP=true")
+        if self.ENABLE_CALL_RECORDING and not (self.RECORDING_S3_BUCKET and self.RECORDING_S3_SECRET):
+            problems.append("ENABLE_CALL_RECORDING needs RECORDING_S3_BUCKET and credentials")
         if self.LOG_LEVEL.upper() == "DEBUG":
             problems.append("LOG_LEVEL=DEBUG would log transcripts; use INFO")
         if problems:

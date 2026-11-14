@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple, Any
 
 from ai.llm_provider import get_llm_provider
-from ai.tools import HOTEL_TOOLS, get_tool_executor
+from core.tools.registry import ToolContext, openai_tool_schemas, run_tool
 from ai.prompts import get_system_prompt, VOICE_BREVITY_REMINDER, detect_gender_preference
 from config import settings
 from database.mongodb import get_db
@@ -131,7 +131,6 @@ class HotelAgent:
     def __init__(self, channel: ConversationChannel):
         self.channel  = channel
         self._llm     = None
-        self.executor = get_tool_executor()
         self.is_voice = (channel == ConversationChannel.VOICE)
 
     @property
@@ -174,7 +173,7 @@ class HotelAgent:
         for iteration in range(MAX_TOOL_ITERATIONS):
             response = await self.llm.chat_completion(
                 messages=messages,
-                tools=HOTEL_TOOLS,
+                tools=openai_tool_schemas(),
                 tool_choice="auto",
                 temperature=0.7,
                 # Voice: very short answers (1-2 sentences).
@@ -214,7 +213,8 @@ class HotelAgent:
                 logger.debug("🔧 Tool args: %s", str(args)[:200])  # may contain guest PII
                 # The caller's phone is the identity proof for booking reads/changes.
                 caller_phone = conv_doc.get("phone") or phone
-                result = await self.executor.execute(fn_name, args, caller_phone=caller_phone)
+                ctx = ToolContext(channel=self.channel.value, caller_phone=caller_phone, call_id=session_id)
+                result = await run_tool(ctx, fn_name, args)
                 logger.debug("🔧 Tool result: %s", result[:200])
 
                 tool_results.append({

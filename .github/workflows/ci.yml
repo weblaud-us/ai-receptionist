@@ -44,6 +44,28 @@ jobs:
           print(f"OK: {len(documented)} variables documented")
           EOF
 
+  # Conversation evals against the real LLM (tests/evals). Runs only when the repository has an
+  # EVAL_OPENAI_API_KEY secret; without it every eval skips. A few cents per run.
+  evals:
+    runs-on: ubuntu-latest
+    needs: backend
+    defaults:
+      run:
+        working-directory: AI-receptionist-1
+    env:
+      EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Voice agent evals
+        run: uv run --frozen pytest tests/evals -rs
+        env:
+          APP_ENV: development
+          RUN_EVALS: ${{ secrets.EVAL_OPENAI_API_KEY != '' && '1' || '0' }}
+
   dashboard:
     runs-on: ubuntu-latest
     defaults:

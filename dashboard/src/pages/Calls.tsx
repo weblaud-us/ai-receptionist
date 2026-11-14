@@ -1,15 +1,23 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Loader2, MessageCircle, Phone, PhoneCall, PhoneOutgoing, Send } from 'lucide-react'
+import { Check, History, Inbox, Loader2, MessageCircle, Phone, PhoneCall, PhoneOutgoing, RotateCcw, Send } from 'lucide-react'
 import { EmptyState, ErrorBanner, Field, PageHeader } from '@/components/app/blocks'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { isValidPhone, normalizePhone } from '@/lib/format'
-import { useLiveCalls, useOutboundCall, useSendWhatsApp, useSystem } from '@/lib/hooks'
+import { dateTime, duration, isValidPhone, normalizePhone, timeAgo, titleCase } from '@/lib/format'
+import {
+  useCallHistory,
+  useCallerMessages,
+  useLiveCalls,
+  useOutboundCall,
+  useSendWhatsApp,
+  useSystem,
+  useUpdateMessage,
+} from '@/lib/hooks'
 
 export default function Calls() {
   const live = useLiveCalls()
@@ -28,7 +36,7 @@ export default function Calls() {
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">{live.data?.total ?? 0}</span>
               {live.isFetching && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
             </CardTitle>
-            <CardDescription>Refreshes every 5 seconds. Includes phone calls handled by this server (Twilio).</CardDescription>
+            <CardDescription>Refreshes every 5 seconds. Phone and browser calls handled by the AI receptionist.</CardDescription>
           </CardHeader>
           {live.error && (
             <div className="p-4">
@@ -62,9 +70,11 @@ export default function Calls() {
                       </TableCell>
                       <TableCell>{c.seconds_since_speech}s</TableCell>
                       <TableCell className="text-right">
-                        <Button size="xs" variant="outline" nativeButton={false} render={<Link to={`/conversations?session=${c.session_id}`} />}>
-                          Transcript
-                        </Button>
+                        {c.source !== 'livekit' && (
+                          <Button size="xs" variant="outline" nativeButton={false} render={<Link to={`/conversations?session=${c.session_id}`} />}>
+                            Transcript
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -73,6 +83,9 @@ export default function Calls() {
             )
           )}
         </Card>
+
+        <CallerMessages />
+        <RecentCalls />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <OutboundCall enabled={integrations?.twilio_voice !== false} />
@@ -164,6 +177,142 @@ function WhatsAppForm({ enabled }: { enabled: boolean }) {
           {send.isPending ? <Loader2 className="animate-spin" /> : <Send />} Send
         </Button>
       </CardContent>
+    </Card>
+  )
+}
+
+function CallerMessages() {
+  const messages = useCallerMessages()
+  const update = useUpdateMessage()
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardHeader className="border-b py-4">
+        <CardTitle className="flex items-center gap-2">
+          <Inbox className="size-4" /> Messages from callers
+          {!!messages.data?.new && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+              {messages.data.new} new
+            </span>
+          )}
+        </CardTitle>
+        <CardDescription>Left with the AI when no one could take the call. Call back, then mark as handled.</CardDescription>
+      </CardHeader>
+      {messages.error && (
+        <div className="p-4">
+          <ErrorBanner error={messages.error} onRetry={() => void messages.refetch()} />
+        </div>
+      )}
+      {messages.data && messages.data.messages.length === 0 ? (
+        <EmptyState title="No messages" icon={<Inbox className="size-8" />} description="Messages callers leave will appear here." />
+      ) : (
+        messages.data && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>When</TableHead>
+                <TableHead>From</TableHead>
+                <TableHead>Call back</TableHead>
+                <TableHead>Message</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {messages.data.messages.map((m) => (
+                <TableRow key={m.message_id} className={m.status === 'handled' ? 'opacity-60' : undefined}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground" title={dateTime(m.created_at)}>
+                    {timeAgo(m.created_at)}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {m.caller_name}
+                    {m.urgent && (
+                      <span className="ml-2 rounded bg-red-500/15 px-1.5 py-0.5 text-xs text-red-700 dark:text-red-400">Urgent</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{m.callback_number}</TableCell>
+                  <TableCell className="max-w-md whitespace-normal">{m.message}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={update.isPending}
+                      onClick={() => update.mutate({ id: m.message_id, status: m.status === 'new' ? 'handled' : 'new' })}
+                    >
+                      {m.status === 'new' ? (
+                        <>
+                          <Check /> Handled
+                        </>
+                      ) : (
+                        <>
+                          <RotateCcw /> Reopen
+                        </>
+                      )}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )
+      )}
+    </Card>
+  )
+}
+
+function seconds(value: number | null | undefined): string {
+  return value == null ? '—' : `${value.toFixed(2)} s`
+}
+
+function RecentCalls() {
+  const calls = useCallHistory()
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardHeader className="border-b py-4">
+        <CardTitle className="flex items-center gap-2">
+          <History className="size-4" /> Recent calls
+        </CardTitle>
+        <CardDescription>
+          Response time is how long callers wait after they stop talking (target: under 1 second, or 1.6 with a lookup).
+        </CardDescription>
+      </CardHeader>
+      {calls.error && (
+        <div className="p-4">
+          <ErrorBanner error={calls.error} onRetry={() => void calls.refetch()} />
+        </div>
+      )}
+      {calls.data && calls.data.calls.length === 0 ? (
+        <EmptyState title="No calls yet" icon={<History className="size-8" />} description="Calls handled by the AI receptionist will appear here." />
+      ) : (
+        calls.data && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Started</TableHead>
+                <TableHead>Caller</TableHead>
+                <TableHead>Outcome</TableHead>
+                <TableHead>Length</TableHead>
+                <TableHead>Response (median)</TableHead>
+                <TableHead>With lookup</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {calls.data.calls.map((c) => (
+                <TableRow key={c.call_id}>
+                  <TableCell className="whitespace-nowrap">{dateTime(c.started_at)}</TableCell>
+                  <TableCell className="font-medium">
+                    {c.caller_phone ?? (c.channel === 'browser' ? 'Browser call' : 'Unknown')}
+                  </TableCell>
+                  <TableCell>{c.status === 'in_progress' ? 'In progress' : titleCase(c.outcome ?? 'completed')}</TableCell>
+                  <TableCell>{c.duration_s != null ? duration(c.duration_s) : '—'}</TableCell>
+                  <TableCell>{seconds(c.latency?.p50_s)}</TableCell>
+                  <TableCell>{seconds(c.latency?.tool_p50_s)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )
+      )}
     </Card>
   )
 }

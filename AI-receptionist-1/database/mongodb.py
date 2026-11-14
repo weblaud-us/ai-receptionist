@@ -1,6 +1,11 @@
 """
 MongoDB Async Connection via Motor — Single-Tenant Setup.
-Collections: rooms, bookings, room_nights, guests, conversations, call_sessions
+Collections: rooms, bookings, room_nights, guests, conversations, call_sessions (legacy),
+calls (voice agent), messages (take_message).
+
+Indexes are created by `python -m migrations.m0002_indexes` (run by deploy.sh), not at every
+startup — index builds slow down boot and must never run inside a call. In development the API
+still creates them on startup for convenience.
 """
 
 import logging
@@ -17,7 +22,11 @@ _client: Optional[AsyncIOMotorClient] = None
 _db: Optional[AsyncIOMotorDatabase] = None
 
 
-async def connect_db():
+async def connect_db(ensure_indexes: Optional[bool] = None):
+    """
+    Create the process-wide client. Call once per process, inside its event loop.
+    ensure_indexes: None = only in development (production runs the migration on deploy).
+    """
     global _client, _db
     _client = AsyncIOMotorClient(
         settings.MONGODB_URI,
@@ -26,14 +35,20 @@ async def connect_db():
         minPoolSize=5,
     )
     _db = _client[settings.MONGODB_DB_NAME]
-    await _create_indexes(_db)
+    if ensure_indexes if ensure_indexes is not None else settings.is_development:
+        await _create_indexes(_db)
     logger.info("✅ MongoDB connected → db=%s", settings.MONGODB_DB_NAME)
 
 
+def is_connected() -> bool:
+    return _db is not None
+
+
 async def disconnect_db():
-    global _client
+    global _client, _db
     if _client:
         _client.close()
+        _client, _db = None, None
         logger.info("MongoDB disconnected")
 
 
@@ -47,8 +62,8 @@ def get_db() -> AsyncIOMotorDatabase:
     return _db
 
 
-async def _create_indexes(db: AsyncIOMotorDatabase):
-    """Create indexes for all collections."""
+async def create_indexes(db: AsyncIOMotorDatabase):
+    """Create indexes for all collections. Idempotent."""
 
     await db.rooms.create_indexes([
         IndexModel([("room_number", ASCENDING)], unique=True),
@@ -96,4 +111,20 @@ async def _create_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("created_at", DESCENDING)]),
     ])
 
+    # Voice agent call records (one per LiveKit room) and messages left for the business.
+    await db.calls.create_indexes([
+        IndexModel([("call_id", ASCENDING)], unique=True),
+        IndexModel([("started_at", DESCENDING)]),
+        IndexModel([("caller_phone", ASCENDING)]),
+        IndexModel([("outcome", ASCENDING)]),
+    ])
+
+    await db.messages.create_indexes([
+        IndexModel([("message_id", ASCENDING)], unique=True),
+        IndexModel([("status", ASCENDING), ("created_at", DESCENDING)]),
+    ])
+
     logger.info("✅ DB indexes created")
+
+
+_create_indexes = create_indexes  # backwards-compatible name (tests, migrations)

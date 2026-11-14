@@ -1,0 +1,9 @@
+{
+  "trunk": {
+    "name": "twilio-inbound-${ENVIRONMENT}",
+    "numbers": ["${PHONE_NUMBER}"],
+    "auth_username": "${SIP_INBOUND_USERNAME}",
+    "auth_password": "${SIP_INBOUND_PASSWORD}",
+    "krisp_enabled": true
+  }
+}

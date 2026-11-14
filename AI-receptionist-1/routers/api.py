@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from ai.tools import get_tool_executor, release_room_nights
+from core.tools.hotel import release_room_nights
+from core.tools.registry import get_tool_executor
 from core.timeutils import business_today
 from database.models import (
     BedType, BookingCreateRequest, BookingStatus, Room, RoomAmenities,
