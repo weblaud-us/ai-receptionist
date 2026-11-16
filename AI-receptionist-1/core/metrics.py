@@ -18,6 +18,8 @@ Two groups:
    receptionist_transfers_last_hour{result}           transfer_to_human results
    receptionist_dependency_up{name}                   1 / 0 for mongo and redis
    receptionist_jobs_dead                             jobs that failed every retry
+   receptionist_outbound_attempts_last_hour{outcome}  sales dialer results (Phase 4)
+   receptionist_outbound_calls_active                 sales calls in progress
 
 The voice worker exposes LiveKit's own process metrics separately (LIVEKIT_PROMETHEUS_PORT).
 No metric carries a phone number, a name or a tenant id.
@@ -94,7 +96,9 @@ def call_stats(calls: List[Dict[str, Any]], *, now: datetime) -> Dict[str, Any]:
     for c in calls:
         key = (str(c.get("channel") or "phone"), str(c.get("outcome") or "completed"))
         by_outcome[key] = by_outcome.get(key, 0) + 1
-        if (c.get("duration_s") or 0) < SHORT_CALL_S and key[1] not in ("unassigned", "busy"):
+        # Outbound sales calls are often short by design (voicemail, hang up): not a broken-call signal.
+        if ((c.get("duration_s") or 0) < SHORT_CALL_S and key[1] not in ("unassigned", "busy")
+                and c.get("direction") != "outbound"):
             short += 1
         for kind, n in (c.get("provider_errors") or {}).items():
             errors[kind] = errors.get(kind, 0) + int(n or 0)
@@ -116,8 +120,16 @@ def call_stats(calls: List[Dict[str, Any]], *, now: datetime) -> Dict[str, Any]:
             "transfers": transfers, "plain": plain, "tool": tool, "greeting": greeting}
 
 
-def render_call_metrics(stats: Dict[str, Any], *, active: int, deps: Dict[str, bool], dead_jobs: int) -> bytes:
+def render_call_metrics(stats: Dict[str, Any], *, active: int, deps: Dict[str, bool], dead_jobs: int,
+                        outbound: Optional[Dict[str, Any]] = None) -> bytes:
     reg = CollectorRegistry()
+    if outbound is not None:
+        og = Gauge("receptionist_outbound_attempts_last_hour", "Sales dialer attempts finished in the last hour",
+                   ["outcome"], registry=reg)
+        for outcome, n in outbound.get("by_outcome", {}).items():
+            og.labels(outcome).set(n)
+        Gauge("receptionist_outbound_calls_active", "Sales calls in progress",
+              registry=reg).set(outbound.get("active", 0))
     Gauge("receptionist_calls_active", "Calls in progress", registry=reg).set(active)
     g = Gauge("receptionist_calls_last_hour", "Finished calls in the last hour", ["channel", "outcome"], registry=reg)
     for (channel, outcome), n in stats["by_outcome"].items():
@@ -165,15 +177,17 @@ async def _collect() -> bytes:
     deps: Dict[str, bool] = {}
     calls: List[Dict[str, Any]] = []
     active = 0
+    outbound: Optional[Dict[str, Any]] = None
     try:
         db = get_db()
         calls = await asyncio.wait_for(db.calls.find(
             {"status": "completed", "ended_at": {"$gte": now - COUNT_WINDOW}},
-            {"channel": 1, "outcome": 1, "duration_s": 1, "ended_at": 1, "greeting_latency_s": 1,
+            {"channel": 1, "outcome": 1, "duration_s": 1, "ended_at": 1, "greeting_latency_s": 1, "direction": 1,
              "turns.latency_s": 1, "turns.tool_turn": 1, "provider_errors": 1, "fallbacks": 1, "transfer": 1},
         ).limit(5000).to_list(5000), timeout=5)
         active = await asyncio.wait_for(db.calls.count_documents(
             {"status": "in_progress", "started_at": {"$gte": now - STALE_CALL}}), timeout=5)
+        outbound = await asyncio.wait_for(_outbound_stats(db, now), timeout=5)
         deps["mongo"] = True
     except Exception:
         logger.warning("Call metrics unavailable", exc_info=True)
@@ -186,7 +200,20 @@ async def _collect() -> bytes:
                 dead = int(await redis_store.get_redis().llen(DEAD_LETTER_KEY))  # type: ignore[union-attr]
             except Exception:
                 dead = 0
-    return render_call_metrics(call_stats(calls, now=now), active=active, deps=deps, dead_jobs=dead)
+    return render_call_metrics(call_stats(calls, now=now), active=active, deps=deps, dead_jobs=dead,
+                               outbound=outbound)
+
+
+async def _outbound_stats(db: Any, now: datetime) -> Dict[str, Any]:
+    by_outcome: Dict[str, int] = {}
+    async for row in db.call_attempts.aggregate([
+        {"$match": {"status": "done", "ended_at": {"$gte": now - COUNT_WINDOW}}},
+        {"$group": {"_id": "$outcome", "n": {"$sum": 1}}},
+    ]):
+        by_outcome[str(row["_id"])] = int(row["n"])
+    active = await db.call_attempts.count_documents(
+        {"status": {"$in": ["dispatched", "dialing", "in_progress"]}, "created_at": {"$gte": now - timedelta(hours=1)}})
+    return {"by_outcome": by_outcome, "active": active}
 
 
 def _authorised(request: Request) -> bool:

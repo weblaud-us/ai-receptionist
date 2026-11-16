@@ -27,6 +27,7 @@ const Assistant = lazy(() => import('@/pages/Assistant'))
 const PhoneNumbers = lazy(() => import('@/pages/PhoneNumbers'))
 const Team = lazy(() => import('@/pages/Team'))
 const Platform = lazy(() => import('@/pages/Platform'))
+const Dialer = lazy(() => import('@/pages/Dialer'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 
 const Fallback = () => (
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="settings" element={<Only><SettingsPage /></Only>} />
           <Route path="onboarding" element={<Only role="admin"><Onboarding /></Only>} />
           <Route path="platform" element={<Platform />} />
+          <Route path="dialer" element={<Dialer />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

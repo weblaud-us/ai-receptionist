@@ -121,6 +121,38 @@ dc exec jobs python -m jobs dead --clear  # after fixing the cause
 Reminders and digests are claimed in the database before sending, so restarting the jobs worker or
 running two of them never double-sends. A failed hotel reminder is retried after ~1 hour.
 
+## Outbound dialer
+
+*Notice:* `OutboundOptOutsHigh`, `OutboundCallsFailing`, a complaint, a carrier or Twilio trust
+notice, or the answer rate dropping on the Sales dialer → Results page.
+
+**Stop calling first, investigate second.**
+
+```bash
+# Fastest: Sales dialer → Campaigns → Pause (new dials stop at once; calls in progress finish).
+# Everything at once: set OUTBOUND_DIALER_ENABLED=false in /etc/receptionist/$E.env and redeploy
+# the current tag — the tick stops dialling and deploy.sh removes the sales-worker container.
+dc logs --since 1h jobs | grep -i "sales dialer"
+dc logs --since 1h sales-worker | grep -iE "not dialled|failed|opt"
+```
+
+- **Opt-outs high:** listen to the calls (Results → filter "Dnc"). Usually the list (wrong kind of
+  business, consumers in it) or a script change. Fix, re-run `tests/evals/test_sales_evals.py`,
+  then resume.
+- **Calls failing / answer rate collapsed:** check the sales trunk in Twilio (subaccount suspended?
+  numbers flagged?) and the SIP status on failed attempts. A spam label: rest the number for a
+  week, lower `SALES_MAX_CALLS_PER_NUMBER_PER_DAY`, check attestation and CNAM. Do **not** rotate in
+  fresh numbers to dodge labels — carriers punish it.
+- **Nothing is being dialled:** Sales dialer page shows why (the warning box). Common: the national
+  DNC list is older than 31 days (`python -m scripts.import_dnc_registry --status`), the window is
+  closed for the leads' timezones, every caller ID is resting, or the sales worker is down.
+- **A complaint about a specific call:** the lead's page shows every compliance check made before
+  each call (time, mode, every check), the attempt, transcript and recording. Export what's needed
+  for counsel; add the number to the DNC list if it isn't already.
+
+The internal DNC list cannot be edited from the product. If a number must come off (e.g. typed in
+by mistake), do it in Mongo by hand, with a note of who asked and when.
+
 ## A key leaked
 
 Rotate in this order (ROADMAP Task 0.2), each: create new → update `/etc/receptionist/$E.env` (and the

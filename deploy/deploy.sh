@@ -15,6 +15,7 @@
 #   3. api-a, api-b     one at a time; Caddy routes around the one restarting
 #   4. worker-a, -b     one at a time; each drains its live calls (up to LIVEKIT_DRAIN_TIMEOUT)
 #                       while the other answers new calls
+#   5. sales-worker     only when OUTBOUND_DIALER_ENABLED=true in the env file (Phase 4)
 # =============================================================
 set -euo pipefail
 
@@ -54,6 +55,15 @@ case "$WORKERS" in
   *) echo "WORKERS must be 2, 3 or 4 (got $WORKERS)" >&2; exit 1 ;;
 esac
 
+# The outbound sales dialer has its own worker; it only exists when the dialer is switched on.
+dialer="$(grep -E '^[[:space:]]*OUTBOUND_DIALER_ENABLED=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d "\"' " | tr '[:upper:]' '[:lower:]')"
+if [ "$dialer" = "true" ] || [ "$dialer" = "1" ]; then
+  SALES_WORKER=1
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}dialer"
+else
+  SALES_WORKER=0
+fi
+
 echo "==> [1/6] Pulling images for ${TAG}"
 dc pull --quiet
 
@@ -81,6 +91,13 @@ done
 for svc in worker-c worker-d; do
   case " $WORKER_SERVICES " in *" $svc "*) ;; *) COMPOSE_PROFILES="workers-4" dc rm -sf "$svc" >/dev/null 2>&1 || true ;; esac
 done
+
+if [ "$SALES_WORKER" = "1" ]; then
+  echo "==> Sales worker (outbound dialer)"
+  dc up -d --wait --no-deps sales-worker
+else
+  COMPOSE_PROFILES="dialer" dc rm -sf sales-worker >/dev/null 2>&1 || true
+fi
 
 echo "==> [6/6] Dashboard and proxy"
 dc up -d --wait --no-deps dashboard

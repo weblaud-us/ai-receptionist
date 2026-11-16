@@ -2,7 +2,9 @@
 MongoDB Async Connection via Motor.
 Collections: rooms, bookings, room_nights, guests, conversations, call_sessions (legacy),
 calls (voice agent), messages (take_message), and the Phase 2 tenant collections (tenants, users,
-phone_numbers, services, resources, appointments, slot_locks, contacts, knowledge_items, …).
+phone_numbers, services, resources, appointments, slot_locks, contacts, knowledge_items, …) and
+the Phase 4 outbound dialer (sales_leads, campaigns, call_attempts, dnc_list, dnc_registry,
+consent_records).
 
 Indexes are created by `python -m migrations.m0002_indexes` (run by deploy.sh), not at every
 startup — index builds slow down boot and must never run inside a call. In development the API
@@ -129,7 +131,39 @@ async def create_indexes(db: AsyncIOMotorDatabase):
     ])
 
     await _create_tenant_indexes(db)
+    await _create_outbound_indexes(db)
     logger.info("✅ DB indexes created")
+
+
+async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
+    """Phase 4: the outbound sales dialer (Roadmap Task 4.2)."""
+
+    await db.sales_leads.create_indexes([
+        IndexModel([("owner", ASCENDING), ("phone", ASCENDING)], unique=True, name="uniq_owner_phone"),
+        # the dialer's claim: one campaign's due leads, oldest first
+        IndexModel([("campaign_id", ASCENDING), ("status", ASCENDING), ("next_eligible_at", ASCENDING)]),
+        IndexModel([("status", ASCENDING), ("next_eligible_at", ASCENDING)]),
+        IndexModel([("phone", ASCENDING)]),
+        IndexModel([("created_at", DESCENDING)]),
+    ])
+    await db.campaigns.create_indexes([
+        IndexModel([("status", ASCENDING)]),
+        IndexModel([("created_at", DESCENDING)]),
+    ])
+    await db.call_attempts.create_indexes([
+        IndexModel([("campaign_id", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("lead_id", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("status", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("from", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("call_id", ASCENDING)], unique=True),
+    ])
+    # The internal do-not-call list. UNIQUE on phone; rows are never deleted.
+    await db.dnc_list.create_indexes([IndexModel([("phone", ASCENDING)], unique=True)])
+    await db.dnc_registry.create_indexes([
+        IndexModel([("phone", ASCENDING), ("list", ASCENDING)], unique=True, name="uniq_phone_list"),
+        IndexModel([("list", ASCENDING)]),
+    ])
+    await db.consent_records.create_indexes([IndexModel([("phone", ASCENDING), ("at", DESCENDING)])])
 
 
 async def _create_tenant_indexes(db: AsyncIOMotorDatabase):

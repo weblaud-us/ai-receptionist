@@ -50,6 +50,7 @@ from livekit.agents import (  # noqa: E402
 from livekit.agents.worker import ServerEnvOption  # noqa: E402
 from livekit.plugins import noise_cancellation, silero  # noqa: E402
 
+from agent.db import ensure_db  # noqa: E402
 from agent.health import attach_provider_health  # noqa: E402
 from agent.persistence import CallRecorder, load_contact, record_contact_call  # noqa: E402
 from agent.profile import VoiceProfile, resolve_profile, unassigned_profile  # noqa: E402
@@ -60,28 +61,11 @@ from agent.state import CallState  # noqa: E402
 from agent.telemetry import attach_telemetry  # noqa: E402
 from core import concurrency  # noqa: E402
 from core.phone import mask_phone  # noqa: E402
-from database import mongodb  # noqa: E402
 
 logger = logging.getLogger("agent.worker")
 
 CONTACT_LOAD_TIMEOUT_S = 2.0
 TENANT_RESOLVE_TIMEOUT_S = 3.0
-_db_loop: Optional[asyncio.AbstractEventLoop] = None
-
-
-async def ensure_db() -> None:
-    """
-    One Mongo client per worker process (Task 1.9.1), created inside the job's event loop and
-    reused by later jobs on the same loop. No index builds here — the migration does that.
-    """
-    global _db_loop
-    loop = asyncio.get_running_loop()
-    if mongodb.is_connected() and _db_loop is loop:
-        return
-    if mongodb.is_connected():
-        await mongodb.disconnect_db()  # bound to an old loop
-    await mongodb.connect_db(ensure_indexes=False)
-    _db_loop = loop
 
 
 def prewarm(proc: JobProcess) -> None:

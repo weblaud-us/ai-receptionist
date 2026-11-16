@@ -39,6 +39,12 @@ class CallState:
     provider_errors: dict[str, int] = field(default_factory=dict)
     fallbacks: dict[str, int] = field(default_factory=dict)      # switches to a fallback provider
     transfer: Optional[str] = None            # "ok" | "failed" once transfer_to_human was tried
+    # Outbound sales calls (Phase 4): which agent, and what the call belongs to
+    agent_name: str = ""                      # empty → settings.LIVEKIT_AGENT_NAME
+    campaign_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    summary_prompt: Optional[str] = None      # replaces the receptionist's summary instructions
 
     @property
     def tenant_id(self) -> str:

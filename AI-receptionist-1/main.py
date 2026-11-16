@@ -60,6 +60,8 @@ _ROUTERS = [
     ("routers.platform", "platform_router"),  # Phase 2: platform super-admin
     ("routers.integrations", "integrations_router"),  # Phase 2: OAuth callbacks (Google Calendar)
     ("routers.telephony", "telephony_router"),        # Phase 3: Twilio disaster-recovery TwiML
+    ("routers.sales", "sales_router"),                # Phase 4: outbound dialer (platform admin)
+    ("routers.sales", "public_sales_router"),         # Phase 4: "get a call from our AI" consent form
 ]
 
 
@@ -74,6 +76,7 @@ async def lifespan(app: FastAPI):
     reminder_service = get_booking_reminder_service()
     from services.tenant_jobs import get_tenant_jobs
     tenant_jobs = get_tenant_jobs()
+    from core.outbound.dialer import dialer_loop
     if settings.redis_enabled:
         # Phase 3: reminders, digests and calendar sync run in the jobs worker (`python -m jobs`),
         # once, however many API replicas there are.
@@ -86,6 +89,7 @@ async def lifespan(app: FastAPI):
     else:
         reminder_service.start()
         tenant_jobs.start()      # appointment reminders, owner digests, calendar sync
+        dialer_loop.start()      # Phase 4: only when OUTBOUND_DIALER_ENABLED=true
 
     # Legacy phone path: pre-warm its TTS audio cache so the first caller hears the greeting.
     if settings.LEGACY_TWILIO_VOICE:
@@ -99,6 +103,7 @@ async def lifespan(app: FastAPI):
     logger.info("AI Receptionist is live on port %s", settings.PORT)
     yield
 
+    await dialer_loop.stop()
     await tenant_jobs.stop()
     await reminder_service.stop()
     from jobs.queue import close as close_job_queue

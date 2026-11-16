@@ -51,6 +51,8 @@ dependencies = [
     "arq==0.28.0",                     # Redis job queue: reminders, digests, calendar sync, WhatsApp replies
     "prometheus-client==0.26.0",       # /metrics on the API (the worker has its own: LIVEKIT_PROMETHEUS_PORT)
     "livekit-plugins-anthropic==1.8.6",  # fallback LLM when OpenAI is down (must match livekit-agents)
+    # Phase 4: outbound dialer
+    "phonenumbers==9.0.43",            # E.164 normalisation, number → timezone / region for the compliance gate
 ]
 
 [dependency-groups]

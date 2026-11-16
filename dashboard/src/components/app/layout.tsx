@@ -20,6 +20,7 @@ import {
   Moon,
   Phone,
   PhoneCall,
+  PhoneOutgoing,
   Scissors,
   Settings,
   ShieldCheck,
@@ -88,7 +89,7 @@ function navFor(ctx: TenantContext, platformAdmin: boolean): { title?: string; i
       items: [
         { to: '/settings', label: 'Settings', icon: Settings },
         { to: '/team', label: 'Team', icon: Users },
-        ...(platformAdmin ? [{ to: '/platform', label: 'Platform', icon: ShieldCheck }] : []),
+        ...(platformAdmin ? [{ to: '/platform', label: 'Platform', icon: ShieldCheck }, { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing }] : []),
       ],
     },
   ]
@@ -101,7 +102,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const liveCount = live.data?.total ?? 0
   const groups = ctx
     ? navFor(ctx, !!user?.is_platform_admin)
-    : [{ items: [{ to: '/platform', label: 'Platform', icon: ShieldCheck } as NavItem] }]
+    : [{ items: [{ to: '/platform', label: 'Platform', icon: ShieldCheck }, { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing }] as NavItem[] }]
   return (
     <nav className="flex flex-col gap-4 px-3">
       {groups.map((g, gi) => (
@@ -199,7 +200,7 @@ export function AppLayout() {
   const [menu, setMenu] = useState(false)
 
   // A platform admin with no business picked lands on the platform page.
-  if (needsTenant && location.pathname !== '/platform') return <Navigate to="/platform" replace />
+  if (needsTenant && !['/platform', '/dialer'].includes(location.pathname)) return <Navigate to="/platform" replace />
 
   const role = ctx ? (ctx.platform_admin ? 'Platform admin' : ROLE_LABEL[ctx.role]) : user?.is_platform_admin ? 'Platform admin' : ''
 

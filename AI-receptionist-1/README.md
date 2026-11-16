@@ -119,7 +119,8 @@ service run everything.
 CI (`.github/workflows/ci.yml` at the repo root) runs all three plus the dashboard build on
 every PR (plus dependency audit, secret scan and image builds). Releases are git tags: `v*-rc.*` deploys to
 staging, `v*` to staging then production ([deploy/README.md](../deploy/README.md)). Phase 3 details and
-acceptance checks: [docs/PHASE_3_TESTING.md](../docs/PHASE_3_TESTING.md); incidents: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
+acceptance checks: [docs/PHASE_3_TESTING.md](../docs/PHASE_3_TESTING.md); the outbound sales dialer (Phase 4,
+off by default): [docs/PHASE_4_TESTING.md](../docs/PHASE_4_TESTING.md); incidents: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
 Whole stack locally: `make dev` at the repo root.
 
 ## Health
@@ -133,7 +134,8 @@ Whole stack locally: `make dev` at the repo root.
 ```
 main.py                 FastAPI app, middleware, health
 config.py               every setting + production guard (documented in .env.example)
-agent/                  LiveKit voice agent (phone + browser): worker, session, prompt, telemetry
+agent/                  LiveKit voice agent (phone + browser): worker, session, prompt, telemetry;
+                        sales.py + sales_worker.py = the outbound sales agent (Phase 4)
 core/                   framework-light shared logic
   tenancy/              TenantConfig + resolver (number / WhatsApp id / id → tenant, cached)
   repositories/         tenant-scoped data access (TenantRepo, Repos, scoped_db)
@@ -148,16 +150,18 @@ core/                   framework-light shared logic
   redis.py, ratelimit.py, dedupe.py, concurrency.py   shared state (Phase 3), memory fallback without Redis
   metrics.py            Prometheus /metrics: HTTP + call outcomes, latency, provider health
   phone.py, timeutils.py, signed_links.py
+  outbound/             Phase 4 dialer: compliance gate, rules, DNC/consent, CSV import, dialer engine, sales persona + tools, funnel
 ai/                     WhatsApp (and legacy phone) agent loop and prompts
 voice/                  legacy Twilio media-stream path, STT/TTS clients
 whatsapp/               Meta webhook + sending
 routers/                auth, tenant (/t), platform admin, hotel + admin APIs, LiveKit, OAuth callbacks,
-                        telephony (Twilio disaster-recovery TwiML)
+                        telephony (Twilio disaster-recovery TwiML), sales (/platform/sales + /public/demo-call)
 jobs/                   arq job worker (python -m jobs): tenant jobs, hotel reminders, WhatsApp replies
 services/               hotel reminders, calendar links, tenant jobs (reminders, digest, calendar sync)
 database/               Mongo connection + indexes, hotel models, legacy profile helpers
 migrations/             data migrations + index creation (python -m migrations.<name>)
-scripts/                operator scripts (latency_report, synthetic_call = health check + load test)
+scripts/                operator scripts (latency_report, synthetic_call = health check + load test,
+                        import_dnc_registry = load do-not-call lists for the dialer)
 telephony/              LiveKit SIP trunk + dispatch rule templates, Twilio setup
 deploy/systemd/         legacy VPS unit files (containers replace them: ../deploy/)
 tests/                  pytest suite (tests/evals: real-LLM conversation evals)

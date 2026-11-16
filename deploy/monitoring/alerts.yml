@@ -118,3 +118,22 @@ groups:
         annotations:
           summary: "No voice worker is up: calls are not being answered"
           runbook: docs/RUNBOOK.md#calls-arent-being-answered
+
+      # ── Outbound sales dialer (Phase 4) ──────────────────────────────────────
+      - alert: OutboundOptOutsHigh
+        # People asking not to be called is the earliest sign a list or a script is wrong.
+        expr: sum(receptionist_outbound_attempts_last_hour{outcome="dnc"}) >= 5
+        for: 0m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value }} people asked not to be called in the last hour: pause the campaign and listen to the calls"
+          runbook: docs/RUNBOOK.md#outbound-dialer
+
+      - alert: OutboundCallsFailing
+        # Carrier rejections or a broken trunk; a sudden rise can also mean the numbers were blocked.
+        expr: sum(receptionist_outbound_attempts_last_hour{outcome="failed"}) > 10
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value }} sales calls failed to connect in the last hour"
+          runbook: docs/RUNBOOK.md#outbound-dialer

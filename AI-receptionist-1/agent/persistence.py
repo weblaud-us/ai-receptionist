@@ -47,7 +47,10 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "dialed_number": state.dialed_number,
         "sip_call_id": state.sip_call_id,
         "sip_trunk_id": state.sip_trunk_id,
-        "agent_name": settings.LIVEKIT_AGENT_NAME,
+        "agent_name": state.agent_name or settings.LIVEKIT_AGENT_NAME,
+        "campaign_id": state.campaign_id,
+        "lead_id": state.lead_id,
+        "attempt_id": state.attempt_id,
         "business_id": state.profile.business_id,
         "tenant_id": state.profile.business_id,
         "vertical": state.profile.business_type,
@@ -77,6 +80,7 @@ class CallRecorder:
         self.state = state
         self._task: Optional[asyncio.Task[None]] = None
         self._dirty = True
+        self.summary: Optional[str] = None        # set by finish(); the sales agent stores it on the attempt
 
     def attach(self, session: Any) -> None:
         @session.on("conversation_item_added")
@@ -136,7 +140,9 @@ class CallRecorder:
         summary: Optional[str] = None
         try:
             summary = await summarise_call(self.state.transcript, outcome=self.state.outcome,
-                                           tools_used=self.state.tools_used, duration_s=duration)
+                                           tools_used=self.state.tools_used, duration_s=duration,
+                                           prompt=self.state.summary_prompt)
+            self.summary = summary
             if summary:
                 await Repos(get_db(), tenant_id).calls.update_one({"call_id": self.state.call_id},
                                                                    {"$set": {"summary": summary}})

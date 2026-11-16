@@ -5,7 +5,8 @@
 #   Caddy (TLS) ─┬─ api-a, api-b        2 API replicas; state is in Redis
 #                └─ dashboard           static build
 #   worker-a, worker-b                  LiveKit voice workers (outbound connections only)
-#   jobs                                reminders, digests, calendar sync, WhatsApp replies
+#   jobs                                reminders, digests, calendar sync, WhatsApp replies, the dialer tick
+#   sales-worker (profile "dialer")     outbound sales calls, only when the dialer is switched on
 #   redis                               shared state + job queue
 #   MongoDB is Atlas (not here); media and SIP are LiveKit Cloud.
 #
@@ -53,6 +54,14 @@ services:
   worker-d:
     <<: *worker
     profiles: ["workers-4"]
+
+  # Outbound sales dialer (Phase 4): its own worker, so the dialer can never take capacity from
+  # customers' inbound calls. Started by deploy.sh only when OUTBOUND_DIALER_ENABLED=true.
+  sales-worker:
+    <<: *worker
+    command: ["python", "-m", "agent.sales_worker", "start"]
+    stop_grace_period: 12m          # longer than SALES_MAX_CALL_MINUTES (10) + 1 min
+    profiles: ["dialer"]
 
   jobs:
     <<: *backend

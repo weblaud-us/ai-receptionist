@@ -67,7 +67,8 @@ def transcript_text(transcript: list[dict[str, Any]], limit: int = MAX_TRANSCRIP
     return joined[-limit:] if len(joined) > limit else joined
 
 
-async def llm_summary(transcript: list[dict[str, Any]], *, model: Optional[str] = None) -> Optional[str]:
+async def llm_summary(transcript: list[dict[str, Any]], *, model: Optional[str] = None,
+                      prompt: Optional[str] = None) -> Optional[str]:
     if not settings.OPENAI_API_KEY:
         return None
     from openai import AsyncOpenAI
@@ -75,21 +76,23 @@ async def llm_summary(transcript: list[dict[str, Any]], *, model: Optional[str] 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, max_retries=0, timeout=SUMMARY_TIMEOUT_S)
     completion = await client.chat.completions.create(
         model=model or settings.OPENAI_MODEL, temperature=0.2, max_tokens=90,
-        messages=[{"role": "system", "content": _PROMPT},
+        messages=[{"role": "system", "content": prompt or _PROMPT},
                   {"role": "user", "content": transcript_text(transcript)}])
     text = (completion.choices[0].message.content or "").strip()
     return " ".join(text.split())[:400] or None
 
 
 async def summarise_call(transcript: list[dict[str, Any]], *, outcome: Optional[str], tools_used: list[str],
-                         duration_s: Optional[float], use_llm: bool = True) -> Optional[str]:
+                         duration_s: Optional[float], use_llm: bool = True,
+                         prompt: Optional[str] = None) -> Optional[str]:
     """None for calls with no real conversation; otherwise always a sentence or two."""
     spoken = [i for i in transcript if i.get("text")]
     if len(spoken) < MIN_ITEMS:
         return None
     if use_llm and settings.OPENAI_API_KEY:
         try:
-            text = await asyncio.wait_for(llm_summary(spoken), SUMMARY_TIMEOUT_S)
+            call = llm_summary(spoken, prompt=prompt) if prompt else llm_summary(spoken)
+            text = await asyncio.wait_for(call, SUMMARY_TIMEOUT_S)
             text = " ".join((text or "").split())[:400]
             if text:
                 return text

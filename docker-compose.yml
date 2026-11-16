@@ -41,7 +41,14 @@ services:
     <<: *backend
     command: python -m agent.worker dev
 
-  # Reminders, digests, calendar sync, WhatsApp replies. Failed jobs: python -m jobs dead
+  # Outbound sales dialer (Phase 4). Off unless you ask for it:  docker compose --profile dialer up
+  # Nothing is dialled without OUTBOUND_DIALER_ENABLED=true in .env and a started campaign.
+  sales-worker:
+    <<: *backend
+    command: python -m agent.sales_worker dev
+    profiles: ["dialer"]
+
+  # Reminders, digests, calendar sync, WhatsApp replies, the dialer tick. Failed jobs: python -m jobs dead
   jobs:
     <<: *backend
     command: python -m jobs

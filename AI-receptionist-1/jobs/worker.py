@@ -10,6 +10,7 @@ The jobs worker (arq): everything that must not run inside an API request or a p
 |                         |                                   | digests, transcript retention (services.tenant_jobs) |
 | booking_reminders_tick  | every BOOKING_REMINDER_POLL_MINUTES | hotel day-before WhatsApp reminders             |
 | whatsapp_inbound        | queued by the Meta webhook        | read the message, run the agent, send the reply  |
+| sales_dialer_tick       | every 20 s                        | outbound sales dialer: gate leads, start calls   |
 
 Rules every job follows:
 - Idempotent. Cron jobs are unique per tick across all workers (arq), and each reminder / digest
@@ -136,6 +137,18 @@ async def whatsapp_inbound(ctx: Dict[str, Any], payload: Dict[str, Any]) -> None
     await _handle_webhook_payload(payload)
 
 
+@job("sales_dialer_tick")
+async def sales_dialer_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
+    # Not retried: the next tick is 20 s away, and a retry could dial the same slot twice.
+    from core.outbound import dialer
+    from database.mongodb import get_db
+
+    stats = await dialer.tick(get_db())
+    if stats.get("dialed") or stats.get("reaped") or stats.get("completed"):
+        logger.info("Sales dialer: %s", stats)
+    return stats
+
+
 # ── Worker ───────────────────────────────────────────────────────────────────
 
 async def startup(ctx: Dict[str, Any]) -> None:
@@ -170,6 +183,8 @@ class WorkerSettings:
              run_at_startup=True, timeout=280),
         cron(booking_reminders_tick, name="booking_reminders_tick",
              minute=every_minutes(settings.BOOKING_REMINDER_POLL_MINUTES), run_at_startup=True, timeout=600),
+        # Always scheduled: with OUTBOUND_DIALER_ENABLED=false the tick only tidies up and returns.
+        cron(sales_dialer_tick, name="sales_dialer_tick", second={0, 20, 40}, timeout=18, keep_result=0),
     ]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL.strip() or "redis://localhost:6379/0")
     on_startup = startup

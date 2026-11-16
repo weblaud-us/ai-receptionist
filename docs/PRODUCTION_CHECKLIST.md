@@ -257,3 +257,42 @@ Details and acceptance checks: [PHASE_3_TESTING.md](PHASE_3_TESTING.md). Host se
 - [ ] Deliberately break something → synthetic call / alerts reach your phone.
 - [ ] Atlas restore test done and timed (write the time in RUNBOOK.md); repeat monthly.
 - [ ] Incident-response contacts filled in at the end of RUNBOOK.md.
+
+## Phase 4 — outbound sales dialer
+
+Details: [PHASE_4_TESTING.md](PHASE_4_TESTING.md). Keep `OUTBOUND_DIALER_ENABLED=false` until
+every box in **Legal** and **Numbers** is ticked.
+
+**Legal** ⚖
+- [ ] A telemarketing lawyer has reviewed, for each market you will call: the call types and
+      countries (`core/outbound/rules.py`, `SALES_*_COUNTRIES`), the state calling windows and
+      `SALES_BLOCKED_US_STATES`, the openers and the sales prompt (`core/outbound/persona.py`), the
+      consent wording on the form (`routers/sales.py` `CONSENT_TEXT`) and the lead sources.
+- [ ] Registered as a seller with the FTC National Do Not Call Registry (SAN); area codes downloaded
+      and loaded (`python -m scripts.import_dnc_registry`); a monthly reminder to refresh them.
+- [ ] `SALES_EMAIL_FOOTER` has your postal address and how to opt out (CAN-SPAM).
+- [ ] Recording: if `agent.recording.enabled` is on for the sales tenant, the opener announces it
+      (all-party-consent states).
+
+**Numbers and reputation**
+- [ ] A separate Twilio **subaccount** for sales, its own Elastic SIP trunk and LiveKit outbound
+      trunk → `SALES_SIP_OUTBOUND_TRUNK_ID` (production refuses to start the dialer without it).
+- [ ] A small, stable pool of local-area-code numbers; SHAKEN/STIR **A-attestation** via Trust Hub;
+      **CNAM** set to your brand; numbers registered with the carrier analytics engines
+      (Free Caller Registry). ⚠ VERIFY current registration paths.
+- [ ] Inbound calls to the sales numbers ring a person (or your demo line) — never unanswered.
+- [ ] `SALES_MAX_CALLS_PER_NUMBER_PER_DAY` starts at 20–30; campaigns start at 1–2 calls at once.
+
+**Setup**
+- [ ] Your business provisioned as a tenant (`SALES_TENANT_ID`): hours, timezone, transfer number,
+      Google Calendar connected, a 15-minute `Demo` service.
+- [ ] Twilio Lookup credentials set; `SALES_DEMO_LINE`, `SALES_FOUNDER_NAME`, `SALES_DEMO_MEETING_URL`.
+- [ ] `RUN_EVALS=1 pytest tests/evals/test_sales_evals.py` passes on the production model.
+- [ ] Alerts `OutboundOptOutsHigh` / `OutboundCallsFailing` routed to your phone.
+
+**Acceptance**
+- [ ] Gate and opt-out tests green in CI (they run on every PR).
+- [ ] One real call to your own landline: listen in, take over, opt out → number on the DNC list.
+- [ ] AMD ≥ 90% correct on 100 hand-labelled calls (Results → "Who really answered?").
+- [ ] 50 real calls: answer rate, conversation rate and demos recorded on the Results page.
+- [ ] Caller ID shows your name; no spam label after week 1.

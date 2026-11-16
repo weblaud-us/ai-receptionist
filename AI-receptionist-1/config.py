@@ -179,6 +179,40 @@ class Settings(BaseSettings):
     RECORDING_S3_SECRET:     str = Field(default="")
     RECORDING_RETENTION_DAYS: int = Field(default=30)
 
+    # ── Outbound AI sales dialer (Phase 4) ────────────────
+    # ⚖ Nothing is dialled until OUTBOUND_DIALER_ENABLED=true AND a campaign is started from the
+    # dashboard. Every lead passes the compliance gate (core/outbound/gate.py) before each dial.
+    OUTBOUND_DIALER_ENABLED:  bool = Field(default=False)          # master switch; false = the dialer never dials
+    SALES_AGENT_NAME:         str  = Field(default="sales-caller")  # the sales worker registers under this name
+    SALES_TENANT_ID:          str  = Field(default="")   # your own business as a tenant: its voice, hours, calendar, "Demo" service
+    # A trunk used only for sales calls, on its own Twilio subaccount, so a complaint against the
+    # dialer can never take customers' inbound numbers down. Outside production it may be empty
+    # (LIVEKIT_SIP_OUTBOUND_TRUNK_ID is used); production refuses to dial on the shared trunk.
+    SALES_SIP_OUTBOUND_TRUNK_ID: str = Field(default="")
+    SALES_COMPANY_NAME:       str  = Field(default="WEBLAUD")
+    SALES_PERSONA_NAME:       str  = Field(default="Max")           # the name the sales assistant gives
+    SALES_FOUNDER_NAME:       str  = Field(default="")              # who runs the demo
+    SALES_DEMO_SERVICE:       str  = Field(default="Demo")          # service name on the sales tenant that demos are booked as
+    SALES_DEMO_MEETING_URL:   str  = Field(default="")              # video link put in the demo invite
+    SALES_DEMO_LINE:          str  = Field(default="")              # public demo number; also the callback number left on voicemail
+    SALES_EMAIL_FOOTER:       str  = Field(default="")              # postal address + opt-out line required on commercial e-mail
+    SALES_MAX_CALL_MINUTES:   int  = Field(default=10)              # hard cap on one sales call
+    SALES_RING_TIMEOUT_S:     int  = Field(default=25)
+    SALES_MAX_CALLS_PER_NUMBER_PER_DAY: int = Field(default=30)     # volume discipline per caller ID (Task 4.1)
+    SALES_COST_PER_MINUTE_USD: float = Field(default=0.10)          # estimate used for cost per demo
+    # Compliance gate inputs
+    TWILIO_LOOKUP_ACCOUNT_SID: str = Field(default="")   # line-type lookups; empty = TWILIO_ACCOUNT_SID
+    TWILIO_LOOKUP_AUTH_TOKEN:  str = Field(default="")
+    SALES_LINE_TYPE_MAX_AGE_DAYS: int = Field(default=15)   # numbers get ported to mobile; re-check after this
+    SALES_DNC_REGISTRY_MAX_AGE_DAYS: int = Field(default=31)  # a national / state list older than this blocks dialling
+    SALES_BLOCKED_US_STATES:  str  = Field(default="FL,OK,MD,WA")   # no AI cold calls here until counsel clears each one
+    SALES_AI_CONSENTED_COUNTRIES:   str = Field(default="US")       # where a consent record is enough for an AI call
+    SALES_HUMAN_ASSISTED_COUNTRIES: str = Field(default="US,CA,GB") # where live (human) B2B calls are allowed after list screening
+    # "Get a call from our AI" form (POST /public/demo-call): the running ai_consented campaign new sign-ups join
+    SALES_CONSENT_CAMPAIGN_ID: str = Field(default="")
+    PUBLIC_DEMO_CALL_PER_IP_HOUR: int = Field(default=3)
+    PUBLIC_DEMO_CALL_MAX_PER_DAY: int = Field(default=200)
+
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)
     CONVERSATION_MEMORY_MAX_MESSAGES: int = Field(default=20)
@@ -242,6 +276,34 @@ class Settings(BaseSettings):
     @property
     def softphone_numbers(self) -> list[str]:
         return [n.strip() for n in self.SOFTPHONE_TEST_NUMBERS.split(",") if n.strip()]
+
+    @staticmethod
+    def _codes(raw: str) -> frozenset[str]:
+        return frozenset(c.strip().upper() for c in raw.split(",") if c.strip())
+
+    @property
+    def sales_blocked_us_states(self) -> frozenset[str]:
+        return self._codes(self.SALES_BLOCKED_US_STATES)
+
+    @property
+    def sales_ai_consented_countries(self) -> frozenset[str]:
+        return self._codes(self.SALES_AI_CONSENTED_COUNTRIES)
+
+    @property
+    def sales_human_assisted_countries(self) -> frozenset[str]:
+        return self._codes(self.SALES_HUMAN_ASSISTED_COUNTRIES)
+
+    @property
+    def sales_trunk_id(self) -> str:
+        """The trunk sales calls leave on. Production never falls back to the customers' trunk."""
+        if self.SALES_SIP_OUTBOUND_TRUNK_ID or self.is_production:
+            return self.SALES_SIP_OUTBOUND_TRUNK_ID
+        return self.LIVEKIT_SIP_OUTBOUND_TRUNK_ID
+
+    @property
+    def twilio_lookup_credentials(self) -> tuple[str, str]:
+        return (self.TWILIO_LOOKUP_ACCOUNT_SID or self.TWILIO_ACCOUNT_SID,
+                self.TWILIO_LOOKUP_AUTH_TOKEN or self.TWILIO_AUTH_TOKEN)
 
     @property
     def tts_fallbacks(self) -> list[str]:
@@ -310,6 +372,15 @@ class Settings(BaseSettings):
             problems.append("REDIS_URL is required (shared rate limits, call limits and the job queue)")
         if self.METRICS_TOKEN and len(self.METRICS_TOKEN) < 24:
             problems.append("METRICS_TOKEN must be empty or 24+ random chars")
+        if self.OUTBOUND_DIALER_ENABLED:
+            if not self.SALES_SIP_OUTBOUND_TRUNK_ID:
+                problems.append("OUTBOUND_DIALER_ENABLED needs SALES_SIP_OUTBOUND_TRUNK_ID (a trunk used only for sales calls)")
+            elif self.SALES_SIP_OUTBOUND_TRUNK_ID == self.LIVEKIT_SIP_OUTBOUND_TRUNK_ID:
+                problems.append("SALES_SIP_OUTBOUND_TRUNK_ID must not be the customers' trunk (LIVEKIT_SIP_OUTBOUND_TRUNK_ID)")
+            if not self.SALES_TENANT_ID:
+                problems.append("OUTBOUND_DIALER_ENABLED needs SALES_TENANT_ID")
+            if not all(self.twilio_lookup_credentials):
+                problems.append("OUTBOUND_DIALER_ENABLED needs Twilio credentials for line-type lookups")
         if problems:
             raise ValueError("Unsafe production config: " + "; ".join(problems))
         return self
