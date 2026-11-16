@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# =============================================================
+# Roll one release onto this host without dropping a call (Roadmap Task 3.6).
+#
+#   deploy/deploy.sh <tag> <staging|production>
+#
+# Called by .github/workflows/deploy.yml over SSH. Safe to run by hand; the same command with the
+# previous tag is the rollback. Needs: Docker with the compose plugin, `docker login ghcr.io`
+# done once, /etc/receptionist/<environment>.env (app settings) and
+# /etc/receptionist/<environment>.deploy (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN). See deploy/README.md.
+#
+# Order matters:
+#   1. indexes          idempotent migration, never at boot or inside a call
+#   2. jobs             cron jobs are unique per tick, so old and new can overlap
+#   3. api-a, api-b     one at a time; Caddy routes around the one restarting
+#   4. worker-a, -b     one at a time; each drains its live calls (up to LIVEKIT_DRAIN_TIMEOUT)
+#                       while the other answers new calls
+# =============================================================
+set -euo pipefail
+
+TAG="${1:?usage: deploy.sh <tag> <staging|production>}"
+DEPLOY_ENV="${2:?usage: deploy.sh <tag> <staging|production>}"
+cd "$(dirname "$0")"
+
+ENV_FILE="/etc/receptionist/${DEPLOY_ENV}.env"
+DEPLOY_FILE="/etc/receptionist/${DEPLOY_ENV}.deploy"
+[ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE" >&2; exit 1; }
+[ -f "$DEPLOY_FILE" ] || { echo "Missing $DEPLOY_FILE (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN)" >&2; exit 1; }
+set -a
+# shellcheck disable=SC1090
+. "$DEPLOY_FILE"
+set +a
+export TAG DEPLOY_ENV ENV_FILE
+
+dc() { docker compose -p "receptionist-${DEPLOY_ENV}" -f docker-compose.prod.yml "$@"; }
+
+# The legacy Twilio Media Streams path keeps each call's state in the API process that answered
+# /voice/incoming, so it needs exactly one API replica. It is on unless the env file says false.
+legacy="$(grep -E '^[[:space:]]*LEGACY_TWILIO_VOICE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d "\"' " | tr '[:upper:]' '[:lower:]')"
+if [ "$legacy" = "false" ] || [ "$legacy" = "0" ]; then
+  API_REPLICAS="api-a api-b"
+else
+  API_REPLICAS="api-a"
+  echo "!! LEGACY_TWILIO_VOICE is on: running ONE API replica (a restart briefly interrupts webhooks)."
+  echo "!! Finish the SIP cutover and set LEGACY_TWILIO_VOICE=false to get two."
+fi
+
+# Voice worker containers: 2 (default) to 4, from WORKERS in the .deploy file.
+WORKERS="${WORKERS:-2}"
+case "$WORKERS" in
+  2) WORKER_SERVICES="worker-a worker-b" ;;
+  3) WORKER_SERVICES="worker-a worker-b worker-c"; export COMPOSE_PROFILES="workers-3" ;;
+  4) WORKER_SERVICES="worker-a worker-b worker-c worker-d"; export COMPOSE_PROFILES="workers-4" ;;
+  *) echo "WORKERS must be 2, 3 or 4 (got $WORKERS)" >&2; exit 1 ;;
+esac
+
+echo "==> [1/6] Pulling images for ${TAG}"
+dc pull --quiet
+
+echo "==> [2/6] Database migrations (idempotent)"
+dc up -d --wait redis
+dc run --rm --no-deps jobs python -m migrations.m0002_indexes
+dc run --rm --no-deps jobs python -m migrations.m0004_encrypt_guest_ids --apply
+
+echo "==> [3/6] Jobs worker"
+dc up -d --wait --no-deps jobs
+
+echo "==> [4/6] API replicas, one at a time"
+for svc in $API_REPLICAS; do
+  dc up -d --wait --no-deps "$svc"
+done
+if [ "$API_REPLICAS" = "api-a" ]; then
+  dc rm -sf api-b >/dev/null 2>&1 || true      # Caddy's health check skips the missing upstream
+fi
+
+echo "==> [5/6] Voice workers, one at a time (each waits for its live calls to finish)"
+for svc in $WORKER_SERVICES; do
+  dc up -d --wait --no-deps "$svc"
+done
+# Scaled down? Stop the extra workers (each drains its calls first).
+for svc in worker-c worker-d; do
+  case " $WORKER_SERVICES " in *" $svc "*) ;; *) COMPOSE_PROFILES="workers-4" dc rm -sf "$svc" >/dev/null 2>&1 || true ;; esac
+done
+
+echo "==> [6/6] Dashboard and proxy"
+dc up -d --wait --no-deps dashboard
+dc up -d --no-deps caddy
+
+for _ in $(seq 1 30); do
+  if curl -fsS "https://${API_DOMAIN}/readyz" >/dev/null; then
+    echo "Deploy OK: ${TAG} on ${DEPLOY_ENV}"
+    exit 0
+  fi
+  sleep 2
+done
+echo "https://${API_DOMAIN}/readyz did not become ready. Recent API logs:" >&2
+dc logs --tail 50 api-a api-b >&2 || true
+exit 1

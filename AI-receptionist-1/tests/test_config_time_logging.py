@@ -15,6 +15,7 @@ SAFE_PROD = dict(
     APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
     VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
     META_APP_SECRET="meta-secret", LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True,
+    REDIS_URL="redis://redis:6379/0",
 )
 
 
@@ -34,6 +35,8 @@ def test_safe_production_config_boots():
     {"SECRET_KEY": "short"},
     {"CORS_ORIGINS": "*"},
     {"CORS_ORIGINS": ""},
+    {"REDIS_URL": ""},
+    {"METRICS_TOKEN": "short"},
     {"VERIFY_TWILIO_SIGNATURE": False},
     {"META_APP_SECRET": ""},
     {"WEBHOOK_BASE_URL": "http://api.example.com"},

@@ -177,7 +177,7 @@ async def overview(tp: TenantPrincipal = Depends(_staff)):
 
     recent = await sdb.calls.find({}, {"transcript": 0, "turns": 0}).sort("started_at", -1).limit(6).to_list(6)
     answered = sum(outcomes.values())
-    handled = answered - outcomes.get("hangup", 0) - outcomes.get("spam", 0) - outcomes.get("unassigned", 0)
+    handled = answered - outcomes.get("hangup", 0) - outcomes.get("spam", 0) - outcomes.get("unassigned", 0) - outcomes.get("busy", 0)
     return {
         "today": today.isoformat(),
         "calls_today": calls_today,

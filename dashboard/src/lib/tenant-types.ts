@@ -314,6 +314,7 @@ export interface PlatformTenant {
   calls_30d: number
   minutes_30d: number
   included_minutes: number | null
+  max_concurrent_calls: number
   numbers: string[]
   created_at: string
 }

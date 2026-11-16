@@ -1,35 +1,100 @@
 name: deploy
 
-# Manual-only until production exists (see docs/PRODUCTION_CHECKLIST.md, section 5).
-# To deploy automatically after CI is green on main, restore this trigger:
-#   workflow_run:
-#     workflows: [ci]
-#     types: [completed]
-#     branches: [main]
+# Releases are git tags (Roadmap Phase 3 acceptance: "deployed by CI from git tags").
+#
+#   git tag v1.4.0-rc.1 && git push origin v1.4.0-rc.1    → staging only
+#   git tag v1.4.0      && git push origin v1.4.0         → staging, then production
+#
+# Rollback = run this workflow by hand (Actions → deploy → Run workflow) with the previous tag.
+# It rebuilds that tag (dependencies are locked, so the result is the same) and rolls it out.
+#
+# One-time setup (docs/PRODUCTION_CHECKLIST.md §5): GitHub environments `staging` and `production`
+# with secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PORT, APP_DIR and variables
+# API_URL (https://api.example.com), optional SENTRY_DSN_DASHBOARD. Add yourself as a required
+# reviewer on `production` to approve each production deploy.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to deploy (e.g. v1.3.2)"
+        required: true
+      environment:
+        description: "Where to deploy it"
+        type: choice
+        options: [staging, production]
+        default: staging
 
 concurrency:
-  group: deploy-production
+  group: deploy
   cancel-in-progress: false   # never interrupt a deploy half-way
 
+permissions:
+  contents: read
+  packages: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/receptionist
+
 jobs:
-  deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+  checks:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  # Backend images are the same for every environment (settings come from the environment at run time).
+  build:
+    needs: checks
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
     runs-on: ubuntu-latest
-    environment: production
+    outputs:
+      prefix: ${{ steps.names.outputs.prefix }}
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - uses: actions/checkout@v4
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd "${{ secrets.APP_DIR }}"
-            git fetch --quiet origin main
-            git checkout --quiet "${{ github.event.workflow_run.head_sha || github.sha }}"
-            ./AI-receptionist-1/deploy.sh
+          ref: ${{ env.TAG }}
+      - id: names
+        run: echo "prefix=$(echo "$IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push api, jobs, worker
+        env:
+          PREFIX: ${{ steps.names.outputs.prefix }}
+        run: |
+          sha="$(git rev-parse --short HEAD)"
+          for target in api jobs worker; do
+            docker buildx build --push --target "$target" --build-arg GIT_SHA="$sha" \
+              --cache-from "type=registry,ref=$PREFIX-cache:backend" \
+              --cache-to "type=registry,ref=$PREFIX-cache:backend,mode=max" \
+              -t "$PREFIX-$target:$TAG" AI-receptionist-1
+          done
+
+  staging:
+    needs: build
+    if: always() && needs.build.result == 'success' && (github.event_name == 'push' || inputs.environment == 'staging')
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: staging
+      tag: ${{ inputs.tag || github.ref_name }}
+      image_prefix: ${{ needs.build.outputs.prefix }}
+    secrets: inherit
+
+  # Production: only final tags (no "-rc" suffix), and only after staging took the same release.
+  production:
+    needs: [build, staging]
+    if: >-
+      always() && needs.build.result == 'success' &&
+      ((github.event_name == 'push' && needs.staging.result == 'success' && !contains(github.ref_name, '-')) ||
+       (github.event_name == 'workflow_dispatch' && inputs.environment == 'production'))
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: production
+      tag: ${{ inputs.tag || github.ref_name }}
+      image_prefix: ${{ needs.build.outputs.prefix }}
+    secrets: inherit

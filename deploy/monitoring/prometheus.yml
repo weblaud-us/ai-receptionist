@@ -1,0 +1,25 @@
+# Scrape config (Roadmap Task 3.7). For Grafana Cloud, run Grafana Alloy / the Prometheus agent
+# on the server with this config and a remote_write block; for a self-hosted Prometheus use as is.
+global:
+  scrape_interval: 30s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  # The API: HTTP metrics + call/provider metrics computed from Mongo. Scrape ONE replica's
+  # address through the proxy (the call metrics are global, not per replica).
+  - job_name: receptionist-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/receptionist/metrics_token    # same value as METRICS_TOKEN
+    static_configs:
+      - targets: ["api.example.com"]
+
+  # Voice workers' own process metrics (LiveKit). Set LIVEKIT_PROMETHEUS_PORT=9100 in the env file
+  # and run the scraper on the same Docker network as the workers.
+  - job_name: receptionist-worker
+    static_configs:
+      - targets: ["worker-a:9100", "worker-b:9100"]   # add worker-c / worker-d with WORKERS=3/4

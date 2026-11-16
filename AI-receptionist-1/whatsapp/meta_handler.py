@@ -13,9 +13,7 @@ import json
 import logging
 import os
 import tempfile
-import time
 import uuid
-from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
 
@@ -26,6 +24,7 @@ from fastapi.responses import PlainTextResponse, Response
 from ai.agent import get_whatsapp_agent
 from ai.prompts import GREETING_WHATSAPP, BOOKING_CONFIRMATION_WHATSAPP
 from config import settings
+from core import dedupe
 from core.integrations.meta_auth import verify_meta
 from core.signed_links import build_call_link
 from database.mongodb import get_db
@@ -39,27 +38,11 @@ from voice.stt_tts import get_stt, get_tts
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["WhatsApp Meta"])
 
-_recent_meta_message_ids: "OrderedDict[str, float]" = OrderedDict()
-_META_DEDUP_TTL_SECONDS = 10 * 60
-_META_DEDUP_MAX = 5000
-
-
-def _seen_meta_message_recently(message_id: Optional[str]) -> bool:
+async def _seen_meta_message_recently(message_id: Optional[str]) -> bool:
+    """Meta retries webhooks; each message id is handled once across all API replicas (24 h)."""
     if not message_id:
         return False
-    now = time.time()
-    cutoff = now - _META_DEDUP_TTL_SECONDS
-    while _recent_meta_message_ids:
-        _, ts = next(iter(_recent_meta_message_ids.items()))
-        if ts >= cutoff:
-            break
-        _recent_meta_message_ids.popitem(last=False)
-    if message_id in _recent_meta_message_ids:
-        return True
-    _recent_meta_message_ids[message_id] = now
-    if len(_recent_meta_message_ids) > _META_DEDUP_MAX:
-        _recent_meta_message_ids.popitem(last=False)
-    return False
+    return not await dedupe.first_time("wa", message_id)
 
 
 def _get_meta_base_url() -> str:
@@ -439,13 +422,18 @@ async def verify_webhook(request: Request):
 async def inbound_webhook(background: BackgroundTasks, body: bytes = Depends(verify_meta)):
     """
     Acknowledge immediately, process after the response. Meta retries webhooks that don't get
-    a fast 200, which used to cause duplicate replies. (Moves onto the Redis queue in Phase 3.)
+    a fast 200, which used to cause duplicate replies. With Redis the payload goes onto the job
+    queue (the jobs worker replies, so an API restart can't lose it); otherwise it is processed
+    in this process after the response.
     """
     try:
         payload = json.loads(body or b"{}")
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid json")
-    background.add_task(_handle_webhook_payload, payload)
+    from jobs.queue import enqueue
+
+    if not await enqueue("whatsapp_inbound", payload):
+        background.add_task(_handle_webhook_payload, payload)
     return Response(content="ok", media_type="text/plain")
 
 
@@ -474,7 +462,7 @@ async def _handle_webhook_payload(payload: dict) -> None:
                     if not msg_id:
                         logger.warning("Meta inbound message without id ignored")
                         continue
-                    if _seen_meta_message_recently(msg_id):
+                    if await _seen_meta_message_recently(msg_id):
                         continue
 
                     from_id = msg.get("from") or ""

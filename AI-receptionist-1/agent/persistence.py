@@ -60,6 +60,9 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "greeting_latency_s": state.greeting_latency_s,
         "tools_used": state.tools_used,
         "recording": state.recording,
+        "provider_errors": state.provider_errors,
+        "fallbacks": state.fallbacks,
+        "transfer": state.transfer,
         "updated_at": now,
     }
     if final:

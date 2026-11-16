@@ -44,14 +44,15 @@ export default function Platform() {
         ) : <ErrorBanner error={q.error} />
       )}
       <Card className="gap-0 py-0">
-        {q.isLoading ? <TableSkeleton rows={5} cols={6} /> : (q.data?.tenants.length ?? 0) === 0 ? (
+        {q.isLoading ? <TableSkeleton rows={5} cols={8} /> : (q.data?.tenants.length ?? 0) === 0 ? (
           <EmptyState title="No businesses yet" description="Provision the first one, or run migration m0003 to turn the existing hotel into tenant #1." />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Business</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead>
-                <TableHead>Numbers</TableHead><TableHead>Calls (30 d)</TableHead><TableHead>Minutes (30 d)</TableHead><TableHead />
+                <TableHead>Numbers</TableHead><TableHead>Calls (30 d)</TableHead><TableHead>Minutes (30 d)</TableHead>
+                <TableHead title="Calls at once before callers hear 'all lines are busy'">Max calls at once</TableHead><TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -73,6 +74,7 @@ export default function Platform() {
                   </TableCell>
                   <TableCell className="tabular-nums">{t.calls_30d}</TableCell>
                   <TableCell className="tabular-nums">{t.minutes_30d}{t.included_minutes ? ` / ${t.included_minutes}` : ''}</TableCell>
+                  <TableCell><ConcurrencyInput tenant={t} /></TableCell>
                   <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => void open(t)}>Open <ArrowRight /></Button></TableCell>
                 </TableRow>
               ))}
@@ -83,6 +85,31 @@ export default function Platform() {
       {creating && <ProvisionDialog onClose={() => setCreating(false)} />}
       {numberFor && <AssignNumberDialog tenant={numberFor} onClose={() => setNumberFor(null)} />}
     </>
+  )
+}
+
+/** Per-business concurrent-call limit (Roadmap Task 3.6). Saved on blur / Enter. */
+function ConcurrencyInput({ tenant }: { tenant: PlatformTenant }) {
+  const m = usePlatformMutations()
+  const [value, setValue] = useState(String(tenant.max_concurrent_calls))
+  const save = () => {
+    const n = Number(value)
+    if (!Number.isInteger(n) || n < 1 || n > 500) {
+      toast.error('Enter a whole number from 1 to 500')
+      setValue(String(tenant.max_concurrent_calls))
+      return
+    }
+    if (n === tenant.max_concurrent_calls) return
+    m.update.mutate({ id: tenant.id, limits: { max_concurrent_calls: n } }, {
+      onSuccess: () => toast.success(`${tenant.name}: up to ${n} calls at once`),
+      onError: () => setValue(String(tenant.max_concurrent_calls)),
+    })
+  }
+  return (
+    <Input type="number" min={1} max={500} inputMode="numeric" className="h-8 w-20 tabular-nums"
+      aria-label={`Max concurrent calls for ${tenant.name}`} value={value}
+      onChange={(e) => setValue(e.target.value)} onBlur={save}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
   )
 }
 

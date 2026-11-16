@@ -41,3 +41,22 @@ def build_call_link(base_url: str, room: str, tenant_id: Optional[str] = None) -
     exp, sig = sign_call_room(room, tenant_id=tenant_id)
     link = f"{base_url.rstrip('/')}/call/{room}?exp={exp}&sig={sig}"
     return link + (f"&t={tenant_id}" if tenant_id else "")
+
+
+# ── Permanent links ──────────────────────────────────────────────────────────────────────────
+# /talk/<tenant_ref>?k=<key>: never expires, one fixed URL per business, a new room per visit.
+# Anyone holding it can start a call (and so spend money), so it is rate limited in the token
+# endpoint and can be revoked at once by raising CALL_LINK_VERSION.
+
+def permanent_key(tenant_ref: str) -> str:
+    key = settings.SECRET_KEY.encode("utf-8")
+    msg = f"perm:{settings.CALL_LINK_VERSION}:{tenant_ref}"
+    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+def verify_permanent(tenant_ref: str, key: Optional[str]) -> bool:
+    return bool(tenant_ref and key) and hmac.compare_digest(key or "", permanent_key(tenant_ref))
+
+
+def build_permanent_link(base_url: str, tenant_ref: str = "default") -> str:
+    return f"{base_url.rstrip('/')}/talk/{tenant_ref}?k={permanent_key(tenant_ref)}"

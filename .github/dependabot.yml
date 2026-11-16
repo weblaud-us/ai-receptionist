@@ -1,0 +1,31 @@
+# Weekly dependency update PRs (Roadmap Task 3.8). CI must pass before any of them is merged.
+# The livekit-agents family is pinned together on purpose (see AI-receptionist-1/pyproject.toml):
+# upgrade it by hand, all plugins at once.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /AI-receptionist-1
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "livekit*"
+      - dependency-name: "openai"
+    groups:
+      python-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+
+  - package-ecosystem: docker
+    directories: [/AI-receptionist-1, /dashboard]
+    schedule: { interval: monthly }

@@ -1,7 +1,8 @@
 """
 Auth flows (Roadmap Task 2.10): login, refresh, logout, switch tenant, invites, password reset.
 
-Login rate limits are in process memory (per IP and per account) until Redis arrives in Phase 3.
+Login rate limits (per IP and per account) are shared by every API replica through Redis
+(core.ratelimit); without Redis they are kept in this process's memory.
 The pre-Phase-2 `.env` admin (ADMIN_USERNAME / ADMIN_PASSWORD) still signs in, as a platform
 admin, so an existing deployment keeps working until real users exist.
 """
@@ -10,8 +11,6 @@ from __future__ import annotations
 
 import hmac
 import logging
-import time
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -19,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from config import settings
-from core import crypto
+from core import crypto, ratelimit
 from core.auth import totp
 from core.auth.passwords import hash_password, needs_rehash, password_problem, verify_password
 from core.auth.tokens import (
@@ -35,9 +34,6 @@ _DEFAULT_SECRETS = {"", "change-in-production"}
 MAX_FAILS_PER_IP, MAX_FAILS_PER_ACCOUNT, FAIL_WINDOW_S = 10, 5, 15 * 60
 RESET_TTL = timedelta(hours=1)
 INVITE_TTL = timedelta(days=7)
-
-_fails_ip: Dict[str, List[float]] = defaultdict(list)
-_fails_account: Dict[str, List[float]] = defaultdict(list)
 
 
 def utcnow() -> datetime:
@@ -79,26 +75,29 @@ class MfaChallenge:
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 
-def _recent(bucket: Dict[str, List[float]], key: str) -> List[float]:
-    now = time.time()
-    bucket[key] = [t for t in bucket[key] if now - t < FAIL_WINDOW_S]
-    return bucket[key]
+def _ip_key(ip: str) -> str:
+    return f"login:ip:{ip}"
 
 
-def _check_limits(ip: str, email: str) -> None:
-    if len(_recent(_fails_ip, ip)) >= MAX_FAILS_PER_IP or len(_recent(_fails_account, email)) >= MAX_FAILS_PER_ACCOUNT:
+def _account_key(email: str) -> str:
+    return f"login:acct:{email[:254]}"
+
+
+async def _check_limits(ip: str, email: str) -> None:
+    if (await ratelimit.count(_ip_key(ip), FAIL_WINDOW_S) >= MAX_FAILS_PER_IP
+            or await ratelimit.count(_account_key(email), FAIL_WINDOW_S) >= MAX_FAILS_PER_ACCOUNT):
         raise HTTPException(429, "Too many failed attempts. Try again in a few minutes.")
 
 
-def _fail(ip: str, email: str) -> HTTPException:
-    _fails_ip[ip].append(time.time())
-    _fails_account[email].append(time.time())
+async def _fail(ip: str, email: str) -> HTTPException:
+    await ratelimit.hit(_ip_key(ip), FAIL_WINDOW_S)
+    await ratelimit.hit(_account_key(email), FAIL_WINDOW_S)
     return HTTPException(401, "Invalid e-mail or password")
 
 
 def reset_rate_limits() -> None:
-    _fails_ip.clear()
-    _fails_account.clear()
+    """Forget this process's counters (tests)."""
+    ratelimit.memory.reset()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -156,11 +155,11 @@ async def _issue(doc: Dict[str, Any], tenant_id: Optional[str], *, with_refresh:
 
 async def login(email: str, password: str, *, ip: str = "unknown", user_agent: str = "") -> LoginResult | MfaChallenge:
     email = (email or "").strip().lower()
-    _check_limits(ip, email)
+    await _check_limits(ip, email)
     users = UsersStore(get_db())
     doc = await users.by_email(email) if "@" in email else None
     if doc and not doc.get("disabled") and doc.get("password_hash") and verify_password(password, doc["password_hash"]):
-        _fails_account.pop(email, None)
+        await ratelimit.clear(_account_key(email))
         updates: Dict[str, Any] = {"last_login_at": utcnow()}
         if needs_rehash(doc["password_hash"]):
             updates["password_hash"] = hash_password(password)
@@ -177,7 +176,7 @@ async def login(email: str, password: str, *, ip: str = "unknown", user_agent: s
                                   role="owner", platform_admin=True, name="Administrator")
         return LoginResult(token, ttl, None, public_user(legacy), None, "owner", [])
 
-    raise _fail(ip, email)
+    raise await _fail(ip, email)
 
 
 async def refresh(refresh_token: str, *, tenant_id: Optional[str] = None) -> LoginResult:
@@ -219,10 +218,10 @@ async def verify_mfa(mfa_token: str, code: str, *, ip: str = "unknown", user_age
     if not doc or doc.get("disabled") or not (doc.get("mfa") or {}).get("secret_enc"):
         raise HTTPException(401, "Sign-in expired — enter your password again")
     email = doc.get("email", "")
-    _check_limits(ip, email)
+    await _check_limits(ip, email)
     if not totp.verify(crypto.decrypt(doc["mfa"]["secret_enc"]), code):
-        raise _fail(ip, email)
-    _fails_account.pop(email, None)
+        raise await _fail(ip, email)
+    await ratelimit.clear(_account_key(email))
     logger.info("Login ok (with two-factor) for user %s", doc["_id"])
     return await _issue(doc, None, user_agent=user_agent, mfa=True)
 

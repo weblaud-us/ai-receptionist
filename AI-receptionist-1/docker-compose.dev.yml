@@ -1,5 +1,7 @@
-# Local development of the voice worker in Linux.
-# Needed on Windows: livekit-agents' native libraries crash on some Windows builds.
+# Extras for local development: the voice worker alone, the public call-link tunnels, local Kokoro.
+# For the whole stack (API + worker + jobs + dashboard + Mongo + Redis) use ../docker-compose.yml
+# (`make dev` at the repo root). Needed on Windows: livekit-agents' native libraries crash on
+# some Windows builds.
 #
 #   docker compose -f docker-compose.dev.yml up agent          # run the worker (auto-reloads)
 #   docker compose -f docker-compose.dev.yml run --rm tests    # full test suite on Linux
@@ -15,6 +17,52 @@ services:
       - .:/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # Local fallback voice (Kokoro-82M on CPU). Optional: only starts with the local-tts profile.
+  #   docker compose -f docker-compose.dev.yml --profile local-tts up -d kokoro
+  # Then in .env: KOKORO_BASE_URL=http://kokoro:8880/v1 (the worker container reaches it by this name)
+  # and VOICE_TTS_FALLBACKS=kokoro,openai. The first start loads the model, give it a minute.
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.10.0
+    ports:
+      - "8880:8880"
+    restart: unless-stopped
+    profiles: ["local-tts"]
+
+  # ── Public call link (docs/TELEPHONY_TESTING.md, Part 3) ────────────────────────────────────
+  # `portal` is a tiny app that serves ONLY the call page and its token endpoint; the admin API,
+  # dashboard login and /docs are not in it. Only the portal is ever put behind a tunnel.
+  #   docker compose -f docker-compose.dev.yml --profile public up -d portal tunnel
+  #   docker compose -f docker-compose.dev.yml logs tunnel      # shows the https://....trycloudflare.com URL
+  portal:
+    build: { context: ., target: dev }
+    command: python -m uvicorn public_call:app --host 0.0.0.0 --port 8010 --proxy-headers --forwarded-allow-ips=*
+    env_file: .env
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles: ["public", "public-ngrok"]
+
+  # Quick tunnel: no account. The URL is random and changes every time this container restarts.
+  tunnel:
+    image: cloudflare/cloudflared:2026.11.0
+    command: tunnel --no-autoupdate --url http://portal:8010
+    depends_on: [portal]
+    restart: unless-stopped
+    profiles: ["public"]
+
+  # Fixed URL: needs a free ngrok account. Put NGROK_AUTHTOKEN=... in .env, then:
+  #   docker compose -f docker-compose.dev.yml --profile public-ngrok up -d portal tunnel-ngrok
+  # ngrok's free plan gives your account one permanent address (https://<name>.ngrok-free.dev);
+  # `docker compose logs tunnel-ngrok` prints it. Untested here: needs an ngrok account.
+  tunnel-ngrok:
+    image: ngrok/ngrok:3
+    command: http portal:8010
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    depends_on: [portal]
+    restart: unless-stopped
+    profiles: ["public-ngrok"]
 
   tests:
     build: { context: ., target: dev }

@@ -1,6 +1,6 @@
 """
-Per-tenant background jobs (Roadmap Tasks 2.8 and 2.9), run by the API process every
-TENANT_JOBS_POLL_SECONDS:
+Per-tenant background jobs (Roadmap Tasks 2.8 and 2.9), run every TENANT_JOBS_POLL_SECONDS by the
+jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process:
 
 - calendar sync   — refresh Google busy times every CALENDAR_SYNC_MINUTES
 - reminders       — day-before and hour-before reminders for appointments (generalises the
@@ -12,7 +12,8 @@ TENANT_JOBS_POLL_SECONDS:
                     `agent.transcript_retention_days` (Task 2.2). The call record itself (who,
                     when, outcome, summary, usage) is kept for billing and statistics.
 
-Phase 3 moves this onto the Redis job queue with locking; until then the API runs one worker.
+Every reminder and digest is claimed with an atomic update before it is sent, so several job
+workers (or a retry) never send one twice.
 """
 
 from __future__ import annotations

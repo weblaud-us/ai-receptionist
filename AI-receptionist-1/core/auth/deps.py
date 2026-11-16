@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import Depends, Header, HTTPException, Request
 
 from config import settings
+from core import ratelimit
 from core.auth.tokens import ACCESS_TOKEN_TYPE, LEGACY_ADMIN_SUB, decode_jwt
 from core.repositories import Repos
 from core.repositories.repos import UsersStore
@@ -162,6 +163,17 @@ def require_tenant(min_role: str = "staff") -> Callable[..., Any]:
         if not tp.can(min_role):
             raise HTTPException(403, f"Requires the {min_role} role")
         request.state.tenant_id = tp.tenant.id
+        # Per-business API limit (Task 3.8): one business's runaway script can't starve the others.
+        limit = settings.API_RATE_PER_TENANT_MIN
+        if limit > 0 and not await ratelimit.allow_fixed(f"api:{tp.tenant.id}", limit, 60):
+            raise HTTPException(429, "Too many requests for this business. Try again in a minute.",
+                                headers={"Retry-After": "60"})
+        try:
+            import sentry_sdk
+
+            sentry_sdk.set_tag("tenant_id", tp.tenant.id)      # an id, never a name or number
+        except Exception:
+            pass
         return tp
 
     return dependency

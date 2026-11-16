@@ -1,5 +1,11 @@
 # Telephony: Twilio Elastic SIP Trunking → LiveKit
 
+> **Start with [docs/TELEPHONY_TESTING.md](../../docs/TELEPHONY_TESTING.md).** `APP_ENV` picks the
+> provider (development → free Linphone softphone, staging/production → Twilio), and
+> `uv run python -m scripts.setup_telephony` creates the LiveKit trunks and dispatch rule for you.
+> The JSON templates and `lk` commands below are the manual equivalent, kept as a reference and
+> fallback.
+
 Phone calls reach the voice agent like this:
 
 ```

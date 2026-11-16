@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
+from core import metrics, ratelimit
+from core import redis as redis_store
 from core.log import configure_logging, request_id_var
 from core.observability import init_sentry
 from database.mongodb import connect_db, disconnect_db, get_db
@@ -23,6 +25,9 @@ from utils.auth import require_admin
 configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 init_sentry("api")
+
+if settings.TELEPHONY_FALLBACK_ONLY:
+    raise SystemExit("TELEPHONY_FALLBACK_ONLY=true is for fallback_app.py on its own host, not the full API")
 
 
 def _import_router(module: str, attr: str):
@@ -54,6 +59,7 @@ _ROUTERS = [
     ("routers.tenant", "tenant_router"),      # Phase 2: the business's own settings and data
     ("routers.platform", "platform_router"),  # Phase 2: platform super-admin
     ("routers.integrations", "integrations_router"),  # Phase 2: OAuth callbacks (Google Calendar)
+    ("routers.telephony", "telephony_router"),        # Phase 3: Twilio disaster-recovery TwiML
 ]
 
 
@@ -66,10 +72,20 @@ async def lifespan(app: FastAPI):
     from ai.llm_provider import get_llm_provider
     get_llm_provider()
     reminder_service = get_booking_reminder_service()
-    reminder_service.start()
     from services.tenant_jobs import get_tenant_jobs
     tenant_jobs = get_tenant_jobs()
-    tenant_jobs.start()          # appointment reminders, owner digests, calendar sync
+    if settings.redis_enabled:
+        # Phase 3: reminders, digests and calendar sync run in the jobs worker (`python -m jobs`),
+        # once, however many API replicas there are.
+        if not await redis_store.ping(timeout=2.0):
+            logger.error("REDIS_URL is set but Redis is not answering; limits fall back to process memory")
+        logger.info("Background jobs run in the jobs worker (python -m jobs), not in this process")
+        if settings.LEGACY_TWILIO_VOICE:
+            logger.warning("LEGACY_TWILIO_VOICE=true keeps call state in this process: run ONE API "
+                           "replica until phone numbers are on the SIP trunk and the flag is off")
+    else:
+        reminder_service.start()
+        tenant_jobs.start()      # appointment reminders, owner digests, calendar sync
 
     # Legacy phone path: pre-warm its TTS audio cache so the first caller hears the greeting.
     if settings.LEGACY_TWILIO_VOICE:
@@ -85,6 +101,9 @@ async def lifespan(app: FastAPI):
 
     await tenant_jobs.stop()
     await reminder_service.stop()
+    from jobs.queue import close as close_job_queue
+    await close_job_queue()
+    await redis_store.close()
     await disconnect_db()
     logger.info("AI Receptionist stopped")
 
@@ -110,6 +129,35 @@ if _cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+_CALL_PAGES = ("/call/", "/talk/")       # may be embedded in a business's own website
+# Endpoints where a guess is worth something. Not /auth/refresh or /auth/logout: an office of
+# dashboard users behind one NAT refreshes constantly and must never be locked out by it.
+_GUESSABLE = frozenset({"/auth/login", "/auth/mfa/verify", "/auth/password/forgot", "/auth/password/reset",
+                        "/auth/invite/accept"})
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    """Per-IP limit on sign-in endpoints (Task 3.8) and security headers on every response."""
+    path = request.url.path
+    if (settings.AUTH_RATE_PER_IP_MIN > 0 and request.method == "POST" and path in _GUESSABLE
+            and not await ratelimit.allow_fixed(f"auth:ip:{ratelimit.client_ip(request)}",
+                                                settings.AUTH_RATE_PER_IP_MIN, 60)):
+        return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again in a minute."},
+                            headers={"Retry-After": "60"})
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if not path.startswith(_CALL_PAGES):
+        response.headers.setdefault("X-Frame-Options", "DENY")
+    if not settings.is_development:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+app.middleware("http")(metrics.http_middleware)
 
 
 @app.middleware("http")
@@ -166,13 +214,15 @@ async def livez():
 
 @app.get("/readyz", tags=["Health"])
 async def readyz():
-    """Dependencies reachable (Mongo now, Redis from Phase 3). 503 if any fail."""
+    """Dependencies reachable (Mongo, and Redis when configured). 503 if any fail."""
     checks = {}
     try:
         await asyncio.wait_for(get_db().command("ping"), timeout=1.0)
         checks["database"] = "ok"
     except Exception:
         checks["database"] = "fail"
+    if settings.redis_enabled:
+        checks["redis"] = "ok" if await redis_store.ping(timeout=1.0) else "fail"
     ok = all(v == "ok" for v in checks.values())
     return JSONResponse(status_code=200 if ok else 503,
                         content={"status": "ok" if ok else "degraded", "checks": checks})
@@ -182,6 +232,12 @@ async def readyz():
 async def health():
     """Backwards-compatible alias of /readyz for existing uptime monitors."""
     return await readyz()
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics(request: Request):
+    """Prometheus scrape target (Bearer METRICS_TOKEN). See core/metrics.py."""
+    return await metrics.metrics_endpoint(request)
 
 
 # ─────────────────────────────────────────────

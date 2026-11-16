@@ -1,0 +1,100 @@
+# Staging / production stack on any Docker host (Roadmap Tasks 3.1, 3.3, 3.6).
+# Deployed by deploy/deploy.sh (called from .github/workflows/deploy.yml on a git tag); only run
+# `docker compose` on it by hand when following docs/RUNBOOK.md.
+#
+#   Caddy (TLS) ─┬─ api-a, api-b        2 API replicas; state is in Redis
+#                └─ dashboard           static build
+#   worker-a, worker-b                  LiveKit voice workers (outbound connections only)
+#   jobs                                reminders, digests, calendar sync, WhatsApp replies
+#   redis                               shared state + job queue
+#   MongoDB is Atlas (not here); media and SIP are LiveKit Cloud.
+#
+# Two of each call-serving service, updated one at a time, is what makes a deploy drop no calls:
+# while worker-a drains its live calls (up to LIVEKIT_DRAIN_TIMEOUT), worker-b answers new ones.
+#
+# Variables (deploy.sh exports them): IMAGE_PREFIX (ghcr.io/owner/receptionist), TAG (v1.2.3),
+# DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+x-backend: &backend
+  env_file: ${ENV_FILE:?set ENV_FILE}
+  restart: unless-stopped
+  depends_on:
+    redis: { condition: service_healthy }
+  logging: *logging
+
+x-api: &api
+  <<: *backend
+  image: ${IMAGE_PREFIX:?set IMAGE_PREFIX}-api:${TAG:?set TAG}
+  stop_grace_period: 30s
+
+x-worker: &worker
+  <<: *backend
+  image: ${IMAGE_PREFIX}-worker:${TAG}
+  # Must be longer than LIVEKIT_DRAIN_TIMEOUT (default 900 s): Docker sends SIGTERM, the worker
+  # stops taking calls and waits for live ones; SIGKILL only after this.
+  stop_grace_period: 16m
+  ulimits:
+    nofile: { soft: 65536, hard: 65536 }
+
+services:
+  api-a: *api
+  api-b: *api
+
+  worker-a: *worker
+  worker-b: *worker
+  # More capacity: WORKERS=3 or 4 in /etc/receptionist/<env>.deploy (deploy.sh turns these on).
+  worker-c:
+    <<: *worker
+    profiles: ["workers-3", "workers-4"]
+  worker-d:
+    <<: *worker
+    profiles: ["workers-4"]
+
+  jobs:
+    <<: *backend
+    image: ${IMAGE_PREFIX}-jobs:${TAG}
+    stop_grace_period: 60s
+
+  dashboard:
+    image: ${IMAGE_PREFIX}-dashboard:${TAG}-${DEPLOY_ENV:?set DEPLOY_ENV}
+    environment:
+      CSP_CONNECT_SRC: https://${API_DOMAIN:?set API_DOMAIN} ${CSP_EXTRA_CONNECT_SRC:-}
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging: *logging
+
+  # REDIS_URL in the env file points here by default (redis://redis:6379/0). A managed Redis
+  # (Upstash, Redis Cloud, ElastiCache) is better for production: put its URL in the env file
+  # and this container simply goes unused.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes: [redis_data:/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:

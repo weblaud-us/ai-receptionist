@@ -79,7 +79,140 @@ async def test_tts_primary_with_fallback(monkeypatch):
     assert isinstance(session_factory.build_tts(load_profile()), lk_tts.FallbackAdapter)
 
 
+def _voices(monkeypatch, **kw):
+    """Every voice off, then only the ones given on (keys / Kokoro URL / order)."""
+    for name, val in {"ELEVENLABS_API_KEY": "", "CARTESIA_API_KEY": "", "DEEPGRAM_API_KEY": "",
+                      "KOKORO_BASE_URL": "", "OPENAI_API_KEY": "", **kw}.items():
+        monkeypatch.setattr(settings, name, val)
+
+
+async def test_deepgram_aura_first_kokoro_then_openai(monkeypatch):
+    from livekit.agents import tts as lk_tts
+    from livekit.plugins import deepgram
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="deepgram", VOICE_TTS_FALLBACKS="kokoro,openai",
+            DEEPGRAM_API_KEY="dg-test", KOKORO_BASE_URL="http://kokoro:8880/v1", OPENAI_API_KEY="sk-test",
+            DEEPGRAM_TTS_MODEL="aura-2-luna-en")
+    tts = session_factory.build_tts(load_profile())
+    assert isinstance(tts, lk_tts.FallbackAdapter)
+    engines = tts._tts_instances
+    assert isinstance(engines[0], deepgram.TTS) and engines[0]._opts.model == "aura-2-luna-en"
+    assert "kokoro" in str(engines[1]._client.base_url) and len(engines) == 3
+
+
+async def test_kokoro_alone_points_at_the_local_server(monkeypatch):
+    from livekit.plugins import openai as lk_openai
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="kokoro", KOKORO_BASE_URL="http://localhost:8880/v1",
+            KOKORO_VOICE="af_bella")
+    tts = session_factory.build_tts(load_profile())
+    assert isinstance(tts, lk_openai.TTS)
+    assert "localhost:8880" in str(tts._client.base_url) and tts._opts.voice == "af_bella"
+
+
+async def test_voice_without_key_or_url_is_skipped(monkeypatch):
+    from livekit.plugins import openai as lk_openai
+
+    # Deepgram first by .env, but no key and no Kokoro URL: only OpenAI is usable
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="deepgram", VOICE_TTS_FALLBACKS="kokoro,openai", OPENAI_API_KEY="sk-test")
+    assert isinstance(session_factory.build_tts(load_profile()), lk_openai.TTS)
+
+
+async def test_no_voice_configured_is_a_clear_error(monkeypatch):
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="deepgram")
+    with pytest.raises(RuntimeError, match="No voice configured"):
+        session_factory.build_tts(load_profile())
+
+
 async def test_session_builds_with_turn_detection(monkeypatch):
     monkeypatch.setattr(settings, "ELEVENLABS_API_KEY", "el-test")
     session = session_factory.build_session({"vad": None}, _state())
     assert session.userdata.call_id == "call-lk"
+
+
+# ── Phase 3: fallbacks, provider health, busy lines, per-business call limit ──
+
+
+async def test_llm_falls_back_to_anthropic_when_configured(monkeypatch):
+    from livekit.agents import llm as lk_llm
+    from livekit.plugins import anthropic
+    from livekit.plugins import openai as lk_openai
+
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+    assert isinstance(session_factory.build_llm(load_profile()), lk_openai.LLM)
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-ant-test")
+    llm = session_factory.build_llm(load_profile())
+    assert isinstance(llm, lk_llm.FallbackAdapter)
+    primary, fallback = llm._llm_instances
+    assert isinstance(primary, lk_openai.LLM) and isinstance(fallback, anthropic.LLM)
+    assert fallback.model == settings.VOICE_LLM_FALLBACK_MODEL
+
+
+async def test_stt_falls_back_to_openai_when_deepgram_fails(monkeypatch):
+    from livekit.agents import stt as lk_stt
+    from livekit.plugins import deepgram, silero
+
+    monkeypatch.setattr(settings, "DEEPGRAM_API_KEY", "dg-test")
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(settings, "VOICE_STT_FALLBACK", True)
+    stt = session_factory.build_stt(load_profile(), silero.VAD.load())
+    assert isinstance(stt, lk_stt.FallbackAdapter)
+    assert isinstance(stt._stt_instances[0], deepgram.STT)
+    monkeypatch.setattr(settings, "VOICE_STT_FALLBACK", False)
+    assert isinstance(session_factory.build_stt(load_profile(), silero.VAD.load()), deepgram.STT)
+
+
+async def test_provider_health_is_recorded_from_a_real_session(monkeypatch):
+    from types import SimpleNamespace
+
+    from livekit.agents import AgentSession
+
+    from agent.health import attach_provider_health
+
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-ant-test")
+    state = _state()
+    session = AgentSession(llm=session_factory.build_llm(state.profile), userdata=state)
+    attach_provider_health(session, state)
+    session.emit("error", SimpleNamespace(error=SimpleNamespace(type="llm_error", label="openai", recoverable=True)))
+    session.llm.emit("llm_availability_changed", SimpleNamespace(llm=object(), available=False))
+    assert state.provider_errors == {"llm": 1}
+    assert state.fallbacks == {"llm": 1}
+
+
+async def test_busy_line_agent_apologises_and_ends(monkeypatch):
+    from agent.receptionist import BUSY_MESSAGE, BusyLineAgent
+
+    said = []
+
+    class Handle:
+        async def wait_for_playout(self):
+            return None
+
+    class FakeSession:
+        def say(self, text, **_):
+            said.append(text)
+            return Handle()
+
+        def shutdown(self):
+            said.append("<shutdown>")
+
+    state = _state()
+    agent = BusyLineAgent(state)
+    monkeypatch.setattr(BusyLineAgent, "session", property(lambda self: FakeSession()))
+    await agent.on_enter()
+    assert said == [BUSY_MESSAGE.format(name=state.profile.tenant.name), "<shutdown>"]
+    assert state.outcome == "busy" and state.ended_reason == "concurrency_limit"
+
+
+async def test_worker_enforces_the_per_business_call_limit(redis):
+    from agent import worker
+    from agent.profile import VoiceProfile
+
+    tenant = load_profile().tenant.model_copy(deep=True)
+    tenant.id = "ten_busy"
+    tenant.limits.max_concurrent_calls = 1
+    one = CallState(call_id="room-1", profile=VoiceProfile(tenant=tenant))
+    two = CallState(call_id="room-2", profile=VoiceProfile(tenant=tenant))
+    assert await worker._line_free(one)
+    assert not await worker._line_free(two)
+    assert await worker._line_free(_state())          # the legacy .env hotel has no plan limit

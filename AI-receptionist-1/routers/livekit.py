@@ -14,11 +14,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from config import settings
-from core.signed_links import CALL_LINK_TTL_SECONDS, verify_call_room
+from core import ratelimit
+from core.signed_links import CALL_LINK_TTL_SECONDS, verify_call_room, verify_permanent
 from core.tenancy import resolve_by_id
 from core.tenancy.models import legacy_hotel_tenant
 
@@ -42,15 +43,43 @@ async def call_page(room_id: str):
     )
 
 
+@livekit_router.get("/talk/{tenant_ref}")
+async def talk_page(tenant_ref: str):
+    """The permanent call page for one business (/talk/<tenant id or "default">?k=<key>). Same UI as /call."""
+    return await call_page(tenant_ref)
+
+
+async def _allow_public_call(request: Request) -> bool:
+    # Shared by every API replica (Redis). The daily cap covers all visitors together, so a forged
+    # client-IP header can only dodge the per-visitor limit.
+    return (await ratelimit.allow("pubcall:all", settings.PUBLIC_CALL_MAX_PER_DAY, 86400)
+            and await ratelimit.allow(f"pubcall:ip:{ratelimit.client_ip(request)}",
+                                      settings.PUBLIC_CALL_RATE_PER_IP_HOUR, 3600))
+
+
 @livekit_router.get("/livekit/token")
 async def livekit_token(
-    room: str = Query(..., min_length=3, max_length=64),
+    request: Request,
+    room: Optional[str] = Query(default=None, min_length=3, max_length=64),
     exp: Optional[int] = Query(default=None),
     sig: Optional[str] = Query(default=None, max_length=64),
     t: Optional[str] = Query(default=None, max_length=40, description="tenant id the link was signed for"),
+    perm: Optional[str] = Query(default=None, max_length=64, description="key of a permanent /talk link"),
 ):
-    if not verify_call_room(room, exp, sig, tenant_id=t):
-        raise HTTPException(status_code=403, detail="This call link is invalid or has expired.")
+    if perm is not None:
+        # Permanent link: no expiry, so the visitor gets a brand-new room and the call is rate limited.
+        ref = t or "default"
+        if not verify_permanent(ref, perm):
+            raise HTTPException(status_code=403, detail="This call link is invalid or has been turned off.")
+        if not await _allow_public_call(request):
+            raise HTTPException(status_code=429, detail="The receptionist is busy right now. Please try again later.")
+        room = f"web-{uuid.uuid4().hex[:10]}"
+        t = None if ref == "default" else ref
+    else:
+        if not room:
+            raise HTTPException(status_code=422, detail="room is required")
+        if not verify_call_room(room, exp, sig, tenant_id=t):
+            raise HTTPException(status_code=403, detail="This call link is invalid or has expired.")
     tenant = (await resolve_by_id(t)) if t else legacy_hotel_tenant()
     if tenant is None:
         raise HTTPException(status_code=404, detail="This business is no longer available.")

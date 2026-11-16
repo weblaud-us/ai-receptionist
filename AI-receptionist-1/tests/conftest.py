@@ -40,6 +40,8 @@ _TEST_ENV = {
     "ENABLE_CALL_RECORDING": "false",
     "DEEPGRAM_API_KEY": "",
     "CARTESIA_API_KEY": "",
+    "KOKORO_BASE_URL": "",
+    "VOICE_TTS_FALLBACKS": "elevenlabs,cartesia,deepgram,kokoro,openai",
     "TRANSFER_PHONE_NUMBER": "",
     "TRANSFER_HOURS": "",
     "OWNER_NOTIFY_WHATSAPP": "",
@@ -52,6 +54,11 @@ _TEST_ENV = {
     "TOKEN_ENCRYPTION_KEY": "",
     "TWILIO_SMS_FROM": "",
     "RESEND_API_KEY": "",
+    "REDIS_URL": "",                 # tests that need Redis install a fake (the `redis` fixture)
+    "ANTHROPIC_API_KEY": "",
+    "METRICS_TOKEN": "",
+    "AUTH_RATE_PER_IP_MIN": "0",     # exercised explicitly in test_phase3_infra.py
+    "API_RATE_PER_TENANT_MIN": "600",
 }
 os.environ.update(_TEST_ENV)
 
@@ -91,6 +98,33 @@ async def db():
         yield database
     finally:
         mongodb._db = previous
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_state():
+    """Rate limits, dedupe and the metrics cache live in process memory in tests: start each test clean."""
+    from core import dedupe, metrics, ratelimit
+
+    ratelimit.memory.reset()
+    dedupe.reset()
+    metrics.reset_cache()
+    yield
+
+
+@pytest.fixture
+async def redis():
+    """An in-memory Redis installed as core.redis.get_redis() for the test."""
+    import fakeredis.aioredis
+
+    from core import redis as redis_store
+
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    redis_store.use_for_tests(client)
+    try:
+        yield client
+    finally:
+        redis_store.use_for_tests(None)
+        await client.aclose()
 
 
 @pytest.fixture

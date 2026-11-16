@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:        # deploy.yml runs the same checks before building a release
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -65,6 +66,14 @@ jobs:
         env:
           APP_ENV: development
           RUN_EVALS: ${{ secrets.EVAL_OPENAI_API_KEY != '' && '1' || '0' }}
+      # The fallback LLM must pass the same evals before it carries calls (Task 3.5).
+      - name: Voice agent evals on the fallback LLM
+        run: uv run --frozen pytest tests/evals -rs
+        env:
+          APP_ENV: development
+          EVAL_LLM: fallback
+          EVAL_ANTHROPIC_API_KEY: ${{ secrets.EVAL_ANTHROPIC_API_KEY }}
+          RUN_EVALS: ${{ secrets.EVAL_OPENAI_API_KEY != '' && secrets.EVAL_ANTHROPIC_API_KEY != '' && '1' || '0' }}
 
   dashboard:
     runs-on: ubuntu-latest
@@ -81,3 +90,59 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+
+  # Roadmap Task 3.8: known-vulnerable dependencies and committed secrets fail the build.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Python dependencies (pip-audit against uv.lock)
+        working-directory: AI-receptionist-1
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/requirements.txt
+          # Ignored on purpose, each with its reason. Remove the line when the reason goes away.
+          # - opentelemetry-api 1.44 (CVE-2026-114603, CVE-2026-126360): livekit-agents 1.8.6 caps it
+          #   below 1.45. Fixed by moving the livekit-agents family to 1.8.7+, which needs openai>=3.
+          uvx pip-audit -r /tmp/requirements.txt --require-hashes --disable-pip \
+            --ignore-vuln CVE-2026-114603 --ignore-vuln CVE-2026-126360
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Dashboard dependencies (npm audit, production only)
+        working-directory: dashboard
+        run: npm audit --omit=dev --audit-level=high
+      # Scans the files as committed now. Scan the full history once by hand (PRODUCTION_CHECKLIST §1):
+      # anything found there must be rotated, not just deleted.
+      - name: Secrets in the repository (gitleaks)
+        run: >
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest
+          detect --source /repo --no-git --redact --no-banner
+
+  # The images and compose files are only exercised on deploy otherwise; build them on every PR.
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Backend images (api, jobs, worker share their layers)
+        run: |
+          for target in api jobs worker; do
+            docker buildx build --load --target "$target" -t "receptionist-$target:ci" AI-receptionist-1
+          done
+      - name: Images start with a safe config and run as non-root
+        run: |
+          test "$(docker run --rm receptionist-api:ci id -u)" = "10001"
+          docker run --rm -e APP_ENV=development receptionist-api:ci python -c "import main, jobs.worker; print('imports ok')"
+          docker run --rm -e APP_ENV=development receptionist-worker:ci python -c "import agent.worker; print('worker imports ok')"
+      - name: Dashboard image
+        run: docker buildx build --load --build-arg VITE_API_URL=https://api.example.com -t receptionist-dashboard:ci dashboard
+      - name: Compose files are valid
+        run: |
+          cp AI-receptionist-1/.env.example AI-receptionist-1/.env
+          docker compose -f docker-compose.yml config -q
+          docker compose -f AI-receptionist-1/docker-compose.dev.yml config -q
+          touch /tmp/ci.env
+          IMAGE_PREFIX=ghcr.io/x/receptionist TAG=v0 DEPLOY_ENV=staging ENV_FILE=/tmp/ci.env \
+            API_DOMAIN=api.example.com APP_DOMAIN=app.example.com \
+            docker compose -f deploy/docker-compose.prod.yml config -q

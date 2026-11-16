@@ -258,8 +258,9 @@ class Links(BaseModel):
 
 class Limits(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    included_minutes: int = 500
-    max_concurrent_calls: int = 3
+    included_minutes: int = Field(default=500, ge=0)
+    # Calls at once before callers hear "all lines are busy" / go to staff (Task 3.6, needs Redis).
+    max_concurrent_calls: int = Field(default=3, ge=1, le=500)
 
 
 class HotelSettings(BaseModel):

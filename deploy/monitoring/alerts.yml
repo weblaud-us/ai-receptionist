@@ -1,0 +1,120 @@
+# Prometheus alerting rules (Roadmap Task 3.7). Load into Grafana Cloud (Alerting → import
+# Prometheus rules) or a Prometheus `rule_files:` entry. Route `severity: page` to your phone.
+#
+# Source: the API's GET /metrics (core/metrics.py). The call metrics are computed from finished
+# calls in Mongo, so they cover every voice worker without scraping each call's process.
+# Thresholds are the roadmap's; tune them after a week of real traffic.
+groups:
+  - name: receptionist-calls
+    rules:
+      - alert: ResponseLatencyHigh
+        # p95 over the last 15 minutes of turns; ignore quiet periods with too few turns to judge.
+        expr: max(receptionist_turn_latency_seconds{kind="plain",quantile="0.95"}) > 2.0
+              and on() sum(receptionist_turns_measured) >= 20
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "p95 response latency {{ $value | humanize }}s (> 2.0 s for 10 min)"
+          runbook: docs/RUNBOOK.md#latency-spike
+
+      - alert: GreetingSlow
+        expr: max(receptionist_greeting_latency_seconds{quantile="0.95"}) > 3
+        for: 15m
+        labels: { severity: warn }
+        annotations:
+          summary: "Callers wait {{ $value | humanize }}s for the greeting (p95)"
+          runbook: docs/RUNBOOK.md#latency-spike
+
+      - alert: ProviderErrorRateHigh
+        # Errors per finished call over the last hour, per provider kind (> 5%).
+        expr: |
+          max by (kind) (receptionist_provider_errors_last_hour)
+            / on() group_left() clamp_min(sum(receptionist_calls_last_hour), 1) > 0.05
+          and on() sum(receptionist_calls_last_hour) >= 10
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.kind }} provider errors on {{ $value | humanizePercentage }} of calls"
+          runbook: docs/RUNBOOK.md#a-provider-is-down
+
+      - alert: FallbackProviderInUse
+        expr: max by (kind) (receptionist_provider_fallbacks_last_hour) > 0
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "Calls are running on the fallback {{ $labels.kind }} provider"
+          runbook: docs/RUNBOOK.md#a-provider-is-down
+
+      - alert: ShortCallsSpike
+        # Calls that end within 10 s are usually broken calls (silence, crash, wrong number).
+        expr: |
+          sum(receptionist_calls_short_last_hour) / clamp_min(sum(receptionist_calls_last_hour), 1) > 0.25
+          and on() sum(receptionist_calls_last_hour) >= 8
+        for: 15m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of calls ended within 10 s"
+          runbook: docs/RUNBOOK.md#calls-arent-being-answered
+
+      - alert: TransfersFailing
+        expr: sum(receptionist_transfers_last_hour{result="failed"}) >= 3
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value }} transfers to staff failed in the last hour"
+          runbook: docs/RUNBOOK.md#calls-arent-being-answered
+
+      - alert: BusyLinesRefusingCalls
+        # A business hit its concurrent-call limit: a spam storm, or the plan limit is too low.
+        expr: sum(receptionist_calls_last_hour{outcome="busy"}) >= 5
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value }} calls refused as 'lines busy' in the last hour"
+          runbook: docs/RUNBOOK.md#a-spam-call-storm-hits-one-number
+
+  - name: receptionist-platform
+    rules:
+      - alert: ApiDown
+        expr: up{job="receptionist-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "Prometheus can't scrape the API ({{ $labels.instance }})"
+          runbook: docs/RUNBOOK.md#a-deploy-went-bad
+
+      - alert: Api5xxRate
+        expr: |
+          sum(rate(http_requests_total{job="receptionist-api",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="receptionist-api"}[5m])), 0.001) > 0.02
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "API 5xx rate {{ $value | humanizePercentage }}"
+          runbook: docs/RUNBOOK.md#a-deploy-went-bad
+
+      - alert: DependencyDown
+        expr: min by (name) (receptionist_dependency_up) == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.name }} is not answering the API"
+          runbook: docs/RUNBOOK.md#mongo-failover
+
+      - alert: DeadJobs
+        expr: max(receptionist_jobs_dead) > 0
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: "{{ $value }} background job(s) failed every retry (python -m jobs dead)"
+          runbook: docs/RUNBOOK.md#background-jobs-failing
+
+      - alert: VoiceWorkerDown
+        # Needs LIVEKIT_PROMETHEUS_PORT set and the workers scraped (prometheus.yml). Without it,
+        # the synthetic-call heartbeat is what tells you no worker is answering.
+        expr: absent(up{job="receptionist-worker"} == 1)
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: "No voice worker is up: calls are not being answered"
+          runbook: docs/RUNBOOK.md#calls-arent-being-answered

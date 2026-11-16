@@ -1,6 +1,9 @@
 """
 Booking reminder background service — single-tenant.
 Sends one WhatsApp reminder one day before check-in.
+
+With Redis the jobs worker calls `run_once()` on a schedule (jobs/worker.py); without it the API
+process runs the loop below. Either way each reminder is claimed atomically before it is sent.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ from database.tenancy import get_hotel_profile
 from services.calendar import build_booking_calendar_links
 
 logger = logging.getLogger(__name__)
+
+CLAIM_RETRY_AFTER = timedelta(minutes=55)   # a failed send is retried on a later tick, never in parallel
 
 
 def _meta_base_url() -> str:
@@ -132,6 +137,19 @@ class BookingReminderService:
         for booking in bookings:
             phone = booking.get("guest_phone")
             if not phone:
+                continue
+            # Claim first (atomic): with several runners, or a retry, only the one whose update
+            # matches sends the reminder. A claim older than CLAIM_RETRY_AFTER whose send failed
+            # is free to be claimed again.
+            now = datetime.utcnow()
+            claimed = await db.bookings.find_one_and_update(
+                {"booking_id": booking.get("booking_id"), "status": "confirmed",
+                 "one_day_reminder_sent": {"$ne": True},
+                 "$or": [{"one_day_reminder_claimed_at": {"$exists": False}},
+                         {"one_day_reminder_claimed_at": None},
+                         {"one_day_reminder_claimed_at": {"$lt": now - CLAIM_RETRY_AFTER}}]},
+                {"$set": {"one_day_reminder_claimed_at": now}})
+            if claimed is None:
                 continue
             msg = _build_reminder_message(booking, hotel)
             sent = await _send_meta_whatsapp(

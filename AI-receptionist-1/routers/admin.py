@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from config import settings
 from core.auth import TenantPrincipal, require_tenant
 from core.repositories.scoped import scoped_db
+from core.sensitive import id_number_fields, public_guest
 from core.timeutils import business_today
 from database.tenancy import tenant_profile
 from utils.serialize import to_jsonable
@@ -349,6 +350,7 @@ class GuestUpdate(BaseModel):
     nationality: Optional[str] = None
     vip_tier: Optional[str] = None
     notes: Optional[str] = None
+    id_number: Optional[str] = None     # stored encrypted; responses only show •••last4
 
 
 @protected.get("/guests")
@@ -388,7 +390,7 @@ async def list_guests(
         c = counts.get(d.get("phone"), {})
         d["booking_count"] = c.get("bookings", 0)
         d["total_spent"] = round(c.get("spent", 0) or 0, 2)
-        guests.append(_strip_id(d))
+        guests.append(_strip_id(public_guest(d)))
     return {"guests": guests, "total": total, "page": page, "pages": (total + limit - 1) // limit}
 
 
@@ -408,7 +410,7 @@ async def get_guest(phone: str = Query(..., min_length=3), tp: TenantPrincipal =
                       "message_count": {"$size": {"$ifNull": ["$messages", []]}}}},
     ]):
         convs.append(to_jsonable(c))
-    out = _strip_id(guest)
+    out = _strip_id(public_guest(guest))
     out["bookings"] = [_strip_id(b) for b in bookings]
     out["conversations"] = convs
     return out
@@ -421,13 +423,20 @@ async def update_guest(body: GuestUpdate, phone: str = Query(..., min_length=3),
         raise HTTPException(400, f"Invalid vip_tier. Valid: {VIP_TIERS}")
     if not data:
         raise HTTPException(400, "Nothing to update")
+    unset: Dict[str, Any] = {}
+    if "id_number" in data:
+        data.update(id_number_fields(data.pop("id_number")))
+        unset["id_number"] = ""          # drop any legacy plaintext copy
     data["updated_at"] = datetime.utcnow()
 
     db = scoped_db(tp.tenant)
-    res = await db.guests.update_one({"phone": phone}, {"$set": data})
+    update: Dict[str, Any] = {"$set": data}
+    if unset:
+        update["$unset"] = unset
+    res = await db.guests.update_one({"phone": phone}, update)
     if res.matched_count == 0:
         raise HTTPException(404, "Guest not found")
-    return _strip_id(await db.guests.find_one({"phone": phone}))
+    return _strip_id(public_guest(await db.guests.find_one({"phone": phone})))
 
 
 # ─────────────────────────────────────────────

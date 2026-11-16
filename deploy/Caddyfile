@@ -1,0 +1,22 @@
+# TLS termination and load balancing. Certificates come from Let's Encrypt automatically.
+# Put Cloudflare in front for WAF / DDoS protection / rate limits (docs/PRODUCTION_CHECKLIST.md).
+
+{$API_DOMAIN} {
+	encode gzip
+	header -Server
+	reverse_proxy api-a:8002 api-b:8002 {
+		lb_policy round_robin
+		lb_try_duration 5s
+		# A replica being restarted by a deploy fails /readyz and is skipped.
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 10s
+	}
+}
+
+{$APP_DOMAIN} {
+	encode gzip
+	header -Server
+	reverse_proxy dashboard:8080
+}

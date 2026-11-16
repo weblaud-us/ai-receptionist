@@ -93,8 +93,10 @@ docker compose -f docker-compose.dev.yml run --rm tests          # full suite on
 ```
 
 A MongoDB on your machine is `host.docker.internal` from inside the container. To test a call
-without a phone number: send the WhatsApp "call me" keyword and open the link, or set up the SIP
-trunk ([telephony/README.md](telephony/README.md)).
+without a phone number: send the WhatsApp "call me" keyword and open the link. To test the SIP path
+for free (no Twilio), run `uv run python -m scripts.setup_telephony` and call from Linphone: with
+`APP_ENV=development` the provider is a softphone, with `production` it's Twilio. Full steps:
+[docs/TELEPHONY_TESTING.md](../docs/TELEPHONY_TESTING.md).
 
 For webhooks from Twilio/Meta to reach your machine, expose port 8002 with a tunnel (ngrok,
 cloudflared) and set `WEBHOOK_BASE_URL` to the tunnel's https URL:
@@ -115,12 +117,16 @@ On Windows the LiveKit-dependent tests skip themselves; CI (Linux) and the Docke
 service run everything.
 
 CI (`.github/workflows/ci.yml` at the repo root) runs all three plus the dashboard build on
-every PR; `deploy.yml` deploys `main` only after CI is green. Deployment: [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md).
+every PR (plus dependency audit, secret scan and image builds). Releases are git tags: `v*-rc.*` deploys to
+staging, `v*` to staging then production ([deploy/README.md](../deploy/README.md)). Phase 3 details and
+acceptance checks: [docs/PHASE_3_TESTING.md](../docs/PHASE_3_TESTING.md); incidents: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
+Whole stack locally: `make dev` at the repo root.
 
 ## Health
 
 - `GET /livez` — process is up
-- `GET /readyz` — MongoDB reachable within 1 s, else **503** (`/health` is an alias)
+- `GET /readyz` — MongoDB (and Redis when `REDIS_URL` is set) reachable within 1 s, else **503** (`/health` is an alias)
+- `GET /metrics` — Prometheus (Bearer `METRICS_TOKEN`; open in development). See `core/metrics.py`
 
 ## Layout
 
@@ -135,23 +141,27 @@ core/                   framework-light shared logic
   prompts/              prompt builder + vertical templates
   services/             availability, scheduling, calendar sync, tenant admin
   tools/                AI tools shared by voice + WhatsApp (registry.run_tool is the entry point)
-  integrations/         Twilio/Meta signatures, WhatsApp, SMS, e-mail, Google Calendar, S3 links
+  integrations/         Twilio/Meta signatures, WhatsApp, SMS, e-mail, Google Calendar, outgoing webhooks, ElevenLabs voices, S3 links
   notifications.py      owner + caller notifications
   log.py                JSON logging, PII redaction, request/call ids
   observability.py      Sentry
+  redis.py, ratelimit.py, dedupe.py, concurrency.py   shared state (Phase 3), memory fallback without Redis
+  metrics.py            Prometheus /metrics: HTTP + call outcomes, latency, provider health
   phone.py, timeutils.py, signed_links.py
 ai/                     WhatsApp (and legacy phone) agent loop and prompts
 voice/                  legacy Twilio media-stream path, STT/TTS clients
 whatsapp/               Meta webhook + sending
-routers/                auth, tenant (/t), platform admin, hotel + admin APIs, LiveKit, OAuth callbacks
+routers/                auth, tenant (/t), platform admin, hotel + admin APIs, LiveKit, OAuth callbacks,
+                        telephony (Twilio disaster-recovery TwiML)
+jobs/                   arq job worker (python -m jobs): tenant jobs, hotel reminders, WhatsApp replies
 services/               hotel reminders, calendar links, tenant jobs (reminders, digest, calendar sync)
 database/               Mongo connection + indexes, hotel models, legacy profile helpers
 migrations/             data migrations + index creation (python -m migrations.<name>)
-scripts/                operator scripts (latency_report)
+scripts/                operator scripts (latency_report, synthetic_call = health check + load test)
 telephony/              LiveKit SIP trunk + dispatch rule templates, Twilio setup
-deploy/systemd/         unit files for the API and the agent worker
+deploy/systemd/         legacy VPS unit files (containers replace them: ../deploy/)
 tests/                  pytest suite (tests/evals: real-LLM conversation evals)
-Dockerfile              backend image (voice worker by default; dev target for local use)
+Dockerfile              backend images: targets api, worker (default), jobs, dev
 ```
 
 ## Data migrations

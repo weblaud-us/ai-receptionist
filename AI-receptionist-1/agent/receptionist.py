@@ -70,7 +70,7 @@ class ReceptionistAgent(Agent):
                 self.session.say(text, add_to_chat_ctx=True)
             return
         key = greeting.cache_key(text, tts, self.state.profile.voice_id)
-        cached = greeting.load(key)
+        cached = greeting.load(key) or await greeting.load_shared(key)
         if cached is not None:
             self.session.say(text, audio=greeting.frames(cached), allow_interruptions=True)
         else:
@@ -128,7 +128,9 @@ class ReceptionistAgent(Agent):
             ))
         except Exception:
             logger.warning("SIP transfer failed for call %s", self.state.call_id, exc_info=True)
+            self.state.transfer = "failed"
             return "The transfer failed. Apologise and offer to take a message instead."
+        self.state.transfer = "ok"
         self.state.set_outcome("transferred", override=True)
         self.state.ended_reason = "transferred"
         return "Transferred. The call has left you; say nothing more."
@@ -150,6 +152,48 @@ class UnassignedNumberAgent(Agent):
             self.session.shutdown()
             return
         await hang_up("unassigned_number")
+
+
+BUSY_MESSAGE = "Thanks for calling {name}. All of our lines are busy right now. Please call back in a few minutes."
+BUSY_TRANSFER_MESSAGE = "Thanks for calling {name}. All of our lines are busy, so I'm connecting you to the team now."
+
+
+class BusyLineAgent(Agent):
+    """
+    The business is already at its concurrent-call limit (Task 3.6). No LLM turn: connect the
+    caller to the staff line when one is open, otherwise one polite sentence and hang up.
+    """
+
+    def __init__(self, state: CallState) -> None:
+        super().__init__(instructions="Say nothing.", tools=[])
+        self.state = state
+
+    async def on_enter(self) -> None:
+        profile = self.state.profile
+        self.state.set_outcome("busy", override=True)
+        self.state.ended_reason = "concurrency_limit"
+        job = get_job_context(required=False)
+        sip = _sip_participant(job.room) if job else None
+        if job is not None and sip is not None and profile.transfer_open():
+            handle = self.session.say(BUSY_TRANSFER_MESSAGE.format(name=profile.tenant.name),
+                                      allow_interruptions=False)
+            await handle.wait_for_playout()
+            try:
+                await job.api.sip.transfer_sip_participant(api.TransferSIPParticipantRequest(
+                    room_name=job.room.name, participant_identity=sip.identity,
+                    transfer_to=f"tel:{profile.transfer_number}", play_dialtone=False))
+                self.state.transfer = "ok"
+                self.state.ended_reason = "transferred"
+                return
+            except Exception:
+                self.state.transfer = "failed"
+                logger.warning("Busy-line transfer failed for call %s", self.state.call_id, exc_info=True)
+        handle = self.session.say(BUSY_MESSAGE.format(name=profile.tenant.name), allow_interruptions=False)
+        await handle.wait_for_playout()
+        if job is None:
+            self.session.shutdown()
+            return
+        await hang_up("concurrency_limit")
 
 
 class SilenceWatcher:

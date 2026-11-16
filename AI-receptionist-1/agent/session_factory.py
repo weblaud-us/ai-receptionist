@@ -2,9 +2,14 @@
 Build the AgentSession for one call (Roadmap Tasks 1.3 and 1.4.b).
 
     STT  Deepgram Nova-3 streaming         (fallback: OpenAI gpt-4o-mini-transcribe)
-    LLM  VOICE_LLM_MODEL, streamed, tools   (OpenAI; one warm client per process)
-    TTS  ElevenLabs Flash v2.5              (Cartesia / OpenAI as automatic fallbacks)
+    LLM  VOICE_LLM_MODEL, streamed, tools   (OpenAI; one warm client per process;
+                                             fallback: VOICE_LLM_FALLBACK_MODEL on Anthropic)
+    TTS  VOICE_TTS_PROVIDER, then VOICE_TTS_FALLBACKS (Deepgram Aura / Kokoro / ElevenLabs / Cartesia / OpenAI)
     Turn LiveKit turn detector + Silero VAD (VAD loaded once per process in prewarm)
+
+Phase 3 (Task 3.5): each of STT, LLM and TTS is a LiveKit FallbackAdapter when a second provider
+is configured, so a provider's bad hour does not take calls down. A fallback is only built when
+its key is set; with one provider the plain plugin is used. agent/health.py records every switch.
 
 Every provider is a LiveKit plugin, so swapping one is a one-line change here. API keys are
 passed explicitly from settings — the worker never depends on .env being in os.environ.
@@ -18,6 +23,8 @@ from typing import Any, Optional
 
 import openai as openai_sdk
 from livekit.agents import AgentSession, inference
+from livekit.agents import llm as lk_llm
+from livekit.agents import stt as lk_stt
 from livekit.agents import tts as lk_tts
 from livekit.plugins import cartesia, deepgram, elevenlabs
 from livekit.plugins import openai as lk_openai
@@ -29,6 +36,8 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_STEPS = 4
+LLM_ATTEMPT_TIMEOUT_S = 6.0      # no first token by then → next LLM
+STT_ATTEMPT_TIMEOUT_S = 8.0
 
 # One OpenAI client per worker process, bound to the loop it was created in. Reusing it keeps
 # the HTTP/TLS connection to the LLM warm between calls (Task 1.4.d). Within a call, LiveKit
@@ -41,12 +50,21 @@ def openai_client() -> openai_sdk.AsyncClient:
     global _openai_client, _openai_loop
     loop = asyncio.get_running_loop()
     if _openai_client is None or _openai_loop is not loop:
-        _openai_client = openai_sdk.AsyncClient(api_key=settings.OPENAI_API_KEY, max_retries=0)
+        # connect 2 s / total 15 s: a hung provider must fail fast enough for the fallback to matter
+        _openai_client = openai_sdk.AsyncClient(
+            api_key=settings.OPENAI_API_KEY, max_retries=0,
+            timeout=openai_sdk.Timeout(15.0, connect=2.0))
         _openai_loop = loop
     return _openai_client
 
 
-def build_stt(p: VoiceProfile) -> Any:
+def _openai_stt(p: VoiceProfile) -> Any:
+    return lk_openai.STT(model="gpt-4o-mini-transcribe", language=p.tts_language,
+                         api_key=settings.OPENAI_API_KEY)
+
+
+def build_stt(p: VoiceProfile, vad: Any = None) -> Any:
+    """Deepgram streaming, with OpenAI speech-to-text behind it (needs the VAD to chunk audio)."""
     if settings.VOICE_STT_PROVIDER == "deepgram":
         if settings.DEEPGRAM_API_KEY:
             kwargs: dict[str, Any] = {
@@ -58,14 +76,19 @@ def build_stt(p: VoiceProfile) -> Any:
             }
             if settings.VOICE_STT_MODEL.startswith("nova-3") and p.keyterms:
                 kwargs["keyterm"] = list(p.keyterms)  # business/agent names STT should expect
-            return deepgram.STT(**kwargs)
+            primary = deepgram.STT(**kwargs)
+            if settings.VOICE_STT_FALLBACK and settings.OPENAI_API_KEY and vad is not None:
+                return lk_stt.FallbackAdapter([primary, _openai_stt(p)], vad=vad,
+                                              attempt_timeout=STT_ATTEMPT_TIMEOUT_S)
+            return primary
         logger.warning("VOICE_STT_PROVIDER=deepgram but DEEPGRAM_API_KEY is empty — using OpenAI STT (slower)")
-    return lk_openai.STT(model="gpt-4o-mini-transcribe", language=p.tts_language,
-                         api_key=settings.OPENAI_API_KEY)
+    return _openai_stt(p)
 
 
 def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
-    if provider == "elevenlabs" and settings.ELEVENLABS_API_KEY:
+    if not settings.tts_available(provider):
+        return None
+    if provider == "elevenlabs":
         return elevenlabs.TTS(
             voice_id=p.voice_id,
             model=settings.ELEVENLABS_TTS_MODEL,
@@ -73,38 +96,66 @@ def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
             language=p.tts_language,
             apply_text_normalization="auto",
         )
-    if provider == "cartesia" and settings.CARTESIA_API_KEY:
+    if provider == "cartesia":
         kwargs: dict[str, Any] = {"api_key": settings.CARTESIA_API_KEY, "model": settings.CARTESIA_MODEL,
                                   "language": p.tts_language}
         if settings.CARTESIA_VOICE_ID:
             kwargs["voice"] = settings.CARTESIA_VOICE_ID
         return cartesia.TTS(**kwargs)
-    if provider == "openai" and settings.OPENAI_API_KEY:
+    if provider == "deepgram":     # Aura; same key as the streaming STT. The voice is the model name.
+        return deepgram.TTS(model=settings.DEEPGRAM_TTS_MODEL, api_key=settings.DEEPGRAM_API_KEY)
+    if provider == "kokoro":       # local Kokoro-82M behind Kokoro-FastAPI's OpenAI-compatible endpoint
+        return lk_openai.TTS(model=settings.KOKORO_MODEL, voice=settings.KOKORO_VOICE,
+                             base_url=settings.KOKORO_BASE_URL, api_key="not-needed")
+    if provider == "openai":
         return lk_openai.TTS(model=settings.OPENAI_TTS_MODEL, voice=settings.OPENAI_TTS_VOICE,
                              api_key=settings.OPENAI_API_KEY)
     return None
 
 
 def build_tts(p: VoiceProfile) -> Any:
-    """The tenant's provider first, then any other configured provider as an automatic fallback."""
+    """Voices in the order set by .env (VOICE_TTS_PROVIDER, then VOICE_TTS_FALLBACKS); a business's own
+    voice setting goes first. A voice with no key / URL is skipped; if one fails mid-call, LiveKit
+    switches to the next."""
     primary = p.voice_provider if not p.tenant.is_legacy else settings.VOICE_TTS_PROVIDER
-    order = [primary] + [x for x in ("elevenlabs", "cartesia", "openai") if x != primary]
+    order = [name for name in settings.tts_order(primary) if settings.tts_available(name)]
     engines = [e for e in (_tts_for(name, p) for name in order) if e is not None]
     if not engines:
-        raise RuntimeError("No TTS provider configured (ELEVENLABS_API_KEY, CARTESIA_API_KEY or OPENAI_API_KEY)")
-    if _tts_for(primary, p) is None:
-        logger.warning("TTS provider %s has no API key — falling back", primary)
+        raise RuntimeError("No voice configured: set DEEPGRAM_API_KEY, KOKORO_BASE_URL, CARTESIA_API_KEY, "
+                           "ELEVENLABS_API_KEY or OPENAI_API_KEY")
+    logger.info("Voice order: %s", " → ".join(order))
     return engines[0] if len(engines) == 1 else lk_tts.FallbackAdapter(engines)
 
 
+def _fallback_llm() -> Optional[Any]:
+    """A second LLM on a different provider, so an OpenAI outage is survivable. None = not configured."""
+    if not (settings.ANTHROPIC_API_KEY and settings.VOICE_LLM_FALLBACK_MODEL):
+        return None
+    from livekit.plugins import anthropic   # lazy: only deployments with the key load the plugin
+
+    return anthropic.LLM(
+        model=settings.VOICE_LLM_FALLBACK_MODEL,
+        api_key=settings.ANTHROPIC_API_KEY,
+        temperature=settings.VOICE_LLM_TEMPERATURE,
+        parallel_tool_calls=True,
+        caching="ephemeral",
+        max_retries=0,
+    )
+
+
 def build_llm(p: VoiceProfile) -> Any:
-    return lk_openai.LLM(
+    primary = lk_openai.LLM(
         model=p.llm_model,
         client=openai_client(),
         temperature=settings.VOICE_LLM_TEMPERATURE,
         parallel_tool_calls=True,
         prompt_cache_key=f"voice-{p.business_id}",   # same static prefix → cache hits across calls
     )
+    fallback = _fallback_llm()
+    if fallback is None:
+        return primary
+    # No retry on the failed LLM (the caller is waiting): go straight to the next one.
+    return lk_llm.FallbackAdapter([primary, fallback], attempt_timeout=LLM_ATTEMPT_TIMEOUT_S)
 
 
 def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
@@ -145,7 +196,7 @@ def build_session(proc_userdata: dict[str, Any], state: CallState) -> AgentSessi
     return AgentSession(
         userdata=state,
         vad=vad,
-        stt=build_stt(p),
+        stt=build_stt(p, vad),
         llm=build_llm(p),
         tts=build_tts(p),
         turn_handling=turn_handling(p),  # type: ignore[arg-type]

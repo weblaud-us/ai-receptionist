@@ -57,7 +57,7 @@ export function localToUtcISO(date: string, time: string, tz: string): string {
 export const OUTCOME_LABEL: Record<string, string> = {
   booked: 'Booked', rescheduled: 'Rescheduled', cancelled: 'Cancelled', message: 'Message taken',
   transferred: 'Transferred', faq: 'Question answered', completed: 'Completed', hangup: 'Hung up',
-  voicemail: 'Voicemail', spam: 'Spam', unassigned: 'Unassigned number',
+  voicemail: 'Voicemail', spam: 'Spam', unassigned: 'Unassigned number', busy: 'Lines busy',
 }
 
 export const OUTCOME_STYLE: Record<string, string> = {

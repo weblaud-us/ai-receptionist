@@ -12,7 +12,7 @@ from core.tools.registry import ToolContext
 
 # A booking beats 'completed', a transfer beats everything.
 _OUTCOME_RANK = {"completed": 0, "faq": 1, "cancelled": 2, "message": 3, "rescheduled": 4, "booked": 5,
-                 "voicemail": 5, "transferred": 6}
+                 "voicemail": 5, "transferred": 6, "busy": 7}
 
 
 @dataclass
@@ -35,6 +35,10 @@ class CallState:
     outcome: Optional[str] = None             # booked / transferred / message / cancelled / completed
     recording: Optional[dict[str, Any]] = None
     ended_reason: Optional[str] = None
+    # Provider health during this call (Phase 3, Task 3.7): {"llm": 2, "tts": 1}
+    provider_errors: dict[str, int] = field(default_factory=dict)
+    fallbacks: dict[str, int] = field(default_factory=dict)      # switches to a fallback provider
+    transfer: Optional[str] = None            # "ok" | "failed" once transfer_to_human was tried
 
     @property
     def tenant_id(self) -> str:

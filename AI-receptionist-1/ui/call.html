@@ -165,6 +165,17 @@
     .btn-mute:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
     .btn-mute.muted { color: #f87171; border-color: rgba(248,113,113,0.35); }
 
+    .meters { display: none; margin: 4px 0 16px; text-align: left; }
+    .meter-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; }
+    .meter-row > span { width: 118px; flex: none; }
+    .meter { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.1); overflow: hidden; }
+    .meter-fill { height: 100%; width: 0%; border-radius: 4px; background: #34d399; transition: width 80ms linear; }
+    .meter-fill.agent { background: #60a5fa; }
+    .mic-select { width: 100%; margin-top: 4px; padding: 9px 10px; border-radius: 10px; font-size: 12px;
+      color: #e5e7eb; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); }
+    .mic-select option { color: #111; }
+    .tip.warn { color: #fca5a5; }
+
     .controls { display: flex; gap: 10px; }
     .controls .btn { flex: 1; margin-bottom: 0; }
 
@@ -209,6 +220,13 @@
 
   <button class="btn btn-join" id="joinBtn">🎙️ Join Call</button>
 
+  <!-- Live levels: show which direction is broken (your mic, or the receptionist's voice) -->
+  <div class="meters" id="meters">
+    <div class="meter-row"><span>🎙️ Your microphone</span><div class="meter"><div class="meter-fill" id="micFill"></div></div></div>
+    <div class="meter-row"><span>🔊 Receptionist</span><div class="meter"><div class="meter-fill agent" id="agentFill"></div></div></div>
+    <select class="mic-select" id="micSelect" title="Choose your microphone"></select>
+  </div>
+
   <div class="controls" style="display:none" id="liveControls">
     <button class="btn btn-mute" id="muteBtn">🔇 Mute</button>
     <button class="btn btn-leave" id="leaveBtn">📵 Leave</button>
@@ -240,6 +258,10 @@
   const tipEl       = $("tip");
   const errorBox    = $("errorBox");
   const bars        = Array.from(document.querySelectorAll(".bar"));
+  const metersEl    = $("meters");
+  const micFill     = $("micFill");
+  const agentFill   = $("agentFill");
+  const micSelect   = $("micSelect");
 
   let room = null;
   let muted = false;
@@ -247,7 +269,6 @@
   let analyser = null;
   let animFrame = null;
   const remoteAudioEls = new Map();
-  let primaryRemoteTrackSid = null;
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -272,38 +293,114 @@
     bars.forEach(b => b.classList.toggle("active", active));
   }
 
-  // ── Audio visualiser via Web Audio API ───────────────────────────────────
+  // ── Audio levels via Web Audio API ───────────────────────────────────────
 
-  function startVisualiser(stream) {
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 32;
-      const src = audioCtx.createMediaStreamSource(stream);
-      src.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
+  let micAnalyser = null, agentAnalyser = null;
+  let micNode = null, connectedAt = 0, micPeak = 0, micWarned = false;
+  const BAR_BINS = [1, 2, 3, 4, 6, 8, 12, 16];
 
-      function draw() {
-        animFrame = requestAnimationFrame(draw);
-        analyser.getByteFrequencyData(data);
-        bars.forEach((bar, i) => {
-          const val = data[i % data.length] || 0;
-          const h = Math.max(6, Math.floor((val / 255) * 52));
-          bar.style.height = h + "px";
-        });
-      }
-      draw();
-    } catch (e) {
-      // Visualiser is non-critical — fall back to CSS animation
-      setVisualiserActive(true);
-    }
+  function getCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    return audioCtx;
   }
 
-  function stopVisualiser() {
+  function analyserFor(mediaStreamTrack) {
+    const ctx = getCtx();
+    const a = ctx.createAnalyser();
+    a.fftSize = 1024;
+    const node = ctx.createMediaStreamSource(new MediaStream([mediaStreamTrack]));
+    node.connect(a);
+    return { a, node };
+  }
+
+  function rmsOf(a, buf) {
+    a.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+    return Math.sqrt(sum / buf.length);
+  }
+
+  function watchMic(mediaStreamTrack) {
+    if (micNode) { try { micNode.disconnect(); } catch (_) {} micNode = null; }
+    const { a, node } = analyserFor(mediaStreamTrack);
+    micAnalyser = a; micNode = node;
+    micPeak = 0; micWarned = false; connectedAt = Date.now();
+    tipEl.classList.remove("warn");
+  }
+
+  function startMeters() {
+    metersEl.style.display = "block";
+    const timeBuf = new Uint8Array(1024), freqBuf = new Uint8Array(512), agentBuf = new Uint8Array(1024);
+    function draw() {
+      animFrame = requestAnimationFrame(draw);
+      if (micAnalyser) {
+        micAnalyser.getByteFrequencyData(freqBuf);
+        bars.forEach((bar, i) => {
+          const val = freqBuf[BAR_BINS[i % BAR_BINS.length]] || 0;
+          bar.style.height = Math.max(6, Math.floor((val / 255) * 52)) + "px";
+        });
+        const level = muted ? 0 : rmsOf(micAnalyser, timeBuf);
+        micPeak = Math.max(micPeak, level);
+        micFill.style.width = Math.min(100, level * 500) + "%";
+        // Several seconds in and nothing but silence: almost always the wrong or muted microphone.
+        if (!muted && !micWarned && Date.now() - connectedAt > 8000 && micPeak < 0.015) {
+          micWarned = true;
+          tipEl.classList.add("warn");
+          tipEl.textContent = "⚠️ We can't hear your microphone. Pick the right one in the list below, and check " +
+            "Windows Settings → System → Sound → Input (speak and watch the level bar there).";
+        }
+        if (micWarned && micPeak >= 0.015) {
+          micWarned = false;
+          tipEl.classList.remove("warn");
+          tipEl.textContent = "You are live. The receptionist can hear you.";
+        }
+      }
+      agentFill.style.width = agentAnalyser ? Math.min(100, rmsOf(agentAnalyser, agentBuf) * 500) + "%" : "0%";
+    }
+    draw();
+  }
+
+  function stopMeters() {
     if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
     if (audioCtx)  { audioCtx.close().catch(() => {}); audioCtx = null; }
+    micAnalyser = null; agentAnalyser = null; micNode = null;
+    metersEl.style.display = "none";
+    micFill.style.width = "0%"; agentFill.style.width = "0%";
     bars.forEach(b => { b.classList.remove("active"); b.style.height = "6px"; });
   }
+
+  function localMicTrack() {
+    const pub = room && room.localParticipant.getTrackPublication(LK.Track.Source.Microphone);
+    return pub && pub.track ? pub.track.mediaStreamTrack : null;
+  }
+
+  async function loadMics() {
+    try {
+      const devs = await LK.Room.getLocalDevices("audioinput");
+      micSelect.innerHTML = "";
+      devs.forEach(d => {
+        const o = document.createElement("option");
+        o.value = d.deviceId;
+        o.textContent = d.label || "Microphone";
+        micSelect.appendChild(o);
+      });
+      const active = room && room.getActiveDevice("audioinput");
+      if (active) micSelect.value = active;
+    } catch (_) { micSelect.style.display = "none"; }
+  }
+
+  micSelect.addEventListener("change", async () => {
+    if (!room) return;
+    try {
+      await room.switchActiveDevice("audioinput", micSelect.value);
+      const t = localMicTrack();
+      if (t) watchMic(t);
+    } catch (e) {
+      console.error(e);
+      showError("Couldn't switch to that microphone: " + (e.message || e));
+    }
+  });
 
   // ── Join call ─────────────────────────────────────────────────────────────
 
@@ -315,18 +412,19 @@
 
     try {
       const roomId = getRoomId();
-      // The WhatsApp link is signed and expires: pass exp + sig through to the token endpoint.
       const link = new URLSearchParams(window.location.search);
-      const qs = new URLSearchParams({
-        room: roomId,
-        exp: link.get("exp") || "",
-        sig: link.get("sig") || "",
-      });
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      // /talk/<business>?k=<key> is the permanent link: the server picks a fresh room for each visit.
+      // /call/<room>?exp=&sig= is the signed, expiring link (WhatsApp "call me", dashboard test call).
+      const qs = pathParts[0] === "talk"
+        ? new URLSearchParams({ perm: link.get("k") || "", t: pathParts[1] || "default" })
+        : new URLSearchParams({ room: roomId, exp: link.get("exp") || "", sig: link.get("sig") || "" });
       const resp = await fetch(`/livekit/token?${qs.toString()}`, { cache: "no-store" });
       if (!resp.ok) {
         let msg = "Token request failed (" + resp.status + ")";
         try { msg = (await resp.json()).detail || msg; } catch (_) {}
-        if (resp.status === 403) msg = "This call link is invalid or has expired. Please ask for a new link on WhatsApp.";
+        if (resp.status === 403) msg = "This call link is invalid or has expired. Please ask for a new link.";
+        if (resp.status === 429) msg = "The receptionist is busy right now. Please try again in a little while.";
         throw new Error(msg);
       }
       const data = await resp.json();
@@ -346,23 +444,26 @@
         if (track.kind === LK.Track.Kind.Audio) {
           if (remoteAudioEls.has(track.sid)) return;
 
-          // Keep exactly one remote audio source active to prevent double voice.
-          if (primaryRemoteTrackSid && primaryRemoteTrackSid !== track.sid) {
-            const prevEl = remoteAudioEls.get(primaryRemoteTrackSid);
-            if (prevEl) {
-              try { prevEl.pause(); } catch (_) {}
-              prevEl.remove();
-            }
-            remoteAudioEls.delete(primaryRemoteTrackSid);
-          }
-
+          // Play EVERY remote audio track. The receptionist publishes two: its voice ("roomio_audio")
+          // and a background track for the soft typing sound ("background_audio"). Keeping only the
+          // newest one used to drop the voice and leave the caller in silence.
           const el = track.attach();
           el.autoplay = true;
           el.playsInline = true;
           el.style.display = "none";
           document.body.appendChild(el);
           remoteAudioEls.set(track.sid, el);
-          primaryRemoteTrackSid = track.sid;
+          // The voice track drives the "Receptionist" meter (the other one is the silent typing-sound track).
+          if (_pub.trackName === "roomio_audio" && track.mediaStreamTrack) {
+            agentAnalyser = analyserFor(track.mediaStreamTrack).a;
+          }
+        }
+      });
+      // If the browser blocks sound until the page is clicked, say so instead of staying silent.
+      room.on(LK.RoomEvent.AudioPlaybackStatusChanged, () => {
+        if (room && !room.canPlaybackAudio) {
+          tipEl.textContent = "Your browser blocked sound. Click anywhere on this page to hear the receptionist.";
+          document.addEventListener("click", () => { if (room) room.startAudio().catch(() => {}); }, { once: true });
         }
       });
       room.on(LK.RoomEvent.TrackUnsubscribed, (track) => {
@@ -371,7 +472,6 @@
           try { track.detach(el); } catch (_) {}
           el.remove();
           remoteAudioEls.delete(track.sid);
-          if (primaryRemoteTrackSid === track.sid) primaryRemoteTrackSid = null;
           return;
         }
         track.detach().forEach(x => x.remove());
@@ -392,14 +492,11 @@
       // Enable microphone
       await room.localParticipant.setMicrophoneEnabled(true);
 
-      // Start local audio visualiser
-      const localTrack = [...room.localParticipant.audioTrackPublications.values()][0];
-      if (localTrack && localTrack.track && localTrack.track.mediaStreamTrack) {
-        const stream = new MediaStream([localTrack.track.mediaStreamTrack]);
-        startVisualiser(stream);
-      } else {
-        setVisualiserActive(true);
-      }
+      // Start the level meters and the microphone list
+      startMeters();
+      const micTrack = localMicTrack();
+      if (micTrack) watchMic(micTrack); else setVisualiserActive(true);
+      await loadMics();
 
       setStatus("Connected — speak now", "green");
       tipEl.textContent = "You are live. The receptionist can hear you.";
@@ -440,8 +537,7 @@
       try { el.remove(); } catch (_) {}
     });
     remoteAudioEls.clear();
-    primaryRemoteTrackSid = null;
-    stopVisualiser();
+    stopMeters();
     setStatus("Call ended", "red");
     tipEl.textContent = "Thank you for calling. You may close this window.";
     joinBtn.style.display = "block";

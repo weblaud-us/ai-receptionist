@@ -41,9 +41,10 @@ with the API running). The link joins a LiveKit room and the agent is dispatched
 
 ## Test with a phone number (SIP)
 
-Follow [telephony/README.md](../AI-receptionist-1/telephony/README.md) with a dev trunk and one
-test number. On the first call, check the worker log line `SIP participant attributes: [...]`
-includes `sip.phoneNumber` and `sip.trunkPhoneNumber`.
+Follow [TELEPHONY_TESTING.md](TELEPHONY_TESTING.md). With `APP_ENV=development` you call from a free
+softphone (Linphone), no Twilio account needed; with `production`/`staging` the same flow uses Twilio.
+On the first call, check the worker log line `SIP participant attributes: [...]` includes
+`sip.phoneNumber` and `sip.trunkPhoneNumber`.
 
 ## Acceptance checks (Task 1.12.c)
 

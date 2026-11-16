@@ -77,7 +77,11 @@ Dashboard (set at build time):
 
 ## 4. Server and hosting
 
-Follow [DEPLOY_GUIDE.md](../AI-receptionist-1/DEPLOY_GUIDE.md) sections 1 and 2:
+> Phase 3 replaced this section with containers: follow **"Phase 3 — production infrastructure"**
+> at the end of this file and [deploy/README.md](../deploy/README.md). The systemd steps below
+> apply only to an existing VPS that hasn't moved yet.
+
+Legacy VPS — [DEPLOY_GUIDE.md](../AI-receptionist-1/DEPLOY_GUIDE.md) sections 1 and 2:
 
 - [ ] Server with an unprivileged `receptionist` user, `uv`, and the repo checked out at
       `/opt/receptionist` using a read-only deploy key.
@@ -92,6 +96,9 @@ Follow [DEPLOY_GUIDE.md](../AI-receptionist-1/DEPLOY_GUIDE.md) sections 1 and 2:
       instead and skip the systemd steps.
 
 ## 5. GitHub
+
+> Phase 3: deploys are tag-based. Use the GitHub steps in the Phase 3 section; the `VPS_*`
+> secrets and the `workflow_run` note below are the old flow.
 
 - [ ] Repo → Settings → Environments → create a `production` environment (add yourself as a
       required reviewer if you want to approve each deploy).
@@ -181,3 +188,72 @@ Development and testing use a dev LiveKit project and a dev Twilio trunk. For pr
       unassigned one and confirm the neutral message and the Sentry warning.
 - [ ] Remove the `HOTEL_*` variables after the hotel works as tenant #1.
 - [ ] ⚠ No US healthcare tenants until BAAs are signed with every vendor (ROADMAP Task 2.1).
+
+## Phase 3 — production infrastructure
+
+Details and acceptance checks: [PHASE_3_TESTING.md](PHASE_3_TESTING.md). Host setup:
+[deploy/README.md](../deploy/README.md). Incidents: [RUNBOOK.md](RUNBOOK.md).
+
+**Hosting**
+- [ ] One Docker host per environment (staging, production), same region as LiveKit and Atlas
+      (`WORKERS=2`–`4` in the `.deploy` file, sized from the load test);
+      `/etc/receptionist/<env>.env` and `<env>.deploy` written; DNS for API and dashboard.
+- [ ] **Atlas M10+** for production (shared tiers have no SLA), continuous backup with
+      point-in-time restore on, TLS only, IP allowlist = the hosts (or a private endpoint),
+      separate DB users per environment.
+- [ ] **Redis:** the bundled container works; a managed Redis (Upstash / Redis Cloud /
+      ElastiCache, TLS `rediss://`) is better. `REDIS_URL` set — production refuses to boot without it.
+- [ ] `LEGACY_TWILIO_VOICE=false` before running two API replicas (the old phone path keeps call
+      state in one process).
+- [ ] Cloudflare (proxied) in front of the API: WAF managed rules on, a rate-limit rule on
+      `/auth/*` and `/webhook`, and know where "Under attack" mode is for emergencies.
+
+**GitHub**
+- [ ] Environments `staging` and `production` with secrets `DEPLOY_HOST`, `DEPLOY_USER`,
+      `DEPLOY_SSH_KEY`, `DEPLOY_PORT`, `APP_DIR` and variables `API_URL` (+ `SENTRY_DSN_DASHBOARD`).
+      Required reviewer on `production`.
+- [ ] Protect `main` (CI must pass) and protect tags `v*` (only you can push them).
+- [ ] Dependabot alerts and secret scanning on (repo → Security). Run gitleaks over the **full
+      history** once: `docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks detect --source /repo`.
+      Anything it finds must be rotated, not just deleted.
+
+**Resilience**
+- [ ] `ANTHROPIC_API_KEY` set (LLM fallback) and `VOICE_LLM_FALLBACK_MODEL` passing the eval suite;
+      `CARTESIA_API_KEY` or `DEEPGRAM_API_KEY` set so TTS has a fallback.
+- [ ] `fallback_app.py` running on a **second, independent host/provider**
+      ([deploy/README.md](../deploy/README.md), "Independent telephony fallback"), and the Twilio
+      trunk's Disaster Recovery URL pointing at it — not at the main host, which may be the thing
+      that is down. ⚠ Verify current Elastic SIP Trunking DR settings.
+- [ ] Each business's "Max calls at once" (Platform page) matches its plan.
+- [ ] `TOKEN_ENCRYPTION_KEY` set before the first Phase 3 deploy: the deploy encrypts any stored
+      guest ID numbers with it (migration m0004) and refuses if plaintext exists without it.
+- [ ] `EVAL_ANTHROPIC_API_KEY` repository secret, so CI runs the evals on the fallback LLM too.
+- [ ] Ask OpenAI / Anthropic / ElevenLabs / Deepgram for higher rate limits **before** the load test.
+
+**Monitoring**
+- [ ] `METRICS_TOKEN` set; Grafana Cloud (or Prometheus) scraping `/metrics` with
+      [deploy/monitoring/prometheus.yml](../deploy/monitoring/prometheus.yml); alerts from
+      [alerts.yml](../deploy/monitoring/alerts.yml) routed to your phone; the dashboard from
+      [dashboard.md](../deploy/monitoring/dashboard.md).
+- [ ] `LIVEKIT_PROMETHEUS_PORT=9100` and the workers scraped (for `VoiceWorkerDown`).
+- [ ] Uptime monitor on `/readyz` every minute; public status page (Better Stack / Instatus).
+- [ ] Synthetic call every 15 min with `--heartbeat` (cron on a machine outside the production
+      host), heartbeat grace 35 min → phone.
+- [ ] Sentry projects for API, worker, jobs and dashboard; release = git SHA (the images set it).
+- [ ] JSON logs shipped to Better Stack / Axiom / Loki (Docker log driver or an agent on the host).
+
+**Accounts and money**
+- [ ] **MFA on every provider account:** Twilio, LiveKit, OpenAI, Anthropic, ElevenLabs, Deepgram,
+      Cartesia, Atlas, Meta, Resend, GitHub, Cloudflare, the registrar, the host. These accounts
+      *are* the company.
+- [ ] Spend caps / budget alerts at 2× normal daily spend on OpenAI, Anthropic, ElevenLabs,
+      Deepgram, Twilio (plus a low-balance alert), LiveKit.
+
+**Acceptance (on staging or production)**
+- [ ] Deploy during 5 live test calls → 0 dropped.
+- [ ] Kill a worker mid-call → the next call is answered by the other worker within 1 s.
+- [ ] Primary TTS key revoked → calls continue on the fallback voice; the alert fires.
+- [ ] 50 concurrent calls, p95 response latency ≤ 1.8 s.
+- [ ] Deliberately break something → synthetic call / alerts reach your phone.
+- [ ] Atlas restore test done and timed (write the time in RUNBOOK.md); repeat monthly.
+- [ ] Incident-response contacts filled in at the end of RUNBOOK.md.

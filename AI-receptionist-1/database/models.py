@@ -113,7 +113,9 @@ class GuestProfile(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     nationality: Optional[str] = None
-    id_number: Optional[str] = None      # Passport / NID
+    # Passport / NID: never stored in plain text (core/sensitive.py, Roadmap Task 3.8)
+    id_number_enc: Optional[str] = None   # Fernet ciphertext
+    id_number_last4: Optional[str] = None # shown masked as •••1234
     preferences: Dict[str, Any] = {}     # room_type, floor, etc.
     total_stays: int = 0
     vip_tier: str = "standard"           # standard | silver | gold | platinum

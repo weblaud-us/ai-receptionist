@@ -14,6 +14,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_SECRETS = {"", "change-in-production"}
+TTS_PROVIDERS = ("elevenlabs", "cartesia", "deepgram", "kokoro", "openai")
 
 
 class Settings(BaseSettings):
@@ -34,6 +35,17 @@ class Settings(BaseSettings):
     # ── MongoDB ───────────────────────────────────────────
     MONGODB_URI:     str = Field(default="mongodb://localhost:27017")
     MONGODB_DB_NAME: str = Field(default="hotel_ai_dev")
+
+    # ── Redis (Phase 3): shared state + job queue ─────────
+    # Rate limits, WhatsApp dedupe, per-business call counters and the arq job queue. Empty = each
+    # process keeps its own state and the API runs the background jobs itself (one API process only).
+    REDIS_URL:               str = Field(default="")   # redis://host:6379/0 or rediss://… (TLS)
+    API_RATE_PER_TENANT_MIN: int = Field(default=600)  # dashboard API requests per business per minute; 0 = off
+    AUTH_RATE_PER_IP_MIN:    int = Field(default=30)   # sign-in / reset / invite POSTs per IP per minute; 0 = off
+    METRICS_TOKEN:           str = Field(default="")   # Bearer token for GET /metrics; empty = off outside development
+    # Only on the separate host running fallback_app.py (Twilio's disaster-recovery URL). That app
+    # needs no Redis; the full API refuses to start with this set.
+    TELEPHONY_FALLBACK_ONLY: bool = Field(default=False)
 
     # ── OpenAI ────────────────────────────────────────────
     OPENAI_API_KEY:     str   = Field(default="")
@@ -100,12 +112,29 @@ class Settings(BaseSettings):
     LIVEKIT_AGENT_NAME:         str = Field(default="receptionist")  # SIP dispatch rule + call links use it
     LIVEKIT_NUM_IDLE_PROCESSES: int = Field(default=1)    # warm spare processes; 2+ in production
     LIVEKIT_SIP_OUTBOUND_TRUNK_ID: str = Field(default="")  # ST_… from `lk sip outbound create` (Phase 4)
+    # Capacity and deploys (Phase 3, Task 3.6)
+    LIVEKIT_DRAIN_TIMEOUT:       int   = Field(default=900)   # s a stopping worker waits for live calls to finish
+    LIVEKIT_LOAD_THRESHOLD:      float = Field(default=0.7)   # CPU load above which the worker refuses new calls
+    LIVEKIT_JOB_MEMORY_WARN_MB:  int   = Field(default=700)   # log a warning when one call's process passes this
+    LIVEKIT_JOB_MEMORY_LIMIT_MB: int   = Field(default=2000)  # kill one call's process above this; 0 = never
+    LIVEKIT_PROMETHEUS_PORT:     int   = Field(default=0)     # worker's own /metrics port; 0 = off
     VOICE_LLM_MODEL:            str   = Field(default="gpt-4.1-mini")
     VOICE_LLM_TEMPERATURE:      float = Field(default=0.4)
+    # Fallbacks (Task 3.5): used automatically when the first provider fails mid-call.
+    ANTHROPIC_API_KEY:          str   = Field(default="")   # empty = no fallback LLM
+    VOICE_LLM_FALLBACK_MODEL:   str   = Field(default="claude-haiku-5-5")
+    VOICE_STT_FALLBACK:         bool  = Field(default=True)  # OpenAI speech-to-text behind Deepgram
     VOICE_STT_PROVIDER:         Literal["deepgram", "openai"] = Field(default="deepgram")
     VOICE_STT_MODEL:            str = Field(default="nova-3")
     VOICE_LANGUAGE:             str = Field(default="en-US")  # STT language; "multi" = code-switching
-    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "openai"] = Field(default="elevenlabs")
+    # Voice (TTS). VOICE_TTS_PROVIDER is tried first, then VOICE_TTS_FALLBACKS in order; a provider
+    # without a key / URL is skipped. Names: elevenlabs | cartesia | deepgram | kokoro | openai.
+    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"] = Field(default="elevenlabs")
+    VOICE_TTS_FALLBACKS:        str = Field(default="elevenlabs,cartesia,deepgram,kokoro,openai")
+    DEEPGRAM_TTS_MODEL:         str = Field(default="aura-2-andromeda-en")  # Aura voice; uses DEEPGRAM_API_KEY
+    KOKORO_BASE_URL:            str = Field(default="")   # local Kokoro-FastAPI, e.g. http://kokoro:8880/v1; empty = off
+    KOKORO_MODEL:               str = Field(default="kokoro")
+    KOKORO_VOICE:               str = Field(default="af_heart")
     ELEVENLABS_TTS_MODEL:       str = Field(default="eleven_flash_v2_5")
     CARTESIA_API_KEY:           str = Field(default="")   # fallback TTS when set
     CARTESIA_VOICE_ID:          str = Field(default="")
@@ -120,6 +149,27 @@ class Settings(BaseSettings):
     TRANSFER_HOURS:             str = Field(default="")  # "09:00-21:00" business-local; empty = any time
     OWNER_NOTIFY_WHATSAPP:      str = Field(default="")  # comma-separated numbers told about new messages
     LEGACY_TWILIO_VOICE:        bool = Field(default=True)  # /voice/* Media Streams path; off after cutover
+
+    # Permanent (non-expiring) browser call links: /talk/<business>?k=<key>. See docs/TELEPHONY_TESTING.md Part 3.
+    CALL_LINK_VERSION:          int = Field(default=1)    # raise it to revoke every permanent link at once
+    PUBLIC_CALL_RATE_PER_IP_HOUR: int = Field(default=10)   # calls one visitor can start per hour (permanent links)
+    PUBLIC_CALL_MAX_PER_DAY:    int = Field(default=100)  # calls all visitors together can start per day
+
+    # ── Telephony (SIP into LiveKit) ──────────────────────
+    # Empty = decided by APP_ENV: development → softphone (free, Linphone → LiveKit SIP),
+    # staging/production → twilio (Elastic SIP Trunking). See docs/TELEPHONY_TESTING.md.
+    TELEPHONY_PROVIDER: Literal["", "softphone", "twilio", "livekit"] = Field(default="")
+    # livekit = a US number rented in LiveKit Cloud (Telephony -> Phone Numbers); no Twilio, no SIP trunk.
+    # softphone (development only)
+    SOFTPHONE_TEST_NUMBERS: str = Field(default="+15550000001")  # comma-separated fake "dialled" numbers
+    SOFTPHONE_SIP_USERNAME: str = Field(default="")   # a fake caller number, e.g. 15557654321
+    SOFTPHONE_SIP_PASSWORD: str = Field(default="")
+    # twilio (Elastic SIP trunk ↔ LiveKit trunks)
+    TWILIO_SIP_INBOUND_USERNAME:  str = Field(default="")   # empty = Twilio sends no credentials
+    TWILIO_SIP_INBOUND_PASSWORD:  str = Field(default="")
+    TWILIO_TERMINATION_URI:       str = Field(default="")   # yourname.pstn.twilio.com
+    TWILIO_SIP_OUTBOUND_USERNAME: str = Field(default="")   # Twilio trunk credential list
+    TWILIO_SIP_OUTBOUND_PASSWORD: str = Field(default="")
 
     # Call recording via LiveKit Egress (ENABLE_CALL_RECORDING=true). ⚖ consent-sensitive.
     RECORDING_S3_BUCKET:     str = Field(default="")
@@ -178,6 +228,52 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.APP_ENV == "development"
 
+    @property
+    def redis_enabled(self) -> bool:
+        return bool(self.REDIS_URL.strip())
+
+    @property
+    def telephony_provider(self) -> Literal["softphone", "twilio", "livekit"]:
+        """Where phone calls come from: TELEPHONY_PROVIDER if set, otherwise APP_ENV decides."""
+        if self.TELEPHONY_PROVIDER:
+            return self.TELEPHONY_PROVIDER
+        return "softphone" if self.is_development else "twilio"
+
+    @property
+    def softphone_numbers(self) -> list[str]:
+        return [n.strip() for n in self.SOFTPHONE_TEST_NUMBERS.split(",") if n.strip()]
+
+    @property
+    def tts_fallbacks(self) -> list[str]:
+        return [n.strip().lower() for n in self.VOICE_TTS_FALLBACKS.split(",") if n.strip()]
+
+    def tts_available(self, name: str) -> bool:
+        """True when the provider has what it needs (a key, or Kokoro's URL)."""
+        return bool({
+            "elevenlabs": self.ELEVENLABS_API_KEY,
+            "cartesia": self.CARTESIA_API_KEY,
+            "deepgram": self.DEEPGRAM_API_KEY,
+            "kokoro": self.KOKORO_BASE_URL,
+            "openai": self.OPENAI_API_KEY,
+        }.get(name))
+
+    def tts_order(self, primary: str) -> list[str]:
+        """Voices to try, best first: `primary` (a business's own choice), then VOICE_TTS_PROVIDER,
+        then VOICE_TTS_FALLBACKS. Duplicates and unknown names are dropped; availability is not
+        checked here (see `tts_available`)."""
+        order: list[str] = []
+        for name in (primary, self.VOICE_TTS_PROVIDER, *self.tts_fallbacks):
+            if name in TTS_PROVIDERS and name not in order:
+                order.append(name)
+        return order
+
+    @model_validator(mode="after")
+    def _known_tts_fallbacks(self) -> "Settings":
+        unknown = [n for n in self.tts_fallbacks if n not in TTS_PROVIDERS]
+        if unknown:
+            raise ValueError(f"VOICE_TTS_FALLBACKS has unknown voice(s) {unknown}; use {', '.join(TTS_PROVIDERS)}")
+        return self
+
     @model_validator(mode="after")
     def _production_guard(self) -> "Settings":
         if self.APP_ENV != "production":
@@ -206,8 +302,14 @@ class Settings(BaseSettings):
             problems.append("REQUIRE_ADMIN_MFA must be true")
         if not self.COOKIE_SECURE:
             problems.append("COOKIE_SECURE must be true")
+        if self.telephony_provider == "softphone":
+            problems.append("TELEPHONY_PROVIDER=softphone is not allowed in production")
         if self.LOG_LEVEL.upper() == "DEBUG":
             problems.append("LOG_LEVEL=DEBUG would log transcripts; use INFO")
+        if not self.redis_enabled and not self.TELEPHONY_FALLBACK_ONLY:
+            problems.append("REDIS_URL is required (shared rate limits, call limits and the job queue)")
+        if self.METRICS_TOKEN and len(self.METRICS_TOKEN) < 24:
+            problems.append("METRICS_TOKEN must be empty or 24+ random chars")
         if problems:
             raise ValueError("Unsafe production config: " + "; ".join(problems))
         return self

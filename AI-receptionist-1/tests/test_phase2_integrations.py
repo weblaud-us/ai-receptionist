@@ -110,6 +110,7 @@ def test_production_guard_requires_mfa_and_encryption_key():
     from config import Settings
 
     safe = dict(APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
+                REDIS_URL="redis://redis:6379/0",
                 VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com", META_APP_SECRET="s",
                 LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True)
     assert Settings(_env_file=None, **safe).is_production

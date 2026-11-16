@@ -1,4 +1,8 @@
-# Deploy guide (VPS, systemd) — valid until Phase 3 moves to containers
+# Deploy guide (VPS, systemd) — legacy
+
+> **Superseded by containers (Phase 3): see [../deploy/README.md](../deploy/README.md).** This guide is
+> kept only for an existing systemd server until it is moved. The systemd API must stay at one
+> worker unless `REDIS_URL` is set and `python -m jobs` runs as a third service.
 
 Push to `main` → **CI** (lint, types, tests, dashboard build) → if green, **deploy** SSHes to the
 server, checks out that exact commit and runs `AI-receptionist-1/deploy.sh`, which installs the

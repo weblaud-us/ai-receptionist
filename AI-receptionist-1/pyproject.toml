@@ -13,11 +13,11 @@ dependencies = [
     "python-multipart==0.0.33",          # form parsing for Twilio webhooks
     "pydantic==2.9.2",
     "pydantic-settings==2.6.0",
-    "python-dotenv==1.0.1",
+    "python-dotenv==1.2.2",
     "protobuf==5.29.6",
     # Database
-    "motor==3.6.0",
-    "pymongo==4.9.2",
+    "motor==3.7.1",
+    "pymongo==4.18.3",
     # LLM / speech
     "openai==2.54.0",
     "elevenlabs==2.78.0",
@@ -46,6 +46,11 @@ dependencies = [
     # Security
     "argon2-cffi==25.1.0",             # password hashing (argon2id) for dashboard users
     "cryptography==50.0.2",            # Fernet encryption of OAuth refresh tokens (calendar integrations)
+    # Phase 3: shared state, job queue, metrics, LLM fallback
+    "redis==5.3.1",                    # rate limits, dedupe, per-tenant call counters (arq 0.28 needs redis<6)
+    "arq==0.28.0",                     # Redis job queue: reminders, digests, calendar sync, WhatsApp replies
+    "prometheus-client==0.26.0",       # /metrics on the API (the worker has its own: LIVEKIT_PROMETHEUS_PORT)
+    "livekit-plugins-anthropic==1.8.6",  # fallback LLM when OpenAI is down (must match livekit-agents)
 ]
 
 [dependency-groups]
@@ -55,6 +60,7 @@ dev = [
     "mongomock-motor>=0.0.34",
     "ruff>=0.8",
     "mypy>=1.13",
+    "fakeredis>=2.40.0",               # in-memory Redis for tests
 ]
 
 [tool.uv]

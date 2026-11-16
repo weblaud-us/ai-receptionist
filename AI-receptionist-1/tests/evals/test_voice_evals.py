@@ -10,6 +10,12 @@ asked:
     docker compose -f docker-compose.dev.yml run --rm -e RUN_EVALS=1 tests pytest tests/evals
 
 Use them to compare LLMs (Task 1.3): change VOICE_LLM_MODEL and re-run. 100% must pass.
+
+The fallback LLM (Phase 3, Task 3.5) must pass too before it can carry real calls:
+
+    RUN_EVALS=1 EVAL_LLM=fallback EVAL_ANTHROPIC_API_KEY=sk-ant-... EVAL_OPENAI_API_KEY=sk-... pytest tests/evals
+
+(the judge stays on OpenAI; the agent runs on VOICE_LLM_FALLBACK_MODEL alone).
 """
 
 import os
@@ -39,6 +45,9 @@ if not livekit_agents_importable():
     pytest.skip("livekit-agents can't be imported on this machine", allow_module_level=True)
 if not _real_openai_key().startswith("sk-") or _real_openai_key() == "sk-test":
     pytest.skip("no real OpenAI key (EVAL_OPENAI_API_KEY or OPENAI_API_KEY in .env)", allow_module_level=True)
+EVAL_FALLBACK = os.environ.get("EVAL_LLM") == "fallback"
+if EVAL_FALLBACK and not os.environ.get("EVAL_ANTHROPIC_API_KEY"):
+    pytest.skip("EVAL_LLM=fallback needs EVAL_ANTHROPIC_API_KEY", allow_module_level=True)
 
 from livekit.agents import AgentSession  # noqa: E402
 from livekit.plugins import openai as lk_openai  # noqa: E402
@@ -76,9 +85,13 @@ async def hotel(db, monkeypatch):
 
 
 @pytest.fixture
-async def session(hotel):
+async def session(hotel, monkeypatch):
     state = CallState(call_id="eval", profile=load_profile(), caller_phone=CALLER)
-    llm = session_factory.build_llm(state.profile)
+    if EVAL_FALLBACK:
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", os.environ["EVAL_ANTHROPIC_API_KEY"])
+        llm = session_factory._fallback_llm()
+    else:
+        llm = session_factory.build_llm(state.profile)
     async with AgentSession(llm=llm, userdata=state) as s:
         await s.start(ReceptionistAgent(state))
         yield s

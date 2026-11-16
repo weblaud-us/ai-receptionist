@@ -110,6 +110,7 @@ async def list_tenants(status: Optional[str] = None, admin: Principal = Depends(
                     "status": t.get("status"), "region": t.get("region"), "timezone": t.get("timezone"),
                     "calls_30d": s.get("calls", 0), "minutes_30d": round((s.get("seconds") or 0) / 60, 1),
                     "included_minutes": (t.get("limits") or {}).get("included_minutes"),
+                    "max_concurrent_calls": (t.get("limits") or {}).get("max_concurrent_calls", 3),
                     "numbers": numbers.get(t["_id"], []), "created_at": to_jsonable(t.get("created_at"))})
     return {"tenants": out, "total": len(out)}
 
