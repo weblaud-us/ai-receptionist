@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2, Plus, Trash2 } from 'lucide-reac
 import { ErrorBanner, Field, PageHeader } from '@/components/app/blocks'
 import { HoursEditor } from '@/components/app/hours-editor'
 import { SimpleSelect } from '@/components/app/simple-select'
+import { VoicePicker } from '@/components/app/voice-picker'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -222,6 +223,7 @@ function VoiceStep({ onSave }: { onSave: (changes: Record<string, unknown>) => v
   const [name, setName] = useState(ctx.tenant.agent.name)
   const [greeting, setGreeting] = useState(ctx.tenant.agent.greeting)
   const [tone, setTone] = useState(ctx.tenant.agent.tone)
+  const [voiceId, setVoiceId] = useState(ctx.tenant.agent.voice_id)
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -230,11 +232,14 @@ function VoiceStep({ onSave }: { onSave: (changes: Record<string, unknown>) => v
           <SimpleSelect value={tone} onChange={(v) => setTone(v as typeof tone)}
             options={[{ value: 'warm', label: 'Warm' }, { value: 'professional', label: 'Professional' }, { value: 'upbeat', label: 'Upbeat' }]} />
         </Field>
+        <Field label="Voice" className="sm:col-span-2" hint="Press play to hear each voice before you pick.">
+          <VoicePicker provider={ctx.tenant.agent.voice_provider} value={voiceId} onChange={setVoiceId} />
+        </Field>
         <Field label="Greeting (optional)" className="sm:col-span-2" hint="Must say it's a virtual assistant. Leave empty for the standard one.">
           <Textarea rows={2} value={greeting} placeholder={ctx.greeting} onChange={(e) => setGreeting(e.target.value)} />
         </Field>
       </div>
-      <Button disabled={!name.trim()} onClick={() => onSave({ agent: { name: name.trim(), greeting, tone } })}>
+      <Button disabled={!name.trim()} onClick={() => onSave({ agent: { name: name.trim(), greeting, tone, voice_id: voiceId } })}>
         Save and continue <ArrowRight />
       </Button>
     </>

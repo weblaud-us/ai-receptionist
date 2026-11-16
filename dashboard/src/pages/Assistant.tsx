@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { ExternalLink, Loader2, PhoneCall, Save } from 'lucide-react'
 import { ErrorBanner, Field, PageHeader } from '@/components/app/blocks'
 import { SimpleSelect } from '@/components/app/simple-select'
+import { VoicePicker } from '@/components/app/voice-picker'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { isValidPhone, normalizePhone } from '@/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { useTestCall, useUpdateSettings } from '@/lib/tenant-hooks'
-import type { AgentConfig, Tenant } from '@/lib/tenant-types'
+import type { AgentConfig, Links, Tenant } from '@/lib/tenant-types'
 import { useDraft } from '@/lib/use-draft'
 
 const LANGUAGES = [
@@ -26,7 +27,14 @@ const PATIENCE = [
   { value: '3.5', label: 'Patient — waits longer for callers reading numbers' },
 ]
 
-type Draft = Pick<Tenant, 'agent' | 'transfer' | 'emergency_instructions'>
+type Draft = Pick<Tenant, 'agent' | 'transfer' | 'emergency_instructions' | 'links'>
+
+const LINK_FIELDS: { key: keyof Links; label: string; hint: string }[] = [
+  { key: 'booking', label: 'Online booking page', hint: 'Sent when a caller would rather book themselves.' },
+  { key: 'menu', label: 'Menu or price list', hint: 'A PDF or web page.' },
+  { key: 'directions', label: 'Directions', hint: 'Empty = a maps link built from your address.' },
+  { key: 'payment', label: 'Payment page', hint: 'Deposits, invoices or online payment.' },
+]
 
 /** Starts a test call in a new tab. Shared with onboarding. */
 export function TestCallButton({ label = 'Call your assistant now' }: { label?: string }) {
@@ -56,6 +64,7 @@ export default function Assistant() {
     agent: ctx.tenant.agent,
     transfer: ctx.tenant.transfer,
     emergency_instructions: ctx.tenant.emergency_instructions,
+    links: ctx.tenant.links ?? { booking: '', menu: '', directions: '', payment: '' },
   })
   if (!draft) return null
   const a = draft.agent
@@ -102,8 +111,8 @@ export default function Assistant() {
                 <SimpleSelect value={a.voice_provider} onChange={(v) => setAgent({ voice_provider: v as AgentConfig['voice_provider'] })}
                   options={[{ value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'cartesia', label: 'Cartesia' }, { value: 'openai', label: 'OpenAI' }]} />
               </Field>
-              <Field label="Voice ID" hint="From your voice provider's library. Empty = default voice." className="sm:col-span-2">
-                <Input value={a.voice_id} onChange={(e) => setAgent({ voice_id: e.target.value })} />
+              <Field label="Voice" className="sm:col-span-2">
+                <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })} />
               </Field>
             </div>
             <Field label="Greeting" hint="Leave empty for the standard greeting. It must say it's a virtual assistant — that's the law in many places.">
@@ -181,7 +190,28 @@ export default function Assistant() {
                     onChange={(e) => setAgent({ recording: { ...a.recording, retention_days: Number(e.target.value) } })} />
                 </Field>
               )}
+              <Field label="Delete call transcripts after (days)" hint="The call itself (who, when, outcome, summary) is kept.">
+                <Input type="number" min={1} max={3650} className="w-32" value={a.transcript_retention_days ?? 90}
+                  onChange={(e) => setAgent({ transcript_retention_days: Number(e.target.value) })} />
+              </Field>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Links your assistant can text</CardTitle>
+            <CardDescription>
+              When a caller says yes to a text, the assistant sends one of these by SMS or WhatsApp. Leave a field empty and it won't be offered.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            {LINK_FIELDS.map((f) => (
+              <Field key={f.key} label={f.label} hint={f.hint}>
+                <Input value={draft.links[f.key] ?? ''} placeholder="https://…"
+                  onChange={(e) => setDraft({ ...draft, links: { ...draft.links, [f.key]: e.target.value } })} />
+              </Field>
+            ))}
           </CardContent>
         </Card>
       </div>

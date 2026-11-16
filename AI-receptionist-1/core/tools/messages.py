@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict
 
+from core.integrations import webhooks
 from core.notifications import fire, notify_owner
 from core.phone import mask_phone
 
@@ -76,6 +77,7 @@ async def take_message(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, An
     text = (f"{'🔴 URGENT — ' if urgent else ''}New message ({ctx.channel})\n"
             f"From: {doc['caller_name']}\nCall back: {callback_number}\n\n{message}")
     fire(notify_owner(ctx.tenant_cfg, "on_message", text, subject="New message from a caller", urgent=urgent))
+    webhooks.emit(ctx.tenant, "message.created", {k: v for k, v in doc.items() if k not in ("_id", "tenant_id")})
 
     return {
         "success": True,

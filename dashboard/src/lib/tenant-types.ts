@@ -23,6 +23,43 @@ export interface AgentConfig {
   ambience: boolean
   recording: { enabled: boolean; retention_days: number; announce: boolean }
   max_call_minutes: number
+  transcript_retention_days: number
+}
+
+/** Pages the assistant may text to a caller with send_info_link. */
+export interface Links {
+  booking: string
+  menu: string
+  directions: string
+  payment: string
+}
+
+export interface WebhookEndpoint {
+  id: string
+  url: string
+  events: string[]
+  active: boolean
+  created_at?: string | null
+  last_delivery?: { at: string; event: string; ok: boolean; status: number | null } | null
+}
+
+export interface Voice {
+  voice_id: string
+  name: string
+  preview_url: string | null
+  gender?: string | null
+  accent?: string | null
+  age?: string | null
+  description?: string | null
+  category?: string | null
+}
+
+export interface VoiceCatalogue {
+  provider: string
+  available: boolean
+  voices: Voice[]
+  default_voice_id?: string | null
+  note?: string
 }
 
 export interface Tenant {
@@ -65,7 +102,8 @@ export interface Tenant {
   hotel: { checkin_time: string; checkout_time: string }
   policies: Record<string, string>
   onboarding: { step?: string; completed_at?: string }
-  integrations?: { whatsapp?: { phone_number_id: string } }
+  links: Links
+  integrations?: { whatsapp?: { phone_number_id: string }; webhooks?: WebhookEndpoint[] }
 }
 
 export interface VerticalLabels {

@@ -19,6 +19,8 @@ import type {
   TenantCall,
   UnansweredItem,
   VerticalInfo,
+  VoiceCatalogue,
+  WebhookEndpoint,
 } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
@@ -319,6 +321,40 @@ export function useGoogleCalendar() {
     }),
   }
 }
+
+export const useWebhooks = (enabled = true) =>
+  useQuery({
+    queryKey: ['t-webhooks'],
+    queryFn: () => api<{ endpoints: WebhookEndpoint[]; events: string[] }>('/t/integrations/webhooks'),
+    enabled,
+  })
+
+export function useWebhookMutations() {
+  const done = useInvalidate('t-webhooks', 'context')
+  return {
+    create: useMutation({
+      mutationFn: (body: { url: string; events: string[] }) =>
+        api<{ endpoint: WebhookEndpoint; secret: string }>('/t/integrations/webhooks', { method: 'POST', body }),
+      onSuccess: done,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api(`/t/integrations/webhooks/${id}`, { method: 'DELETE' }),
+      onSuccess: done,
+    }),
+    test: useMutation({
+      mutationFn: (id: string) =>
+        api<{ ok: boolean; status: number | null; attempts: number }>(`/t/integrations/webhooks/${id}/test`, { method: 'POST' }),
+      onSuccess: done,
+    }),
+  }
+}
+
+export const useVoices = (provider: string) =>
+  useQuery({
+    queryKey: ['t-voices', provider],
+    queryFn: () => api<VoiceCatalogue>(`/t/voices?provider=${encodeURIComponent(provider)}`),
+    staleTime: 60 * 60_000,
+  })
 
 export const useRecordingUrl = () =>
   useMutation({ mutationFn: (callId: string) => api<{ url: string; expires_in: number }>(`/t/calls/${callId}/recording`) })

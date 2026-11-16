@@ -1,0 +1,91 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2, Pause, Play } from 'lucide-react'
+import { SimpleSelect } from '@/components/app/simple-select'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useVoices } from '@/lib/tenant-hooks'
+import type { Voice } from '@/lib/tenant-types'
+
+interface Props {
+  provider: string
+  value: string
+  onChange: (voiceId: string) => void
+}
+
+function describe(v: Voice): string {
+  const bits = [v.gender, v.accent, v.age].filter(Boolean).map((s) => String(s).replace(/_/g, ' '))
+  return bits.length ? `${v.name} · ${bits.join(', ')}` : v.name
+}
+
+/**
+ * Voice picker with audio previews (Roadmap Task 2.10). ElevenLabs voices come from the server's
+ * catalogue; any other provider, or a server without an ElevenLabs key, falls back to a plain ID.
+ */
+export function VoicePicker({ provider, value, onChange }: Props) {
+  const q = useVoices(provider)
+  const [custom, setCustom] = useState(false)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const [playing, setPlaying] = useState<string | null>(null)
+
+  const voices = useMemo(() => q.data?.voices ?? [], [q.data])
+  const known = voices.some((v) => v.voice_id === value)
+  const selected = voices.find((v) => v.voice_id === value) ?? voices.find((v) => v.voice_id === q.data?.default_voice_id)
+
+  useEffect(() => () => { audio.current?.pause() }, [])
+
+  const toggle = (v: Voice | undefined) => {
+    if (!v?.preview_url) return
+    if (playing === v.voice_id) {
+      audio.current?.pause()
+      setPlaying(null)
+      return
+    }
+    audio.current?.pause()
+    const a = new Audio(v.preview_url)
+    a.onended = () => setPlaying(null)
+    a.onerror = () => setPlaying(null)
+    audio.current = a
+    setPlaying(v.voice_id)
+    void a.play().catch(() => setPlaying(null))
+  }
+
+  if (q.isLoading) {
+    return <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading voices…</div>
+  }
+
+  const available = !!q.data?.available && voices.length > 0
+  if (!available || custom || (value && !known && !custom && voices.length === 0)) {
+    return (
+      <div className="space-y-1.5">
+        <Input value={value} placeholder="Voice ID (empty = default voice)" onChange={(e) => onChange(e.target.value)} />
+        <p className="text-xs text-muted-foreground">
+          {q.data?.note ?? "From your voice provider's library."}
+          {available && (
+            <> <button type="button" className="underline" onClick={() => setCustom(false)}>Pick from the list instead</button></>
+          )}
+        </p>
+      </div>
+    )
+  }
+
+  const options = [
+    { value: '', label: q.data?.default_voice_id ? 'Default voice' : 'Default voice (provider default)' },
+    ...voices.map((v) => ({ value: v.voice_id, label: describe(v) })),
+    ...(value && !known ? [{ value, label: `Custom voice ID: ${value}` }] : []),
+  ]
+  return (
+    <div className="space-y-1.5">
+      <div className="flex gap-2">
+        <SimpleSelect className="flex-1" value={value} onChange={onChange} options={options} />
+        <Button type="button" size="icon" variant="outline" aria-label={playing ? 'Stop preview' : 'Play preview'}
+          disabled={!selected?.preview_url} onClick={() => toggle(selected)}>
+          {playing && playing === selected?.voice_id ? <Pause /> : <Play />}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {selected?.description ? `${selected.description}. ` : ''}Press play to hear a sample.{' '}
+        <button type="button" className="underline" onClick={() => setCustom(true)}>Use a voice ID instead</button>
+      </p>
+    </div>
+  )
+}

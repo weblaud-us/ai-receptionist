@@ -19,6 +19,7 @@ from core.prompts.verticals import get_vertical
 from core.tenancy.models import MAX_CUSTOM_INSTRUCTIONS, TenantConfig
 from core.timeutils import business_now
 from core.tools.knowledge import fits_inline
+from core.tools.links import available_kinds
 
 DOW = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -184,6 +185,10 @@ def render_business_facts(t: TenantConfig, snap: BusinessSnapshot) -> str:
         lines.append(f"- Cancellation policy: {t.scheduling.cancellation_policy.strip()}")
     if t.emergency_instructions.strip():
         lines.append(f"- Emergencies: {t.emergency_instructions.strip()}")
+    kinds = available_kinds(t)
+    if kinds:
+        lines.append("- You can text the caller a link to: " + ", ".join(kinds) +
+                     " (send_info_link, only after they say yes to a text).")
     return "\n".join(lines)
 
 

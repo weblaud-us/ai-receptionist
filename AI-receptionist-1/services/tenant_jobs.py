@@ -8,6 +8,9 @@ TENANT_JOBS_POLL_SECONDS:
                     update first, so a restart or a second runner never sends it twice.
 - daily digest    — calls, outcomes, bookings, waiting messages and unanswered questions,
                     e-mailed to the owner once a day at DAILY_DIGEST_HOUR (business-local).
+- transcript purge — strips transcripts and per-turn rows from calls older than the tenant's
+                    `agent.transcript_retention_days` (Task 2.2). The call record itself (who,
+                    when, outcome, summary, usage) is kept for billing and statistics.
 
 Phase 3 moves this onto the Redis job queue with locking; until then the API runs one worker.
 """
@@ -154,16 +157,31 @@ async def maybe_send_digest(t: TenantConfig, now: datetime, raw: Dict[str, Any])
     return await send_email(t.notifications.owner_email, f"{t.name}: today's calls", text)
 
 
+# ── transcript retention ─────────────────────────────────────────────────────
+
+async def purge_transcripts(t: TenantConfig, now: datetime) -> int:
+    cutoff = now - timedelta(days=t.agent.transcript_retention_days)
+    res = await Repos(get_db(), t.id).calls.update_many(
+        {"status": "completed", "transcript": {"$exists": True},
+         "$or": [{"ended_at": {"$lt": cutoff}}, {"ended_at": None, "started_at": {"$lt": cutoff}}]},
+        {"$unset": {"transcript": "", "turns": ""}, "$set": {"transcript_purged_at": now}})
+    purged = int(getattr(res, "modified_count", 0) or 0)
+    if purged:
+        logger.info("Purged %d transcripts older than %d days for %s", purged, t.agent.transcript_retention_days, t.id)
+    return purged
+
+
 # ── runner ───────────────────────────────────────────────────────────────────
 
 async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
-    stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0}
+    stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
         for name, job in (("synced", maybe_sync_calendar(t, now)), ("reminders", send_reminders(t, now)),
-                          ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {})))):
+                          ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {}))),
+                          ("purged", purge_transcripts(t, now))):
             try:
                 stats[name] += int(await job)
             except Exception:

@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict
 
+from core.integrations import webhooks
 from core.notifications import fire, notify_owner
 from core.tenancy.ids import new_id
 
@@ -72,6 +73,8 @@ async def capture_lead(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, An
     if lead["preferred_time"]:
         text += f"\n\nPreferred time: {lead['preferred_time']}"
     fire(notify_owner(ctx.tenant_cfg, "on_message", text, subject="New job request", urgent=urgent))
+    webhooks.emit(ctx.tenant, "lead.created",
+                  {"lead_id": lead["_id"], **{k: v for k, v in lead.items() if k not in ("_id", "tenant_id")}})
     logger.info("Lead %s captured (%s)", lead["_id"], urgency)
     return {"success": True, "lead_id": lead["_id"],
             "message": ("Saved. Tell them someone will call back " +

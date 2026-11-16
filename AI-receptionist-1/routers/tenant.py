@@ -21,6 +21,9 @@ GET   /t/phone-numbers                   numbers + call-forwarding instructions
 GET   /t/team · POST /t/team/invite · PATCH/DELETE /t/team/{user_id}
 POST  /t/test-call                       signed browser-call link to talk to your own assistant
 GET   /t/audit                           settings changes, exports, deletions
+GET   /t/integrations · Google Calendar connect/sync/disconnect
+GET   /t/integrations/webhooks · POST · DELETE …/{id} · POST …/{id}/test   outgoing webhooks
+GET   /t/voices                          voice catalogue with audio previews (ElevenLabs)
 """
 
 from __future__ import annotations
@@ -111,6 +114,8 @@ def _tenant_view(tp: TenantPrincipal) -> Dict[str, Any]:
         doc.pop(k, None)
     google = (doc.get("integrations") or {}).get("google_calendar") or {}
     google.pop("refresh_token_enc", None)            # encrypted, but never leaves the server
+    for hook in (doc.get("integrations") or {}).get("webhooks") or []:
+        hook.pop("secret", None)                     # shown once, at creation
     doc["id"] = doc.pop("_id")
     return to_jsonable(doc)
 
@@ -1011,6 +1016,110 @@ async def google_disconnect(request: Request, tp: TenantPrincipal = Depends(_adm
     await calendar_sync.disconnect(tp.tenant.id)
     await _audit(tp, request, "integration.disconnect", "google_calendar", tp.tenant.id)
     return {"success": True}
+
+
+# ─────────────────────────────────────────────
+# OUTGOING WEBHOOKS (Task 2.8 escape hatch)
+# ─────────────────────────────────────────────
+
+MAX_WEBHOOKS = 10
+
+
+def _webhook_view(hook: Any) -> Dict[str, Any]:
+    doc = hook.model_dump() if hasattr(hook, "model_dump") else dict(hook)
+    doc.pop("secret", None)
+    return to_jsonable(doc)
+
+
+async def _fresh_webhooks(tenant_id: str) -> List[Dict[str, Any]]:
+    """Read the list from the database, not the 60 s cache, so two quick edits never clobber each other."""
+    from core.repositories.repos import TenantsStore
+
+    doc = await TenantsStore(get_db()).get(tenant_id) or {}
+    return list(((doc.get("integrations") or {}).get("webhooks")) or [])
+
+
+async def _save_webhooks(tp: TenantPrincipal, hooks: List[Dict[str, Any]]) -> None:
+    from core.repositories.repos import TenantsStore
+    from core.tenancy import invalidate
+
+    await TenantsStore(get_db()).update(tp.tenant.id, {"integrations.webhooks": hooks})
+    invalidate(tp.tenant.id)
+
+
+@tenant_router.get("/integrations/webhooks")
+async def list_webhooks(tp: TenantPrincipal = Depends(_admin)):
+    from core.integrations.webhooks import WEBHOOK_EVENTS
+
+    return {"endpoints": [_webhook_view(h) for h in tp.tenant.integrations.webhooks], "events": list(WEBHOOK_EVENTS)}
+
+
+class WebhookBody(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    events: List[str] = Field(default_factory=list)
+
+
+@tenant_router.post("/integrations/webhooks")
+async def create_webhook(body: WebhookBody, request: Request, tp: TenantPrincipal = Depends(_admin)):
+    from core.integrations.webhooks import new_secret
+    from core.tenancy.models import WebhookEndpoint
+
+    if tp.tenant.is_legacy:
+        raise HTTPException(409, "Run migration m0003 first")
+    url = _public_http_url(body.url)
+    hooks = await _fresh_webhooks(tp.tenant.id)
+    if len(hooks) >= MAX_WEBHOOKS:
+        raise HTTPException(409, f"At most {MAX_WEBHOOKS} webhooks per business")
+    try:
+        hook = WebhookEndpoint(url=url, secret=new_secret(), events=body.events, created_at=utcnow())
+    except ValueError as e:
+        raise HTTPException(422, str(e)[:200])
+    hooks.append(hook.model_dump())
+    await _save_webhooks(tp, hooks)
+    await _audit(tp, request, "webhook.create", "webhook", hook.id, {"url": hook.url, "events": hook.events})
+    return {"endpoint": _webhook_view(hook), "secret": hook.secret}
+
+
+@tenant_router.delete("/integrations/webhooks/{hook_id}")
+async def delete_webhook(hook_id: str, request: Request, tp: TenantPrincipal = Depends(_admin)):
+    hooks = await _fresh_webhooks(tp.tenant.id)
+    kept = [h for h in hooks if h.get("id") != hook_id]
+    if len(kept) == len(hooks):
+        raise _not_found("No such webhook")
+    await _save_webhooks(tp, kept)
+    await _audit(tp, request, "webhook.delete", "webhook", hook_id)
+    return {"success": True}
+
+
+@tenant_router.post("/integrations/webhooks/{hook_id}/test")
+async def test_webhook(hook_id: str, tp: TenantPrincipal = Depends(_admin)):
+    """Deliver a `ping` right now and report the HTTP status (not queued, so the owner sees the result)."""
+    from core.integrations import webhooks as wh
+
+    hook = next((h for h in tp.tenant.integrations.webhooks if h.id == hook_id), None)
+    if hook is None:
+        raise _not_found("No such webhook")
+    result = await wh.deliver(hook, wh.envelope(tp.tenant, "ping", {"message": "Hello from your AI receptionist"}))
+    await wh._record(tp.tenant.id, hook.id, "ping", result)
+    return result
+
+
+# ─────────────────────────────────────────────
+# VOICES (Task 2.10: voice pick with audio previews)
+# ─────────────────────────────────────────────
+
+@tenant_router.get("/voices")
+async def voices(provider: str = Query("elevenlabs", max_length=20), tp: TenantPrincipal = Depends(_staff)):
+    from core.integrations import elevenlabs
+
+    if provider != "elevenlabs":
+        return {"provider": provider, "available": False, "voices": [],
+                "note": "Voice previews are available for ElevenLabs voices. Enter the voice ID for other providers."}
+    if not elevenlabs.configured():
+        return {"provider": provider, "available": False, "voices": [],
+                "note": "ElevenLabs isn't set up on this server (ELEVENLABS_API_KEY)."}
+    return {"provider": provider, "available": True, "voices": await elevenlabs.list_voices(),
+            "default_voice_id": settings.ELEVENLABS_VOICE_ID or None}
 
 
 # Re-exported for the availability page.

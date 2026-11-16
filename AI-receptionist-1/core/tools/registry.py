@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from core.prompts.verticals import get_vertical
 from core.repositories import Repos
 from core.tenancy.models import TenantConfig, legacy_hotel_tenant
-from core.tools import knowledge, leads, messages, scheduling
+from core.tools import knowledge, leads, links, messages, scheduling
 from core.tools.hotel import HOTEL_TOOLS, HotelToolExecutor, run_in_background
 from database.mongodb import get_db
 
@@ -127,6 +127,7 @@ for _schema in cast(List[Dict[str, Any]], HOTEL_TOOLS):
 register_tool(messages.TAKE_MESSAGE_SCHEMA, messages.take_message, write=True)
 register_tool(knowledge.ANSWER_FROM_KNOWLEDGE_SCHEMA, knowledge.answer_from_knowledge)
 register_tool(leads.CAPTURE_LEAD_SCHEMA, leads.capture_lead, write=True)
+register_tool(links.SEND_INFO_LINK_SCHEMA, links.send_info_link, write=True)
 for _schema in cast(List[Dict[str, Any]], scheduling.SCHEDULING_TOOLS):
     _n = _schema["function"]["name"]
     register_tool(_schema, getattr(scheduling, _n),
@@ -144,6 +145,8 @@ def tool_names_for(tenant: Optional[TenantConfig] = None, *, large_kb: bool = Fa
         names.append("answer_from_knowledge")
     if not large_kb and "answer_from_knowledge" in names:
         names.remove("answer_from_knowledge")      # small KBs are inlined in the prompt (Task 2.6)
+    if links.available_kinds(t) and "send_info_link" not in names:
+        names.append("send_info_link")             # only when there is something to send (Task 2.7)
     return names
 
 

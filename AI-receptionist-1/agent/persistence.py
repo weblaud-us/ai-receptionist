@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from agent.state import CallState
+from agent.summary import summarise_call
 from agent.telemetry import summarise
 from config import settings
+from core.integrations import webhooks
 from core.phone import mask_phone
 from core.repositories import Repos
 from core.services import availability as av
@@ -115,11 +117,42 @@ class CallRecorder:
         self.state.ended_reason = reason or self.state.ended_reason
         await self._write(final=True)
         await self._record_usage()
+        await self._summarise_and_notify()
         latency = summarise(self.state.turns)
         logger.info("Call %s ended: outcome=%s turns=%s p50=%ss p95=%ss tool_p50=%ss greeting=%ss",
                     self.state.call_id, self.state.outcome or "completed", latency["turns"],
                     latency["p50_s"], latency["p95_s"], latency["tool_p50_s"], self.state.greeting_latency_s)
 
+
+    async def _summarise_and_notify(self) -> None:
+        """Store a one-paragraph summary and fire `call.completed` (Tasks 2.2 and 2.8). Best effort."""
+        tenant_id = self.state.profile.business_id
+        if tenant_id == "unassigned":
+            return
+        duration = (_utcnow() - self.state.started_at).total_seconds()
+        summary: Optional[str] = None
+        try:
+            summary = await summarise_call(self.state.transcript, outcome=self.state.outcome,
+                                           tools_used=self.state.tools_used, duration_s=duration)
+            if summary:
+                await Repos(get_db(), tenant_id).calls.update_one({"call_id": self.state.call_id},
+                                                                   {"$set": {"summary": summary}})
+        except Exception:
+            logger.warning("Summary for call %s failed", self.state.call_id, exc_info=True)
+        tenant = getattr(self.state.profile, "tenant", None)
+        if tenant is None:
+            return
+        try:
+            webhooks.emit(tenant, "call.completed", {
+                "call_id": self.state.call_id, "channel": self.state.channel, "direction": self.state.direction,
+                "caller_phone": self.state.caller_phone, "dialed_number": self.state.dialed_number,
+                "started_at": self.state.started_at, "ended_at": _utcnow(), "duration_s": round(duration, 1),
+                "outcome": self.state.outcome or "completed", "summary": summary,
+                "tools_used": list(dict.fromkeys(self.state.tools_used)), "turns": len(self.state.turns),
+                "recording": bool(self.state.recording),
+            })
+        except Exception:
+            logger.debug("call.completed webhook failed", exc_info=True)
 
     async def _record_usage(self) -> None:
         """One usage event per call, in whole minutes (Phase 5 billing reads `usage_events`)."""

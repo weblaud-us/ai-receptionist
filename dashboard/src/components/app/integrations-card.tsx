@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { timeAgo } from '@/lib/format'
 import { useTenant } from '@/lib/tenant'
 import { useGoogleCalendar, useIntegrations } from '@/lib/tenant-hooks'
+import { WebhooksCard } from '@/components/app/webhooks-card'
 
 const CALLBACK_MESSAGES: Record<string, [string, 'success' | 'error']> = {
   connected: ['Google Calendar connected — your busy times now block bookings', 'success'],
@@ -97,6 +98,7 @@ export function IntegrationsPanel() {
           <KeyValue label="Business number ID">{q.data?.whatsapp.phone_number_id ?? 'Not connected'}</KeyValue>
         </CardContent>
       </Card>
+      <div className="lg:col-span-2"><WebhooksCard /></div>
     </div>
   )
 }

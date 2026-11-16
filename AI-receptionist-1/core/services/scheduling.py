@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
+from core.integrations import webhooks
 from core.repositories import Repos
 from core.repositories.base import utcnow
 from core.services import availability as av
@@ -268,7 +269,16 @@ class SchedulingService:
         await self.repos.contacts.update_one({"_id": contact.get("_id")}, {"$inc": {"stats.appointments": 1}})
         logger.info("Appointment %s booked (%s, %s)", appointment_id, doc["service_name"], start.isoformat())
         self._calendar("push", doc)
+        webhooks.emit(self.tenant, "appointment.created", self._public(doc))
         return doc
+
+    @staticmethod
+    def _public(appointment: Dict[str, Any]) -> Dict[str, Any]:
+        """The appointment as sent to webhooks: no internal ids beyond the appointment's own."""
+        keep = ("appointment_id", "name", "phone", "email", "service_id", "service_name", "resource_id",
+                "resource_name", "start", "end", "status", "source", "call_id", "notes", "party_size", "price",
+                "cancel_reason", "rescheduled_from", "rescheduled_to")
+        return {k: appointment.get(k) for k in keep if k in appointment}
 
     def _calendar(self, action: str, appointment: Dict[str, Any]) -> None:
         """Mirror to the owner's Google Calendar in the background (Task 2.8). Never blocks a booking."""
@@ -293,7 +303,9 @@ class SchedulingService:
                       "updated_at": utcnow()}})
         await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
         appt["status"] = "cancelled"
+        appt["cancel_reason"] = (reason or "")[:300]
         self._calendar("remove", appt)
+        webhooks.emit(self.tenant, "appointment.cancelled", self._public(appt))
         return appt
 
     async def reschedule(self, appointment_id: str, *, resource_id: str, start: datetime,
@@ -313,6 +325,9 @@ class SchedulingService:
                       "rescheduled_to": new["appointment_id"], "updated_at": utcnow()}})
         await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
         self._calendar("remove", appt)
+        webhooks.emit(self.tenant, "appointment.cancelled",
+                      self._public({**appt, "status": "cancelled", "cancel_reason": "rescheduled",
+                                    "rescheduled_to": new["appointment_id"]}))
         await self.repos.appointments.update_one({"appointment_id": new["appointment_id"]},
                                                  {"$set": {"rescheduled_from": appointment_id}})
         await self.repos.contacts.update_one({"_id": new.get("contact_id")}, {"$inc": {"stats.appointments": -1}})

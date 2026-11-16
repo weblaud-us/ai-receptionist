@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from config import settings
+from core.tenancy.ids import new_id
 
 Vertical = Literal["home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic"]
 VERTICALS: tuple[str, ...] = ("home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic")
@@ -102,6 +103,7 @@ class AgentConfig(BaseModel):
     ambience: bool = False
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
     max_call_minutes: int = Field(default=15, ge=1, le=120)
+    transcript_retention_days: int = Field(default=90, ge=1, le=3650)   # transcripts purged after this
 
     @field_validator("custom_instructions")
     @classmethod
@@ -182,11 +184,76 @@ class WhatsAppIntegration(BaseModel):
     waba_id: str = ""
 
 
+WEBHOOK_EVENTS: tuple[str, ...] = (
+    "appointment.created", "appointment.cancelled", "message.created", "lead.created", "call.completed",
+)
+
+
+class WebhookEndpoint(BaseModel):
+    """An outgoing webhook (Task 2.8 escape hatch: Zapier/Make/your own code). Empty events = all."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: new_id("whk"))
+    url: str
+    secret: str = ""                         # HMAC-SHA256 key; shown once at creation
+    events: List[str] = Field(default_factory=list)
+    active: bool = True
+    created_at: Optional[datetime] = None
+    last_delivery: Optional[Dict[str, Any]] = None   # {"at", "event", "ok", "status"}
+
+    @field_validator("url")
+    @classmethod
+    def _https(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not re.match(r"^https?://[^\s/]+", v):
+            raise ValueError("webhook url must start with http:// or https://")
+        return v[:500]
+
+    @field_validator("events")
+    @classmethod
+    def _known(cls, v: List[str]) -> List[str]:
+        return [e for e in dict.fromkeys(v or []) if e in WEBHOOK_EVENTS]
+
+    def wants(self, event: str) -> bool:
+        return self.active and (not self.events or event in self.events)
+
+
 class Integrations(BaseModel):
     model_config = ConfigDict(extra="ignore")
     whatsapp: WhatsAppIntegration = Field(default_factory=WhatsAppIntegration)
     google_calendar: Dict[str, Any] = Field(default_factory=dict)   # Task 2.8 (connected, calendar_id, token_ref)
-    webhooks: List[str] = Field(default_factory=list)
+    webhooks: List[WebhookEndpoint] = Field(default_factory=list)
+
+    @field_validator("webhooks", mode="before")
+    @classmethod
+    def _coerce(cls, v: Any) -> Any:
+        out = []
+        for item in v or []:
+            if isinstance(item, str):
+                item = {"url": item}
+            try:
+                out.append(WebhookEndpoint.model_validate(item) if isinstance(item, dict) else item)
+            except ValueError:
+                continue                       # a bad row never breaks the whole tenant
+        return out
+
+
+class Links(BaseModel):
+    """Pages the assistant may text to a caller with send_info_link (Task 2.7)."""
+
+    model_config = ConfigDict(extra="ignore")
+    booking: str = ""
+    menu: str = ""
+    directions: str = ""                     # empty → a maps link built from the address
+    payment: str = ""
+
+    @field_validator("booking", "menu", "directions", "payment")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not re.match(r"^https?://", v, re.I):
+            v = "https://" + v
+        return v[:500]
 
 
 class Limits(BaseModel):
@@ -227,6 +294,7 @@ class TenantConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
     integrations: Integrations = Field(default_factory=Integrations)
+    links: Links = Field(default_factory=Links)
     limits: Limits = Field(default_factory=Limits)
     hotel: HotelSettings = Field(default_factory=HotelSettings)
     policies: Dict[str, str] = Field(default_factory=dict)   # e.g. {"parking": "...", "payment": "..."}
