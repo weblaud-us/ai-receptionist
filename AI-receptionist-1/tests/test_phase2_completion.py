@@ -116,12 +116,20 @@ async def test_send_info_link_needs_consent_then_sends_and_logs_it(db, texts):
     assert contact["consent"]["sms"]["granted"] is True and contact["consent"]["sms"]["call_id"] == "call-x"
 
 
-async def test_send_info_link_respects_do_not_contact_and_browser_calls(db, texts):
+async def test_send_info_link_after_an_opt_out_sends_only_what_was_asked_for(db, texts):
+    """A caller who texted STOP earlier and now asks "text me the link" gets that one text, and stays
+    opted out: no standing SMS consent is recorded and do_not_contact is untouched."""
     t = await _salon(db, website="https://bella.example")
     t = await resolve_by_id(t.id)
     await Repos(db, t.id).contacts.insert_one({"_id": "con_1", "phone": "+15125550199", "do_not_contact": True})
+    r = await _tool(_ctx(t, phone="+15125550199"), "send_info_link", {"kind": "website", "consent": False})
+    assert r["error"] == "consent_required" and not texts                  # still needs the caller's yes
     r = await _tool(_ctx(t, phone="+15125550199"), "send_info_link", {"kind": "website", "consent": True})
-    assert r["error"] == "do_not_contact" and not texts
+    assert r["success"] and texts == [("+15125550199", texts[0][1])]
+    contact = await Repos(db, t.id).contacts.find_one({"phone": "+15125550199"})
+    assert contact["do_not_contact"] is True
+    assert "sms" not in (contact.get("consent") or {}) and contact["consent"]["sms_one_off"]["kind"] == "website"
+    texts.clear()
     r = await _tool(_ctx(t, phone=None), "send_info_link", {"kind": "website", "consent": True})
     assert r["error"] == "phone_required"
     r = await _tool(_ctx(t, phone=None), "send_info_link", {"kind": "website", "consent": True, "phone": "+15125550177"})

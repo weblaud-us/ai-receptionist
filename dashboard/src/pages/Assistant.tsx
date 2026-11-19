@@ -15,11 +15,18 @@ import { useTestCall, useUpdateSettings } from '@/lib/tenant-hooks'
 import type { AgentConfig, Links, Tenant } from '@/lib/tenant-types'
 import { useDraft } from '@/lib/use-draft'
 
+// English only at launch: the fixed phrases (greeting, "are you there?", transfer lines) and turn
+// detection aren't localized yet. Other languages stay listed only for a business that already uses one.
 const LANGUAGES = [
-  { value: 'en-US', label: 'English (US)' }, { value: 'en-GB', label: 'English (UK)' }, { value: 'en-AU', label: 'English (AU)' },
+  { value: 'en-GB', label: 'English (UK)' }, { value: 'en-AU', label: 'English (Australia)' }, { value: 'en-IE', label: 'English (Ireland)' },
+  { value: 'en-US', label: 'English (US)' },
+]
+const LEGACY_LANGUAGES = [
   { value: 'es-US', label: 'Spanish (US)' }, { value: 'fr-CA', label: 'French (Canada)' }, { value: 'fr-FR', label: 'French' },
   { value: 'de-DE', label: 'German' }, { value: 'ar', label: 'Arabic' }, { value: 'multi', label: 'Auto (callers switch languages)' },
 ]
+const languageOptions = (current: string) =>
+  [...LANGUAGES, ...LEGACY_LANGUAGES.filter((l) => l.value === current)]
 
 const PATIENCE = [
   { value: '1.5', label: 'Quick — replies fast, may cut slow talkers off' },
@@ -105,7 +112,7 @@ export default function Assistant() {
                   options={[{ value: 'warm', label: 'Warm' }, { value: 'professional', label: 'Professional' }, { value: 'upbeat', label: 'Upbeat' }]} />
               </Field>
               <Field label="Language">
-                <SimpleSelect value={a.stt_language} onChange={(v) => setAgent({ stt_language: v, language: v === 'multi' ? 'en-US' : v })} options={LANGUAGES} />
+                <SimpleSelect value={a.stt_language} onChange={(v) => setAgent({ stt_language: v, language: v === 'multi' ? 'en-US' : v })} options={languageOptions(a.stt_language)} />
               </Field>
               <Field label="Voice provider">
                 <SimpleSelect value={a.voice_provider} onChange={(v) => setAgent({ voice_provider: v as AgentConfig['voice_provider'] })}
@@ -115,11 +122,11 @@ export default function Assistant() {
                 <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })} />
               </Field>
             </div>
-            <Field label="Greeting" hint="Leave empty for the standard greeting. It must say it's a virtual assistant — that's the law in many places.">
+            <Field label="Greeting" hint="Leave empty for the standard greeting. Callers must hear that they're talking to a virtual assistant — that's the law in many places.">
               <Textarea rows={2} value={a.greeting} placeholder={ctx.greeting} onChange={(e) => setAgent({ greeting: e.target.value })} />
             </Field>
-            {a.greeting && !/virtual assistant|ai assistant|automated|\bAI\b/i.test(a.greeting) && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">⚠ Add "virtual assistant" (or similar) so callers know they're talking to an AI.</p>
+            {a.greeting && !/\b(virtual|digital|automated|artificial|AI|bot|robot)\b/i.test(a.greeting) && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">⚠ Your greeting doesn't say it's an AI, so we'll add "This is {a.name || 'your assistant'}, a virtual assistant" after the first sentence. Save to hear the result below.</p>
             )}
             <Field label="Patience">
               <SimpleSelect value={String(a.endpointing.max_delay <= 1.8 ? 1.5 : a.endpointing.max_delay >= 3.2 ? 3.5 : 2.5)}

@@ -525,7 +525,7 @@ async def get_attempt(attempt_id: str, admin: Principal = Depends(require_platfo
     attempt = await db[m.ATTEMPTS].find_one({"_id": attempt_id})
     if not attempt:
         raise HTTPException(404, "Call not found")
-    call = await db.calls.find_one({"call_id": attempt["call_id"]},
+    call = await db.calls.find_one({"call_id": attempt["call_id"]},  # cross-tenant: the platform's own sales call, by its unique id
                                    {"transcript": 1, "summary": 1, "recording": 1, "latency": 1, "duration_s": 1})
     recording_url = None
     rec = (call or {}).get("recording") or {}

@@ -283,6 +283,7 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
     # Phase 6: consent revocation evidence and data subject request log
     await db.consent_events.create_indexes([
         IndexModel([("phone", ASCENDING), ("at", DESCENDING)]),
+        IndexModel([("phone", ASCENDING), ("scope", ASCENDING), ("at", DESCENDING)]),   # is_opted_out
         IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
     ])
     await db.dsr_requests.create_indexes([

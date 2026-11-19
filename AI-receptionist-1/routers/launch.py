@@ -109,7 +109,7 @@ async def review_queue(tenant_id: Optional[str] = None, days: int = Query(defaul
 @platform_launch_router.get("/reviews/calls/{tenant_id}/{call_id}")
 async def review_call(tenant_id: str, call_id: str, admin: Principal = Depends(require_platform_admin)):
     db = get_db()
-    call = await db.calls.find_one({"tenant_id": tenant_id, "call_id": call_id}, {"_id": 0})
+    call = await db.calls.find_one({"tenant_id": tenant_id, "call_id": call_id}, {"_id": 0})  # scoped: tenant_id
     if call is None:
         raise HTTPException(404, "Call not found")
     review = await db[reviews.REVIEWS].find_one({"call_id": call_id}, {"_id": 0})
@@ -216,7 +216,7 @@ def monthly_revenue(t: TenantConfig) -> Optional[float]:
     plan = plans.get_plan(b.plan)
     if plan is None:
         return None
-    return round(plan.annual_usd / 12, 2) if b.interval == "year" else float(plan.monthly_usd)
+    return plan.monthly_revenue_usd(t.currency, b.interval)       # local list price, in USD
 
 
 @platform_launch_router.get("/margins")
@@ -224,7 +224,7 @@ async def margins(days: int = Query(default=30, ge=7, le=90), admin: Principal =
     db = get_db()
     since = utcnow() - timedelta(days=days)
     usage: Dict[str, Dict[str, float]] = {}
-    async for row in db.usage_events.aggregate([
+    async for row in db.usage_events.aggregate([  # cross-tenant: margin per business (platform admin)
         {"$match": {"kind": "voice_minute", "at": {"$gte": naive_utc(since)}}},
         {"$group": {"_id": "$tenant_id", "seconds": {"$sum": {"$ifNull": ["$seconds", 0]}},
                     "cost": {"$sum": {"$ifNull": ["$cost_usd", 0]}},
@@ -247,7 +247,9 @@ async def margins(days: int = Query(default=30, ge=7, le=90), admin: Principal =
         revenue: Optional[float] = None
         if monthly is not None:
             overage_min = max(0.0, float(u.get("billable_seconds", 0)) / 60 - t.limits.included_minutes * scale)
-            revenue = round(monthly * scale + (overage_min * plans.OVERAGE_USD_PER_MIN if monthly else 0), 2)
+            cur = plans.billing_currency(t.currency)
+            overage_usd = plans.OVERAGE_PER_MIN.get(cur, plans.OVERAGE_USD_PER_MIN) * plans.USD_PER_UNIT.get(cur, 1.0)
+            revenue = round(monthly * scale + (overage_min * overage_usd if monthly else 0), 2)
         margin = round(revenue - cost, 2) if revenue is not None else None
         rows.append({"id": t.id, "name": t.name, "plan": t.billing.plan, "status": t.status, "pilot": t.pilot.active,
                      "minutes": round(minutes), "cost_usd": cost, "revenue_usd": revenue, "margin_usd": margin,

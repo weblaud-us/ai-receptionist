@@ -3,11 +3,20 @@
 // Shared with the platform app (business provisioning form).
 export { CURRENCIES, TIMEZONES } from '@receptionist/shared/lib/format'
 
+/** The date style people expect where the business is: "Tue 3 Dec, 14:30" in the UK/EU, "Tue, Dec 3, 2:30 PM" in the US. */
+export function localeForZone(tz: string): string {
+  if (tz.startsWith('Australia/')) return 'en-AU'
+  if (tz === 'Pacific/Auckland') return 'en-NZ'
+  if (tz === 'Europe/Dublin') return 'en-IE'
+  if (tz.startsWith('America/')) return /Toronto|Vancouver|Edmonton|Winnipeg|Halifax|Regina|St_Johns/.test(tz) ? 'en-CA' : 'en-US'
+  return 'en-GB'
+}
+
 /** A UTC ISO timestamp shown as wall-clock time in the business's timezone. */
 export function inZone(iso: string | null | undefined, tz: string, opts: Intl.DateTimeFormatOptions = {}): string {
   if (!iso) return '—'
   try {
-    return new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(new Date(iso))
+    return new Intl.DateTimeFormat(localeForZone(tz), { timeZone: tz, ...opts }).format(new Date(iso))
   } catch {
     return iso
   }

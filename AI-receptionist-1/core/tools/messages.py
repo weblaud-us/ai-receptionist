@@ -38,6 +38,11 @@ TAKE_MESSAGE_SCHEMA: Dict[str, Any] = {
                 "callback_number": {"type": "string", "description": "Number to call back, with country code"},
                 "message": {"type": "string", "description": "What the caller needs, in one or two sentences"},
                 "urgent": {"type": "boolean", "description": "True only if the caller says it is urgent"},
+                "unanswered_question": {
+                    "type": "string",
+                    "description": "Only if you're taking the message because you couldn't answer a question: "
+                                   "that question, in the caller's words. The owner adds the answer for next time.",
+                },
             },
             "required": ["caller_name", "callback_number", "message"],
         },
@@ -73,6 +78,10 @@ async def take_message(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, An
     }
     await ctx.repos().messages.insert_one(doc)
     logger.info("Message %s saved (urgent=%s, callback %s)", doc["message_id"], urgent, mask_phone(callback_number))
+    question = str(args.get("unanswered_question") or "").strip()
+    if question:
+        from core.tools.knowledge import log_unanswered   # the knowledge base's to-do list (Task 2.6)
+        await log_unanswered(ctx, question)
 
     text = (f"{'🔴 URGENT — ' if urgent else ''}New message ({ctx.channel})\n"
             f"From: {doc['caller_name']}\nCall back: {callback_number}\n\n{message}")

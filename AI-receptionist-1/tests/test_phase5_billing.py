@@ -333,6 +333,48 @@ async def test_transfer_rules(db, client):
     policy.check_transfer_number(ok, "+15125550123")
 
 
+@pytest.mark.parametrize("number", ["+449098790000", "+448712345678", "+44118500", "+447012345678",   # UK
+                                    "+611900123456", "+35315201234", "+35650001234",                   # AU, IE, MT
+                                    "+4990012345678", "+33891234567", "+881234567890", "+979123456789"])
+async def test_premium_rate_and_satellite_transfers_are_refused_in_launch_markets(db, number, monkeypatch):
+    from config import Settings
+    # The shipped default, whatever a developer's local .env says.
+    monkeypatch.setattr(settings, "TRANSFER_BLOCKED_PREFIXES", Settings.model_fields["TRANSFER_BLOCKED_PREFIXES"].default)
+    t = await _tenant(db)
+    with pytest.raises(policy.PolicyError, match="premium"):
+        policy.check_transfer_number(t, number)
+
+
+def test_plans_are_priced_in_the_business_currency():
+    growth = plans.PLANS["growth"]
+    assert plans.billing_currency("gbp") == "GBP" and plans.billing_currency("CAD") == "USD"   # not sold in CAD yet
+    assert growth.public("GBP")["monthly"] == plans.PRICE_BOOK["GBP"]["growth"]
+    assert growth.public("AUD")["annual"] == plans.PRICE_BOOK["AUD"]["growth"] * 10
+    assert growth.public("XYZ")["currency"] == "USD" and growth.public("XYZ")["monthly"] == growth.monthly_usd
+    cat = plans.catalogue("EUR")
+    assert cat["currency"] == "EUR" and cat["overage_per_min"] == plans.OVERAGE_PER_MIN["EUR"]
+    assert all(p["currency"] == "EUR" for p in cat["plans"])
+    for cur in plans.SUPPORTED_CURRENCIES:            # every currency has every self-serve plan
+        assert set(plans.PRICE_BOOK[cur]) == set(plans.SELF_SERVE_PLANS)
+        assert cur in plans.OVERAGE_PER_MIN and cur in plans.SETUP_FEE and cur in plans.USD_PER_UNIT
+    # Margin reports stay in USD
+    assert growth.monthly_revenue_usd("GBP") == round(plans.PRICE_BOOK["GBP"]["growth"] * plans.USD_PER_UNIT["GBP"], 2)
+
+
+def test_no_plan_sells_warm_transfer_until_it_is_built():
+    """Warm transfer isn't implemented (transfers are blind SIP REFER): no plan may promise it."""
+    for p in plans.PLANS.values():
+        assert not p.warm_transfer
+        assert not any("warm" in f.lower() for f in p.features) and "warm" not in p.tagline.lower()
+
+
+async def test_public_plans_follow_the_visitors_country(client):
+    assert client.get("/public/plans", params={"country": "AU"}).json()["currency"] == "AUD"
+    assert client.get("/public/plans", params={"country": "IE"}).json()["currency"] == "EUR"
+    assert client.get("/public/plans", params={"currency": "GBP"}).json()["plans"][0]["currency"] == "GBP"
+    assert client.get("/public/plans").json()["currency"] == "USD"
+
+
 async def test_settings_patch_enforces_plan_and_phone_verification_flow(db, client):
     await _tenant(db, status="trial", plan="starter")
     await auth_service.create_user(email="owner@salon.com", password=PASSWORD, tenant_id="ten_S", role="owner")
@@ -407,7 +449,43 @@ async def test_checkout_creates_customer_once_and_offers_the_trial(db, client, s
     assert r.status_code == 200, r.text and r.json()["url"].startswith("https://checkout.stripe.com")
     assert seen["session"]["trial_days"] == settings.TRIAL_DAYS and seen["session"]["price"] == "price_growth_m"
     assert seen["session"]["overage_price"] == "price_overage"
+    assert seen["session"]["currency"] == "USD"
     assert (await _reload(db)).billing.stripe_customer_id == "cus_9"
+
+
+async def test_checkout_charges_a_uk_business_in_pounds(db, client, stripe_on, monkeypatch):
+    await create_tenant(name="London Biz", tenant_id="ten_S", status="incomplete", country="GB", currency="GBP",
+                        timezone="Europe/London", extra={"billing": {"plan": "growth"}})
+    await auth_service.create_user(email="o@biz.co.uk", password=PASSWORD, tenant_id="ten_S", role="owner")
+    tok = await _login(client, "o@biz.co.uk")
+    seen = {}
+
+    async def customer(**kw):
+        return {"id": "cus_uk"}
+
+    async def session(**kw):
+        seen.update(kw)
+        return {"id": "cs_uk", "url": "https://checkout.stripe.com/c/cs_uk"}
+    monkeypatch.setattr(stripe_api, "create_customer", customer)
+    monkeypatch.setattr(stripe_api, "create_checkout_session", session)
+    assert client.post("/t/billing/checkout", json={"plan": "growth"}, headers=_h(tok)).status_code == 200
+    assert seen["currency"] == "GBP"
+    summary = client.get("/t/billing", headers=_h(tok)).json()
+    assert summary["currency"] == "GBP" and summary["catalogue"]["plans"][1]["monthly"] == plans.PRICE_BOOK["GBP"]["growth"]
+
+
+async def test_checkout_session_sends_the_currency_to_stripe_only_when_not_usd(monkeypatch):
+    sent = {}
+
+    async def fake_request(method, path, params=None, **kw):
+        sent.update(params or {})
+        return {"id": "cs"}
+    monkeypatch.setattr(stripe_api, "request", fake_request)
+    await stripe_api.create_checkout_session(customer_id="c", tenant_id="t", price="p", success_url="s", cancel_url="c")
+    assert "currency" not in sent
+    await stripe_api.create_checkout_session(customer_id="c", tenant_id="t", price="p", success_url="s", cancel_url="c",
+                                             currency="AUD")
+    assert sent["currency"] == "aud"
 
 
 async def test_second_subscription_is_refused(db, client, stripe_on):
@@ -457,7 +535,7 @@ async def test_twilio_order_resumes_from_the_failed_step(db, monkeypatch):
     monkeypatch.setattr(settings, "NUMBER_VERIFY_CALL", False)
     calls = {"buy": 0, "trunk": 0, "lk": 0}
 
-    async def buy(number, tid):
+    async def buy(number, tid, **regulatory):
         calls["buy"] += 1
         return "PN1"
 
@@ -485,9 +563,41 @@ async def test_non_instant_country_waits_for_documents(db, monkeypatch):
     monkeypatch.setattr(settings, "TELEPHONY_PROVIDER", "twilio")
     monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC1")
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "tok")
+    monkeypatch.setattr(settings, "NUMBER_VERIFY_CALL", False)
+    monkeypatch.setattr(settings, "SUPPORT_EMAIL", "ops@example.com")
+    alerts, bought = [], {}
+
+    async def fake_email(to, subject, body, **kw):
+        alerts.append((to, subject))
+        return True
+
+    async def buy(number, tid, **regulatory):
+        bought.update(number=number, **regulatory)
+        return "PN_GB"
+
+    async def noop(*a, **k):
+        return None
+    import core.integrations.email as email_mod
+    monkeypatch.setattr(email_mod, "send_email", fake_email)
+    monkeypatch.setattr(numbers, "_purchase", buy)
+    monkeypatch.setattr(numbers, "_attach_trunk", noop)
+    monkeypatch.setattr(numbers, "_livekit_numbers", noop)
     t = await _tenant(db)
     order = await numbers.start_order(db, t, "+442071234567", requested_by="u")
     assert order["status"] == "needs_documents" and order["country"] == "GB"
+    assert alerts == [("ops@example.com", "[numbers] Bella Salon needs a GB number")]       # the operator is told
+    assert (await numbers.run_order(db, order["_id"]))["status"] == "needs_documents"     # nothing bought yet
+
+    # Approving needs the approved bundle: Twilio refuses AU/UK/EU purchases without it.
+    with pytest.raises(numbers.ProvisioningError, match="bundle SID"):
+        await numbers.complete_regulatory(db, order["_id"], admin="root")
+    with pytest.raises(numbers.ProvisioningError, match="AD"):
+        await numbers.complete_regulatory(db, order["_id"], admin="root", bundle_sid="BU" + "a" * 32, address_sid="x")
+    await numbers.complete_regulatory(db, order["_id"], admin="root", bundle_sid="BU" + "a" * 32,
+                                      address_sid="AD" + "b" * 32)
+    done = await numbers.run_order(db, order["_id"])
+    assert done["status"] == "active"
+    assert bought == {"number": "+442071234567", "bundle_sid": "BU" + "a" * 32, "address_sid": "AD" + "b" * 32}
 
 
 # ── Export and offboarding (Task 5.5) ───────────────────────────────────────

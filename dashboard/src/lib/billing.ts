@@ -13,6 +13,10 @@ export interface PlanInfo {
   name: string
   monthly_usd: number
   annual_usd: number
+  /** List price in `currency` (the business's own: GBP, EUR, AUD or USD). */
+  currency: string
+  monthly: number
+  annual: number
   included_minutes: number
   max_users: number
   max_numbers: number
@@ -26,6 +30,8 @@ export interface Catalogue {
   plans: PlanInfo[]
   overage_usd_per_min: number
   setup_fee_usd: number
+  overage_per_min: number
+  setup_fee: number
   trial: { days: number; minutes: number; card_required: boolean }
   annual_months_free: number
   currency: string
@@ -82,6 +88,8 @@ export interface Billing {
   gate: Gate
   limits: { included_minutes: number; max_concurrent_calls: number; max_users: number; max_numbers: number }
   overage_usd_per_min: number
+  currency: string
+  overage_per_min: number
   catalogue: Catalogue
   can_manage: boolean
 }
@@ -105,8 +113,26 @@ export interface NumberOrder {
   created_at: string
 }
 
-export const usePlans = () =>
-  useQuery({ queryKey: ['public-plans'], queryFn: () => api<Catalogue>('/public/plans', { auth: false }), staleTime: 300_000 })
+/** Plans priced for `country` (ISO code): GBP for GB, AUD for AU, EUR in the euro area, else USD. */
+export const usePlans = (country = '') =>
+  useQuery({
+    queryKey: ['public-plans', country],
+    queryFn: () => api<Catalogue>(`/public/plans${country ? `?country=${encodeURIComponent(country)}` : ''}`, { auth: false }),
+    staleTime: 300_000,
+    placeholderData: (prev) => prev,
+  })
+
+/** "£119", "A$229", "€0.24" — whole units unless `cents`. */
+export function formatPrice(amount: number, currency = 'USD', cents = false): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency', currency, currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0,
+    }).format(amount)
+  } catch {
+    return `${currency} ${cents ? amount.toFixed(2) : Math.round(amount)}`
+  }
+}
 
 export const useBilling = () =>
   useQuery({ queryKey: ['t-billing'], queryFn: () => api<Billing>('/t/billing'), refetchInterval: 60_000 })

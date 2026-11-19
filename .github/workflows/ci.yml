@@ -151,5 +151,5 @@ jobs:
           docker compose -f AI-receptionist-1/docker-compose.dev.yml config -q
           touch /tmp/ci.env
           IMAGE_PREFIX=ghcr.io/x/receptionist TAG=v0 DEPLOY_ENV=staging ENV_FILE=/tmp/ci.env \
-            API_DOMAIN=api.example.com APP_DOMAIN=app.example.com \
+            API_DOMAIN=api.example.com APP_DOMAIN=app.example.com ADMIN_DOMAIN=admin.example.com \
             docker compose -f deploy/docker-compose.prod.yml config -q

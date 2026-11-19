@@ -97,10 +97,10 @@ async def find(db: Any, tenant: TenantConfig, phone: str, *, now: Optional[datet
     variants = phone_variants(number)
     counts: Dict[str, int] = {}
     for kind, (coll, fields) in SOURCES.items():
-        counts[kind] = await db[coll].count_documents(_query(tenant.id, fields, variants))
-    future = await db.appointments.count_documents({**_query(tenant.id, ("phone",), variants),
+        counts[kind] = await db[coll].count_documents(_query(tenant.id, fields, variants))  # scoped: _query(tenant.id)
+    future = await db.appointments.count_documents({**_query(tenant.id, ("phone",), variants),  # scoped: _query(tenant.id)
                                                     "status": {"$in": list(FUTURE_STATUSES)}, "start": {"$gte": now}})
-    recordings = await db.calls.count_documents({**_query(tenant.id, ("caller_phone",), variants),
+    recordings = await db.calls.count_documents({**_query(tenant.id, ("caller_phone",), variants),  # scoped: _query(tenant.id)
                                                  "recording.path": {"$exists": True}})
     return {"phone": mask_phone(number), "counts": counts, "total": sum(counts.values()),
             "future_appointments": future, "recordings": recordings}
@@ -119,7 +119,7 @@ async def export(db: Any, tenant: TenantConfig, phone: str) -> Dict[str, Any]:
     variants = phone_variants(number)
     data: Dict[str, List[Dict[str, Any]]] = {}
     for kind, (coll, fields) in SOURCES.items():
-        rows = await db[coll].find(_query(tenant.id, fields, variants)).limit(MAX_ROWS).to_list(MAX_ROWS)
+        rows = await db[coll].find(_query(tenant.id, fields, variants)).limit(MAX_ROWS).to_list(MAX_ROWS)  # scoped: _query(tenant.id)
         if rows:
             data[kind] = [_strip(r) for r in rows]
     return {"business": tenant.name, "subject_phone": number, "exported_at": utcnow().isoformat(),
@@ -140,32 +140,32 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
     variants = phone_variants(number)
     future_q = {**_query(tenant.id, ("phone",), variants), "status": {"$in": list(FUTURE_STATUSES)},
                 "start": {"$gte": now}}
-    if not include_future and await db.appointments.count_documents(future_q):
+    if not include_future and await db.appointments.count_documents(future_q):  # scoped: future_q has tenant_id
         raise SubjectError("This number has upcoming appointments. Cancel or move them first, or confirm "
                            "that they should be anonymised too.")
     counts: Dict[str, int] = {}
     for kind in DELETE_KINDS:
         coll, fields = SOURCES[kind]
-        res = await db[coll].delete_many(_query(tenant.id, fields, variants))
+        res = await db[coll].delete_many(_query(tenant.id, fields, variants))  # scoped: _query(tenant.id)
         counts[kind] = int(getattr(res, "deleted_count", 0) or 0)
 
     # Calls: keep the row for billing, remove everything personal.
     hashed = f"erased:{phone_hash(number)[:12]}"
     recordings = 0
     calls_q = _query(tenant.id, ("caller_phone",), variants)
-    async for call in db.calls.find({**calls_q, "recording.path": {"$exists": True}}, {"recording": 1}):
+    async for call in db.calls.find({**calls_q, "recording.path": {"$exists": True}}, {"recording": 1}):  # scoped: calls_q has tenant_id
         if await _delete_recording(call.get("recording") or {}):
             recordings += 1
-    res = await db.calls.update_many(calls_q, {
+    res = await db.calls.update_many(calls_q, {  # scoped: calls_q has tenant_id
         "$set": {"caller_phone": hashed, "erased_at": now},
         "$unset": {"transcript": "", "turns": "", "summary": "", "recording": ""}})
     counts["calls"] = int(getattr(res, "modified_count", 0) or 0)
     counts["recordings"] = recordings
 
     wipe = {"name": "", "phone": hashed, "email": "", "notes": "", "erased_at": now}
-    res = await db.appointments.update_many(_query(tenant.id, ("phone",), variants), {"$set": wipe})
+    res = await db.appointments.update_many(_query(tenant.id, ("phone",), variants), {"$set": wipe})  # scoped: _query(tenant.id)
     counts["appointments"] = int(getattr(res, "modified_count", 0) or 0)
-    res = await db.bookings.update_many(_query(tenant.id, ("guest_phone",), variants),
+    res = await db.bookings.update_many(_query(tenant.id, ("guest_phone",), variants),  # scoped: _query(tenant.id)
                                         {"$set": {"guest_name": "", "guest_phone": hashed, "guest_email": "",
                                                   "special_requests": "", "erased_at": now}})
     counts["bookings"] = int(getattr(res, "modified_count", 0) or 0)
@@ -176,7 +176,7 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
         await record_opt_out(db, number, channel="erasure", source=actor or "dsr", tenant_id=tenant.id,
                              note="kept on the suppression list after erasure")
         # The contact row was just deleted; keep only what suppression needs.
-        await db.contacts.update_one({"tenant_id": tenant.id, "phone": number},
+        await db.contacts.update_one({"tenant_id": tenant.id, "phone": number},  # scoped: tenant_id
                                      {"$set": {"do_not_contact": True, "do_not_contact_source": "erasure",
                                                "do_not_contact_at": now, "suppression_only": True},
                                       "$setOnInsert": {"tenant_id": tenant.id, "phone": number, "created_at": now,
@@ -195,10 +195,10 @@ async def log_request(db: Any, tenant: TenantConfig, phone: str, kind: RequestKi
            "due_at": received + timedelta(days=settings.DSR_DEADLINE_DAYS), "completed_at": now,
            "status": "completed", "actor": actor[:80], "note": note[:500],
            "result": json.loads(json.dumps(result.get("counts") or {"records": result.get("total", 0)}, default=str))}
-    await db[REQUESTS].insert_one(doc)
+    await db[REQUESTS].insert_one(doc)  # scoped: doc carries tenant_id
     return doc
 
 
 async def list_requests(db: Any, tenant_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     q = {"tenant_id": tenant_id} if tenant_id else {}
-    return await db[REQUESTS].find(q).sort("completed_at", -1).limit(limit).to_list(limit)
+    return await db[REQUESTS].find(q).sort("completed_at", -1).limit(limit).to_list(limit)  # cross-tenant: q is one business, or all for the platform log

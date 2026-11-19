@@ -101,7 +101,7 @@ async def list_tenants(status: Optional[str] = None, admin: Principal = Depends(
     tenants = await TenantsStore(db).list(status=status, limit=1000)
     since = utcnow() - timedelta(days=30)
     stats: Dict[str, Dict[str, Any]] = {}
-    async for row in db.calls.aggregate([
+    async for row in db.calls.aggregate([  # cross-tenant: per-business call counts (platform admin)
         {"$match": {"started_at": {"$gte": since}}},
         {"$group": {"_id": "$tenant_id", "calls": {"$sum": 1}, "seconds": {"$sum": {"$ifNull": ["$duration_s", 0]}}}},
     ]):

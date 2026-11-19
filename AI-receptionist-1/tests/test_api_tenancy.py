@@ -179,6 +179,71 @@ async def test_cannot_read_or_change_other_tenants_records_by_id(world, client, 
     assert client.post("/t/services", headers=h, json={"name": "X", "resource_ids": ["res_ten_B"]}).status_code == 422
 
 
+async def test_other_tenants_settings_records_and_hotel_data_are_out_of_reach(world, client, db):
+    """The endpoints the first isolation tests didn't reach: knowledge, exceptions, services,
+    unanswered questions, appointments, webhooks, team, recordings, exports, hotel bookings and rooms.
+    Every call made as A with one of B's ids must miss, and B's data must be untouched."""
+    now = datetime.now(timezone.utc)
+    rb = Repos(db, "ten_B")
+    await rb.knowledge.insert_one({"_id": "kb_B", "question": "Q", "answer": "B's secret answer", "active": True})
+    await rb.exceptions.insert_one({"_id": "exc_B", "resource_id": None, "start": now, "end": now + timedelta(hours=1)})
+    await rb.unanswered.insert_one({"_id": "unq_B", "question": "B question", "status": "open", "created_at": now})
+    await rb.appointments.insert_one({"appointment_id": "APT_B", "status": "confirmed", "start": now + timedelta(days=2),
+                                      "end": now + timedelta(days=2, hours=1), "name": "B customer", "phone": SHARED_PHONE})
+    await rb.calls.update_one({"call_id": "call_ten_B"}, {"$set": {"recording": {"path": "rec/b.ogg"}}})
+    svc_b = (await rb.services.find({}))[0]["_id"]
+    await db.tenants.update_one({"_id": "ten_B"}, {"$set": {"integrations.webhooks": [
+        {"id": "wh_B", "url": "https://b.example/hook", "events": [], "active": True, "secret": "whsec_b"}]}})
+    await db.bookings.insert_one({"tenant_id": "ten_B", "booking_id": "HTLB0001", "status": "confirmed",
+                                  "guest_name": "B guest", "guest_phone": SHARED_PHONE})
+    await db.rooms.insert_one({"_id": "room_B", "tenant_id": "ten_B", "room_number": "101", "room_type": "deluxe",
+                               "is_active": True})
+    owner_b_id = (await db.users.find_one({"email": "owner@b.com"}))["_id"]
+    invalidate()
+
+    h = _h(world["owner_a"])
+    misses = [
+        client.patch("/t/knowledge/kb_B", headers=h, json={"answer": "pwned"}),
+        client.delete("/t/knowledge/kb_B", headers=h),
+        client.delete("/t/exceptions/exc_B", headers=h),
+        client.patch(f"/t/services/{svc_b}", headers=h, json={"name": "pwned"}),
+        client.delete(f"/t/services/{svc_b}", headers=h),
+        client.post("/t/unanswered/unq_B/answer", headers=h, json={"answer": "x"}),
+        client.post("/t/unanswered/unq_B/dismiss", headers=h),
+        client.patch("/t/appointments/APT_B", headers=h, json={"status": "cancelled"}),
+        client.delete("/t/integrations/webhooks/wh_B", headers=h),
+        client.post("/t/integrations/webhooks/wh_B/test", headers=h),
+        client.patch(f"/t/team/{owner_b_id}", headers=h, json={"role": "staff"}),
+        client.get("/t/calls/call_ten_B/recording", headers=h),
+        client.get("/bookings/HTLB0001", headers=h),
+        client.patch("/bookings/HTLB0001/status", headers=h, params={"status": "checked_in"}),
+        client.delete("/bookings/HTLB0001", headers=h),
+        client.get("/rooms/room_B", headers=h),
+        client.patch("/rooms/room_B", headers=h, json={"room_type": "suite"}),
+        client.delete("/rooms/room_B", headers=h),
+    ]
+    assert [r.status_code for r in misses] == [404] * len(misses), [(r.request.url.path, r.status_code) for r in misses]
+
+    # Lists and exports as A never contain B's rows
+    assert "B's secret answer" not in client.get("/t/knowledge", headers=h).text
+    assert "B question" not in client.get("/t/unanswered", headers=h).text
+    assert "APT_B" not in client.get("/t/appointments", headers=h).text
+    assert "wh_B" not in client.get("/t/integrations/webhooks", headers=h).text
+    assert "owner@b.com" not in client.get("/t/team", headers=h).text
+    assert "HTLB0001" not in client.get("/bookings/", headers=h).text and "room_B" not in client.get("/rooms/", headers=h).text
+    contacts_csv = client.get("/t/export/contacts.csv", headers=h)
+    assert contacts_csv.status_code == 200 and "Customer of Bob Plumbing" not in contacts_csv.text
+
+    # B's records are exactly as they were
+    assert (await rb.knowledge.find_one({"_id": "kb_B"}))["answer"] == "B's secret answer"
+    assert await rb.exceptions.find_one({"_id": "exc_B"}) is not None
+    assert (await rb.unanswered.find_one({"_id": "unq_B"}))["status"] == "open"
+    assert (await rb.appointments.find_one({"appointment_id": "APT_B"}))["status"] == "confirmed"
+    assert (await db.bookings.find_one({"booking_id": "HTLB0001"}))["status"] == "confirmed"
+    assert (await db.rooms.find_one({"_id": "room_B"}))["room_type"] == "deluxe"
+    assert [w["id"] for w in (await db.tenants.find_one({"_id": "ten_B"}))["integrations"]["webhooks"]] == ["wh_B"]
+
+
 async def test_spoofed_tenant_header_is_refused(world, client):
     assert client.get("/t/messages", headers=_h(world["owner_a"], "ten_B")).status_code == 403
     assert client.get("/admin/messages", headers=_h(world["owner_a"], "ten_B")).status_code == 403
@@ -190,6 +255,20 @@ async def test_platform_admin_acts_on_a_tenant_with_the_header(world, client):
     assert client.get("/t/messages", headers=_h(root)).status_code == 400            # must pick a tenant
     msgs = client.get("/t/messages", headers=_h(root, "ten_B")).json()["messages"]
     assert [m["message_id"] for m in msgs] == ["MSG_ten_B"]
+
+
+async def test_a_platform_admin_opening_a_business_is_audited_once_per_hour(world, client, db):
+    """Opening another business (impersonation) is recorded in that business's audit log, even
+    before the admin changes anything."""
+    root = world["root"]
+    for _ in range(3):
+        assert client.get("/t/messages", headers=_h(root, "ten_B")).status_code == 200
+    entries = await db.audit_log.find({"tenant_id": "ten_B", "action": "platform.open_business"}).to_list(10)
+    assert len(entries) == 1 and entries[0]["user_id"].startswith("platform:")
+    assert entries[0]["diff"]["path"] == "/t/messages"
+    # An owner working in their own business isn't "opening" anything
+    client.get("/t/messages", headers=_h(world["owner_a"]))
+    assert await db.audit_log.count_documents({"tenant_id": "ten_A", "action": "platform.open_business"}) == 0
 
 
 async def test_settings_update_is_validated_audited_and_applies_to_next_lookup(world, client, db):
@@ -209,7 +288,10 @@ async def test_settings_update_is_validated_audited_and_applies_to_next_lookup(w
 async def test_appointments_through_the_dashboard_are_scoped_and_race_free(world, client):
     h = _h(world["owner_a"])
     svc = client.get("/t/services", headers=h).json()["services"][0]
-    day = (datetime.now(timezone.utc) + timedelta(days=3)).date().isoformat()
+    # A Wednesday at least 3 days ahead: the salon template is open Tuesday–Saturday, so the test
+    # doesn't depend on which weekday it runs.
+    start = datetime.now(timezone.utc).date() + timedelta(days=3)
+    day = (start + timedelta(days=(2 - start.weekday()) % 7)).isoformat()
     slots = client.get("/t/slots", headers=h, params={"service_id": svc["id"], "day": day}).json()["slots"]
     assert slots
     body = {"service_id": svc["id"], "start": slots[0]["start"], "name": "Walk-in", "phone": SHARED_PHONE}
@@ -313,3 +395,15 @@ async def test_hotel_tenant_routes_after_migration(db, client, monkeypatch):
     rooms = client.get("/rooms/", headers=_h(token)).json()["rooms"]
     assert [r["id"] for r in rooms] == ["r1"] and tid
     assert client.get("/rooms/r2", headers=_h(token)).status_code == 404
+
+
+def test_call_forwarding_guide_follows_the_business_country():
+    from routers.tenant import forwarding_guide_for
+
+    au = [r["carrier"] for r in forwarding_guide_for("AU", "+61291234567")]
+    assert any("Telstra landline" in c for c in au) and not any("Verizon" in c for c in au)
+    gb = forwarding_guide_for("GB", "+442071234567")
+    assert any("BT landline" in r["carrier"] for r in gb) and all("countries" not in r for r in gb)
+    assert "+442071234567" in gb[0]["no_answer"]
+    assert len(forwarding_guide_for("ZZ", "")) > 3                       # unknown country: the full list
+    assert any("Verizon" in r["carrier"] for r in forwarding_guide_for("US", "+15125550100"))

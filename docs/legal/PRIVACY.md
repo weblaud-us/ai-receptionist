@@ -83,6 +83,9 @@ separation between businesses' data, audit logs and regular backups. Summary: [s
 
 Data protection contact: [name / role], [PRIVACY_CONTACT_EMAIL].
 EU representative (GDPR Art. 27): [name, address]. UK representative: [name, address].
+[AU] Australia: you can complain to us first, then to the Office of the Australian Information
+Commissioner (oaic.gov.au). [AU] Overseas recipients of personal information (APP 8): [list the
+countries from the sub-processor list].
 
 ## 9. Changes
 

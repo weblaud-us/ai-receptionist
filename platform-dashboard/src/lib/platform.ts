@@ -255,3 +255,42 @@ export function useReviewMutations() {
     }),
   }
 }
+
+/* ───────────── number orders (Phase 5; operator-assisted outside US/CA) ───────────── */
+
+export interface NumberOrder {
+  id: string
+  tenant_id: string
+  e164: string
+  country: string
+  provider: string
+  status: 'pending' | 'running' | 'active' | 'failed' | 'verify_failed' | 'needs_documents' | 'cancelled'
+  steps: Record<string, boolean>
+  error: string
+  note?: string
+  attempts: number
+  created_at: string
+  approved_at?: string
+}
+
+export const useNumberOrders = (status = '') =>
+  useQuery({
+    queryKey: ['p-number-orders', status],
+    queryFn: () => api<{ orders: NumberOrder[] }>(`/platform/number-orders${status ? `?status=${status}` : ''}`, NO_TENANT),
+  })
+
+export function useNumberOrderMutations() {
+  const qc = useQueryClient()
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['p-number-orders'] })
+  return {
+    approve: useMutation({
+      mutationFn: ({ id, bundle_sid, address_sid }: { id: string; bundle_sid: string; address_sid: string }) =>
+        api(`/platform/number-orders/${id}/approve`, { ...NO_TENANT, method: 'POST', body: { bundle_sid, address_sid } }),
+      onSuccess: refresh,
+    }),
+    retry: useMutation({
+      mutationFn: (id: string) => api(`/platform/number-orders/${id}/retry`, { ...NO_TENANT, method: 'POST' }),
+      onSuccess: refresh,
+    }),
+  }
+}

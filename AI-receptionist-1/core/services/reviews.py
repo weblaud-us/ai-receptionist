@@ -75,7 +75,7 @@ async def review_queue(db: Any, *, tenant_id: Optional[str] = None, days: int = 
         q["tenant_id"] = tenant_id
     reviewed = {r["call_id"] for r in await db[REVIEWS].find({}, {"call_id": 1}).to_list(100_000)}
     out: List[Dict[str, Any]] = []
-    cursor = db.calls.find(q, {"call_id": 1, "tenant_id": 1, "started_at": 1, "duration_s": 1, "outcome": 1,
+    cursor = db.calls.find(q, {"call_id": 1, "tenant_id": 1, "started_at": 1, "duration_s": 1, "outcome": 1,  # cross-tenant: the platform's transcript-review sample
                                "summary": 1, "latency": 1, "tools_used": 1, "after_hours": 1}).sort("started_at", -1)
     async for call in cursor:
         if call["call_id"] in reviewed:
@@ -93,7 +93,7 @@ async def review_queue(db: Any, *, tenant_id: Optional[str] = None, days: int = 
 
 async def save_review(db: Any, *, tenant_id: str, call_id: str, verdict: Verdict, issues: List[str], notes: str,
                       reviewer: str, expected: str = "") -> Dict[str, Any]:
-    call = await db.calls.find_one({"tenant_id": tenant_id, "call_id": call_id}, {"_id": 1})
+    call = await db.calls.find_one({"tenant_id": tenant_id, "call_id": call_id}, {"_id": 1})  # scoped: tenant_id
     if call is None:
         raise LookupError("call not found")
     doc = {"tenant_id": tenant_id, "call_id": call_id, "verdict": verdict,
@@ -119,7 +119,7 @@ def _tenant_facts(t: TenantConfig, services: List[Dict[str, Any]], knowledge: Li
 
 async def case_from_call(db: Any, tenant: TenantConfig, call_id: str, *, title: str, expected: str,
                          must_call: Sequence[str] = (), must_not_call: Sequence[str] = (), author: str = "") -> Dict[str, Any]:
-    call = await db.calls.find_one({"tenant_id": tenant.id, "call_id": call_id})
+    call = await db.calls.find_one({"tenant_id": tenant.id, "call_id": call_id})  # scoped: tenant_id
     if call is None or not call.get("transcript"):
         raise LookupError("call not found or its transcript has been purged")
     repos = Repos(db, tenant.id)

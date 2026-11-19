@@ -180,12 +180,12 @@ async def _collect() -> bytes:
     outbound: Optional[Dict[str, Any]] = None
     try:
         db = get_db()
-        calls = await asyncio.wait_for(db.calls.find(
+        calls = await asyncio.wait_for(db.calls.find(  # cross-tenant: platform metrics, counts only
             {"status": "completed", "ended_at": {"$gte": now - COUNT_WINDOW}},
             {"channel": 1, "outcome": 1, "duration_s": 1, "ended_at": 1, "greeting_latency_s": 1, "direction": 1,
              "turns.latency_s": 1, "turns.tool_turn": 1, "provider_errors": 1, "fallbacks": 1, "transfer": 1},
         ).limit(5000).to_list(5000), timeout=5)
-        active = await asyncio.wait_for(db.calls.count_documents(
+        active = await asyncio.wait_for(db.calls.count_documents(  # cross-tenant: platform metrics, counts only
             {"status": "in_progress", "started_at": {"$gte": now - STALE_CALL}}), timeout=5)
         outbound = await asyncio.wait_for(_outbound_stats(db, now), timeout=5)
         deps["mongo"] = True

@@ -231,6 +231,41 @@ async def test_stale_claim_whose_send_failed_is_retried(db, reminder_env):
     assert reminder_env == ["+8801712345678"]
 
 
+async def test_each_hotel_reminds_only_its_own_guests_under_its_own_name(db, monkeypatch):
+    """Two hotel businesses: every guest hears from the hotel they booked, never another one, and a
+    guest who texted STOP gets nothing."""
+    from core.compliance import optout
+    from core.services.tenant_admin import create_tenant
+    from core.tenancy import invalidate
+
+    sent = []
+
+    async def fake_send(phone, message, phone_number_id):
+        sent.append((phone, message.splitlines()[0], phone_number_id))
+        return True
+
+    monkeypatch.setattr("services.reminders._send_meta_whatsapp", fake_send)
+    monkeypatch.setattr(settings, "ENABLE_ONE_DAY_BOOKING_REMINDER", True)
+    monkeypatch.setattr(settings, "ENABLE_WHATSAPP", True)
+    await create_tenant(name="Sea View Hotel", vertical="hotel", timezone="UTC", tenant_id="ten_sea",
+                        extra={"integrations": {"whatsapp": {"phone_number_id": "pnid_sea"}}})
+    await create_tenant(name="Hill Lodge", vertical="hotel", timezone="UTC", tenant_id="ten_hill",
+                        extra={"integrations": {"whatsapp": {"phone_number_id": "pnid_hill"}}})
+    await create_tenant(name="Bella Salon", vertical="salon", timezone="UTC", tenant_id="ten_salon")
+    invalidate()
+    await _booking(db, booking_id="SEA1", tenant_id="ten_sea", guest_phone="+447700900001")
+    await _booking(db, booking_id="HIL1", tenant_id="ten_hill", guest_phone="+447700900002")
+    await _booking(db, booking_id="HIL2", tenant_id="ten_hill", guest_phone="+447700900003")
+    await optout.record_opt_out(db, "+447700900003", channel="sms", source="test", tenant_id="ten_hill")
+
+    await BookingReminderService().run_once()
+    assert sorted(sent) == [
+        ("+447700900001", "Hello, this is a friendly reminder from Sea View Hotel.", "pnid_sea"),
+        ("+447700900002", "Hello, this is a friendly reminder from Hill Lodge.", "pnid_hill"),
+    ]
+    assert (await db.bookings.find_one({"booking_id": "HIL2"}))["one_day_reminder_skipped"] == "opted_out"
+
+
 # ── Metrics and health ──────────────────────────────────────────────────────
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)

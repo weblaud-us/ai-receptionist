@@ -50,11 +50,11 @@ async def purge_recordings(db: Any, tenant: TenantConfig, now: datetime) -> int:
         return 0
     cutoff = now - timedelta(days=tenant.agent.recording.retention_days)
     deleted = 0
-    cursor = db.calls.find({"tenant_id": tenant.id, "recording.path": {"$exists": True},
+    cursor = db.calls.find({"tenant_id": tenant.id, "recording.path": {"$exists": True},  # scoped: tenant_id
                             "started_at": {"$lt": cutoff}}, {"call_id": 1, "recording": 1}).limit(MAX_PER_RUN)
     async for call in cursor:
         if await delete_recording_object(call.get("recording") or {}):
-            await db.calls.update_one({"_id": call["_id"]}, {"$unset": {"recording": ""},
+            await db.calls.update_one({"_id": call["_id"]}, {"$unset": {"recording": ""},  # scoped: _id from the tenant's own calls above
                                                              "$set": {"recording_deleted_at": now}})
             deleted += 1
     if deleted:

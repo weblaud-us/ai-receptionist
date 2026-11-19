@@ -163,7 +163,9 @@ after we e-mail you; continuing to use the Service after that means you accept t
 asks for acceptance of the new version.
 
 14.2 **Governing law and courts.** [Laws of the State of ___, courts of ___]. [Consider local-law
-carve-outs for EU/UK customers.]
+carve-outs for EU/UK customers.] [AU] [For Australian customers: nothing in these Terms excludes
+rights under the Australian Consumer Law that cannot be excluded. Have counsel check §12–§14 against
+the unfair contract terms rules for small-business contracts.]
 
 14.3 Neither party may assign this contract without consent, except to a successor of its business.
 Force majeure, severability, no waiver, entire agreement and notices (by e-mail to the account

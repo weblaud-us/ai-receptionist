@@ -13,6 +13,7 @@ const Dialer = lazy(() => import('@/pages/Dialer'))
 const Pilots = lazy(() => import('@/pages/Pilots'))
 const Reviews = lazy(() => import('@/pages/Reviews'))
 const Compliance = lazy(() => import('@/pages/Compliance'))
+const Numbers = lazy(() => import('@/pages/Numbers'))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="pilots" element={<Pilots />} />
           <Route path="reviews" element={<Reviews />} />
           <Route path="compliance" element={<Compliance />} />
+          <Route path="numbers" element={<Numbers />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

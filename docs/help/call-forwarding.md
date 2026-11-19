@@ -40,6 +40,20 @@ These work on AT&T and T-Mobile in the US, and on most UK (EE, O2, Vodafone, Thr
 - **Android:** Phone app → ⋮ → Settings → Calls (or Supplementary services) → Call forwarding →
   pick "When busy", "When unanswered", "When unreachable".
 
+## UK, Ireland and Australia landlines
+
+Codes your provider will usually accept (⚠ check with yours). If the number is rejected, dial it in
+national format (starting with 0) instead of +44 / +353 / +61.
+
+| Provider | Forward on no answer | When busy | Everything | Cancel |
+|---|---|---|---|---|
+| BT, Virgin Media, Sky, TalkTalk (UK) | `*61*` number `#` | `*67*` number `#` | `*21*` number `#` | `#61#` `#67#` `#21#` |
+| eir, Virgin Media Ireland | `*61*` number `#` | `*67*` number `#` | `*21*` number `#` | `#21#` |
+| Telstra (AU) | `*61` number `#` | `*24` number `#` | `*21` number `#` | `#61#` `#24#` `#21#` |
+| Optus, TPG, Aussie Broadband (AU) | `*61*` number `#` | `*67*` number `#` | `*21*` number `#` | `#21#` |
+
+Mobiles in these countries (Vodafone, EE, O2, Three, Telstra, Optus…) use the GSM codes above.
+
 ## Landlines and office phone systems
 
 - **Business landline:** ask your provider for "call forward busy / no answer" to the number. Many

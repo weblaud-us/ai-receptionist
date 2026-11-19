@@ -90,8 +90,18 @@ async def record_opt_out(db: Any, phone: str, *, channel: str, source: str = "",
     q: Dict[str, Any] = {"phone": {"$in": phone_variants(number)}}
     if tenant_id:
         q["tenant_id"] = tenant_id
-    res = await db.contacts.update_many(q, {"$set": {"do_not_contact": True, "do_not_contact_at": now,
+    res = await db.contacts.update_many(q, {"$set": {"do_not_contact": True, "do_not_contact_at": now,  # cross-tenant: q has tenant_id, or none for a platform-wide STOP
                                                      "do_not_contact_source": channel[:20]}})
+    if tenant_id and not int(getattr(res, "matched_count", 0) or 0):
+        # Not a contact of this business yet (never called, or a hotel guest): keep a suppression row so
+        # the opt-out still applies when they become one (upsert_by_phone never resets do_not_contact).
+        await db.contacts.update_one(  # scoped: tenant_id
+            {"tenant_id": tenant_id, "phone": number},
+            {"$set": {"do_not_contact": True, "do_not_contact_at": now, "do_not_contact_source": channel[:20]},
+             "$setOnInsert": {"tenant_id": tenant_id, "phone": number, "suppression_only": True, "tags": [],
+                              "created_at": now, "first_seen_at": now,
+                              "stats": {"calls": 0, "appointments": 0, "no_shows": 0}}},
+            upsert=True)
     dnc_added = False
     if _platform_scope(tenant_id):
         from core.outbound.registry import add_to_dnc
@@ -117,7 +127,7 @@ async def record_opt_in(db: Any, phone: str, *, channel: str, tenant_id: Optiona
     q: Dict[str, Any] = {"phone": {"$in": phone_variants(number)}, "do_not_contact_source": channel[:20]}
     if tenant_id:
         q["tenant_id"] = tenant_id
-    res = await db.contacts.update_many(q, {"$set": {"do_not_contact": False},
+    res = await db.contacts.update_many(q, {"$set": {"do_not_contact": False},  # cross-tenant: q has tenant_id, or none for a platform-wide START
                                             "$unset": {"do_not_contact_at": "", "do_not_contact_source": ""}})
     await db[EVENTS].insert_one({"kind": "opt_in", "phone": number, "channel": channel[:20], "tenant_id": tenant_id,
                                  "scope": "platform" if tenant_id is None else "tenant", "at": now,
@@ -126,12 +136,18 @@ async def record_opt_in(db: Any, phone: str, *, channel: str, tenant_id: Optiona
 
 
 async def is_opted_out(db: Any, tenant_id: str, phone: str) -> bool:
+    """True when this person opted out of this business, or of every business (a STOP to the platform's
+    shared sender) and hasn't sent START to it since."""
     number = e164(phone)
     if not number:
         return False
-    doc = await db.contacts.find_one({"tenant_id": tenant_id, "phone": {"$in": phone_variants(number)},
+    doc = await db.contacts.find_one({"tenant_id": tenant_id, "phone": {"$in": phone_variants(number)},  # scoped: tenant_id
                                       "do_not_contact": True}, {"_id": 1})
-    return doc is not None
+    if doc is not None:
+        return True
+    latest = await db[EVENTS].find(  # cross-tenant: platform-wide opt-outs apply to every business
+        {"phone": number, "scope": "platform"}, {"kind": 1}).sort("at", -1).limit(1).to_list(1)
+    return bool(latest) and latest[0].get("kind") == "opt_out"
 
 
 def reply_for(kind: Kind, business: str = "") -> str:

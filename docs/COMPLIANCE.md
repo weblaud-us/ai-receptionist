@@ -3,7 +3,8 @@
 **Not legal advice.** This file sorts the rules into two groups: what the product already enforces,
 and what still needs a lawyer or a business decision. Before relying on any rule, check it against
 the primary source (⚠ VERIFY) and have counsel confirm it for each launch market. Budget a few hours
-each with a **US telecom/TCPA lawyer**, a **GDPR / UK privacy lawyer** and, before the Gulf, **UAE
+each with a **US telecom/TCPA lawyer**, a **GDPR / UK privacy lawyer**, an **Australian privacy /
+consumer-law lawyer** (§7a — Australia is a first launch market) and, before the Gulf, **UAE
 counsel** (ROADMAP §11).
 
 Related: draft documents in [legal/](legal/README.md) · how to test what's built in
@@ -89,6 +90,23 @@ product gives it the tools.
 | International transfers | ✅ EU cell design | 📋 vendors on the EU–US Data Privacy Framework or SCCs + transfer impact assessment; prefer EU-region processing for EU tenants |
 | **ePrivacy** national laws: consent for automated marketing calls; B2B cold calls vary (strict in Germany) | ✅ no EU AI sales calls by default | 🧑‍⚖️ per country before any outbound |
 | **EU AI Act** Art. 50: people must be told they're talking to an AI (applies from August 2026 — ⚠ VERIFY whether a delay was adopted); keep system documentation. A receptionist is not "high-risk" under Annex III in general | ✅ disclosure; this repo is the documentation | ⚠ VERIFY before moving into employment, credit or essential services |
+
+## 7a. Australia (first launch market, not in ROADMAP §11)
+
+Added for the AU/UK/EU launch. Have an **Australian privacy / consumer-law lawyer** confirm every row
+before the first Australian customer.
+
+| Area | Product | Still to do |
+|---|---|---|
+| **Privacy Act 1988** and the Australian Privacy Principles (APPs). Small businesses under A$3m turnover are mostly exempt, but you (the platform) may not be, and many customers will ask anyway | ✅ DPA, DSR tool, retention, sub-processor list | 🧑‍⚖️ confirm whether the Act applies to WEBLAUD LLC; an APP-compliant privacy policy (APP 1) and collection notice (APP 5) — ⚠ VERIFY the 2024 amendments (statutory tort, children's code) |
+| **APP 8** cross-border disclosure: callers' data goes to US/EU vendors | ✅ sub-processor list with locations | 🧑‍⚖️ wording in the privacy policy and DPA; prefer the nearest region for AU tenants |
+| **Notifiable Data Breaches** scheme: tell the OAIC and affected people about eligible breaches, assessment within 30 days | ✅ breach procedure | 📋 add the OAIC step to [RUNBOOK.md → Incident response](RUNBOOK.md#incident-response) |
+| **Spam Act 2003**: SMS and e-mail need consent, sender identification and a working unsubscribe honoured within 5 business days | ✅ consent on the call, STOP/START, opt-outs kept even for people who aren't contacts yet | ⚠ VERIFY the SMS sender ID register rules (ACMA) for alphanumeric senders |
+| **Do Not Call Register Act 2006** + Telemarketing and Research Industry Standard 2017 (calling hours, ID, no calls on public holidays) | ✅ no outbound to AU (`SALES_*_COUNTRIES` exclude it); inbound only | 🧑‍⚖️ before any AU outbound, including whether an AI voice counts as a "recorded message" |
+| **Call recording**: federal Telecommunications (Interception and Access) Act plus state surveillance-devices laws; some states need every party's consent | ✅ recording off by default; the greeting announces it when on | 🧑‍⚖️ confirm the announcement is enough for each state |
+| **Australian Consumer Law**: unfair contract terms in standard-form **small-business contracts** (penalties since Nov 2023); misleading conduct (say it's an AI) | ✅ AI disclosure in every greeting | 🧑‍⚖️ review the Terms: liability cap (§12), auto-renewal, unilateral changes (§14.1), indemnity (§13) |
+| **GST**: register once AU sales pass A$75,000 a year (non-resident suppliers of digital services) | ✅ Stripe Tax can collect it | 📋 accountant; Stripe Tax registration for AU |
+| Australian numbers need a regulatory bundle (AU business address) | ✅ operator-assisted ordering (platform app → Numbers) | 📋 a bundle per business in the Twilio console |
 
 ## 7. Middle East
 

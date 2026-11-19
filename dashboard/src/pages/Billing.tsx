@@ -12,6 +12,7 @@ import { Switch } from '@receptionist/shared/components/ui/switch'
 import {
   downloadFile,
   STATUS_LABEL,
+  formatPrice,
   useBilling,
   useCheckout,
   useConfirmPhone,
@@ -53,7 +54,7 @@ function UsageCard({ b }: { b: BillingData }) {
         )}
         {u.overage_minutes > 0 && (
           <p className="text-sm">
-            {u.overage_minutes} extra minutes · about ${(u.overage_minutes * b.overage_usd_per_min).toFixed(2)} on your next invoice
+            {u.overage_minutes} extra minutes · about {formatPrice(u.overage_minutes * b.overage_per_min, b.currency, true)} on your next invoice (before tax)
           </p>
         )}
         {u.capped && (
@@ -94,7 +95,7 @@ function PlanPicker({ b }: { b: BillingData }) {
                 {p.recommended && <Badge>Popular</Badge>}
               </div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">
-                ${annual ? Math.round(p.annual_usd / 12) : p.monthly_usd}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+                {formatPrice(annual ? p.annual / 12 : p.monthly, p.currency)}<span className="text-sm font-normal text-muted-foreground">/mo</span>
               </div>
               <ul className="my-3 flex-1 space-y-1 text-sm">
                 {p.features.map((f) => <li key={f} className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0 text-primary" />{f}</li>)}
@@ -108,7 +109,7 @@ function PlanPicker({ b }: { b: BillingData }) {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Extra minutes ${b.overage_usd_per_min.toFixed(2)} each. Taxes (sales tax / VAT) are added by Stripe where they apply.
+          Extra minutes {formatPrice(b.overage_per_min, b.currency, true)} each. Prices exclude tax; VAT, GST or sales tax is added by Stripe where it applies.
           {!b.can_manage && ' Only the business owner can change the plan.'}
         </p>
       </CardContent>

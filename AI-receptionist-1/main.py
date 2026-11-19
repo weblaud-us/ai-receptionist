@@ -256,10 +256,12 @@ async def prometheus_metrics(request: Request):
 
 
 # ─────────────────────────────────────────────
-# Debug (admin only)
+# Debug (development only)
 # ─────────────────────────────────────────────
+#
+# /debug/rooms and /debug/bookings read the hotel collections without a tenant filter (guest
+# names included), so they exist only in development, never on staging or production.
 
-@app.get("/debug/routes", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_routes():
     """List all registered routes"""
     routes = []
@@ -273,7 +275,6 @@ async def debug_routes():
     return {"total_routes": len(routes), "routes": sorted(routes, key=lambda x: x["path"])}
 
 
-@app.get("/debug/rooms", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_rooms():
     """Check rooms in database - for debugging"""
     db = get_db()
@@ -298,7 +299,6 @@ async def debug_rooms():
     }
 
 
-@app.get("/debug/bookings", tags=["Debug"], dependencies=[Depends(require_admin)])
 async def debug_bookings():
     """Check bookings in database - for debugging"""
     db = get_db()
@@ -317,6 +317,12 @@ async def debug_bookings():
             for b in bookings[:10]
         ],
     }
+
+
+if settings.is_development:
+    for _path, _fn in (("/debug/routes", debug_routes), ("/debug/rooms", debug_rooms),
+                       ("/debug/bookings", debug_bookings)):
+        app.add_api_route(_path, _fn, methods=["GET"], tags=["Debug"], dependencies=[Depends(require_admin)])
 
 
 if __name__ == "__main__":

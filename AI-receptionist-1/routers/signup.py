@@ -82,8 +82,10 @@ class VerifyBody(BaseModel):
 
 
 @public_plans_router.get("/public/plans")
-async def public_plans():
-    return {**plans.catalogue(), "signup_enabled": settings.SIGNUP_ENABLED, "billing_enabled": settings.billing_enabled}
+async def public_plans(country: str = "", currency: str = ""):
+    """Prices in the visitor's currency: `?country=GB` (what the signup form sends) or `?currency=AUD`."""
+    cur = currency or (currency_for(country) if len(country) == 2 else "")
+    return {**plans.catalogue(cur), "signup_enabled": settings.SIGNUP_ENABLED, "billing_enabled": settings.billing_enabled}
 
 
 async def _send_verification(user_id: str, email: str) -> bool:

@@ -162,3 +162,84 @@ async def test_replies_are_short_and_spoken(session):
     for reply in _replies(result):
         assert not re.search(r"[*#•]|^\s*[-\d]+\.", reply, re.M), reply   # no markdown or lists
         assert len(re.findall(r"[.!?](\s|$)", reply)) <= 3, reply          # one or two sentences
+
+
+# ── Task 1.12.a scenarios added before launch: booking read-back, slot taken, self-correction,
+#    transfer during open hours. ───────────────────────────────────────────────────────────────
+
+def _calls(result, name: str) -> list[dict]:
+    import json as _json
+
+    out = []
+    for e in result.events:
+        if e.type == "function_call" and e.item.name == name:
+            try:
+                out.append(_json.loads(e.item.arguments or "{}"))
+            except ValueError:
+                out.append({})
+    return out
+
+
+async def test_reads_back_the_booking_and_books_only_after_a_yes(session, judge):
+    first = await session.run(user_input=(
+        f"I'd like to book a standard room from {_day(10)} to {_day(12)} for two adults. My name is Sara Ahmed."))
+    assert "create_booking" not in _tools(first), "booked before reading the details back"
+    await first.expect.contains_message(role="assistant").judge(
+        judge, intent="Does not say the booking is confirmed yet. Either reads back the key details (dates, "
+                      "room type or the guest's name) and asks the caller to confirm, or asks for a missing detail.")
+    booked = []
+    for reply in ("Yes, that's all correct, please book it.", "Yes, go ahead and book it."):
+        result = await session.run(user_input=reply)
+        booked += _calls(result, "create_booking")
+        if booked:
+            break
+    assert booked, "never called create_booking after the caller said yes"
+    assert booked[0].get("check_in_date") == _day(10) and booked[0].get("check_out_date") == _day(12)
+
+
+@pytest.fixture
+async def standard_taken(hotel):
+    """The only standard room is taken for two nights; the deluxe room is free."""
+    await HotelToolExecutor().create_booking(guest_name="Rafi Khan", guest_phone=OWNER, room_type="standard",
+                                             check_in_date=_day(5), check_out_date=_day(7))
+
+
+async def test_slot_taken_offers_at_most_three_alternatives(standard_taken, session, judge):
+    result = await session.run(user_input=f"Do you have a standard room from {_day(5)} to {_day(7)}?")
+    assert "check_room_availability" in _tools(result)
+    await result.expect.contains_message(role="assistant").judge(
+        judge, intent="Says the standard room is not available for those dates and offers at most three "
+                      "alternatives (for example other dates or the deluxe room). It must not list more than "
+                      "three options and must not claim the standard room is free.")
+
+
+async def test_uses_the_date_the_caller_corrected_to(session):
+    result = await session.run(user_input=(
+        f"I need a deluxe room checking in on {_day(14)}, no sorry, I mean {_day(15)}, for one night."))
+    checks = _calls(result, "check_room_availability")
+    assert checks, "didn't check availability"
+    assert checks[-1].get("check_in_date") == _day(15), checks      # the last check uses the corrected date
+
+
+@pytest.fixture
+async def session_with_transfer(hotel, monkeypatch):
+    """A staff line that is open right now (no hours restriction)."""
+    monkeypatch.setattr(settings, "TRANSFER_PHONE_NUMBER", "+15125550199")
+    monkeypatch.setattr(settings, "TRANSFER_HOURS", "")
+    state = CallState(call_id="eval-transfer", profile=load_profile(), caller_phone=CALLER)
+    assert state.profile.transfer_open()
+    if EVAL_FALLBACK:
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", os.environ["EVAL_ANTHROPIC_API_KEY"])
+        llm = session_factory._fallback_llm()
+    else:
+        llm = session_factory.build_llm(state.profile)
+    async with AgentSession(llm=llm, userdata=state) as s:
+        await s.start(ReceptionistAgent(state))
+        yield s
+
+
+async def test_transfers_to_a_person_during_open_hours(session_with_transfer):
+    """In a text session the SIP transfer itself can't happen; what matters is that the agent tries."""
+    result = await session_with_transfer.run(
+        user_input="I need to speak to a real person about a billing problem, please put me through.")
+    assert "transfer_to_human" in _tools(result), _tools(result)

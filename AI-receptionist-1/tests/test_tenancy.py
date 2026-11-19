@@ -44,6 +44,26 @@ def test_greeting_discloses_ai_and_recording():
     assert t.greeting_text().count("?") == 1 and "recorded" in t.greeting_text()
 
 
+def test_custom_greeting_without_ai_disclosure_gets_one():
+    """⚖ An owner can't remove the AI disclosure by writing their own greeting."""
+    t = TenantConfig.from_doc(_doc())
+    t.agent.greeting = "Thanks for calling Bella Dental. How can I help you today?"
+    assert t.greeting_text() == ("Thanks for calling Bella Dental. This is Aria, Bella Dental's virtual assistant. "
+                                 "How can I help you today?")
+    t.agent.greeting = "Bella Dental, how can I help?"                 # opens with a question → disclosure first
+    assert t.greeting_text().startswith("This is Aria, Bella Dental's virtual assistant. Bella Dental, how")
+    t.agent.greeting = "Hello and welcome to Bella Dental"               # no punctuation at all
+    assert "virtual assistant" in t.greeting_text() and t.greeting_text().endswith("How can I help?")
+    for honest in ("Hi, I'm Aria, Bella Dental's AI receptionist. How can I help?",
+                   "You've reached Bella Dental's automated assistant. What can I do for you?",
+                   "Hi, this is Aria, a virtual receptionist for Bella Dental. How can I help?"):
+        t.agent.greeting = honest
+        assert t.greeting_text() == honest                                 # already honest: left as written
+    # "said" contains "ai" but isn't a disclosure
+    t.agent.greeting = "As we said, thanks for calling. How can I help?"
+    assert "virtual assistant" in t.greeting_text()
+
+
 def test_is_open_handles_overnight_and_closed_days():
     t = TenantConfig.from_doc(_doc(hours=[{"dow": 4, "open": "20:00", "close": "02:00"}]))
     tz = ZoneInfo("America/Chicago")

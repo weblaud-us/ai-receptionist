@@ -10,7 +10,7 @@ import { Card, CardContent } from '@receptionist/shared/components/ui/card'
 import { Checkbox } from '@receptionist/shared/components/ui/checkbox'
 import { Input } from '@receptionist/shared/components/ui/input'
 import { api, type TokenResponse } from '@receptionist/shared/lib/api'
-import { usePlans } from '@/lib/billing'
+import { formatPrice, usePlans } from '@/lib/billing'
 import { cn } from '@receptionist/shared/lib/utils'
 import { AuthCard } from '@receptionist/shared/auth/login-pages'
 
@@ -24,19 +24,34 @@ const BUSINESS_TYPES = [
   { value: 'generic', label: 'Something else' },
 ]
 
+// Launch markets first (English-speaking: Australia, UK, Ireland, Malta).
 const COUNTRIES = [
-  { value: 'US', label: 'United States' },
-  { value: 'CA', label: 'Canada' },
+  { value: 'AU', label: 'Australia' },
   { value: 'GB', label: 'United Kingdom' },
   { value: 'IE', label: 'Ireland' },
+  { value: 'MT', label: 'Malta' },
+  { value: 'US', label: 'United States' },
+  { value: 'CA', label: 'Canada' },
   { value: 'DE', label: 'Germany' },
   { value: 'FR', label: 'France' },
   { value: 'ES', label: 'Spain' },
   { value: 'NL', label: 'Netherlands' },
   { value: 'AE', label: 'United Arab Emirates' },
   { value: 'SA', label: 'Saudi Arabia' },
-  { value: 'AU', label: 'Australia' },
 ]
+
+/** A first guess from the browser's time zone; the visitor can change it. */
+function guessCountry(tz: string): string {
+  if (tz.startsWith('Australia/')) return 'AU'
+  const byZone: Record<string, string> = {
+    'Europe/London': 'GB', 'Europe/Belfast': 'GB', 'Europe/Dublin': 'IE', 'Europe/Malta': 'MT',
+    'Europe/Berlin': 'DE', 'Europe/Paris': 'FR', 'Europe/Madrid': 'ES', 'Europe/Amsterdam': 'NL',
+    'Asia/Dubai': 'AE', 'Asia/Riyadh': 'SA',
+  }
+  if (byZone[tz]) return byZone[tz]
+  if (tz.startsWith('America/')) return /Toronto|Vancouver|Edmonton|Winnipeg|Halifax|Regina|St_Johns/.test(tz) ? 'CA' : 'US'
+  return 'GB'
+}
 
 function guessTimezone(): string {
   try {
@@ -55,10 +70,13 @@ export default function Signup() {
   const { status, applyTokens } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const plans = usePlans()
   const [plan, setPlan] = useState(params.get('plan') ?? 'growth')
   const [annual, setAnnual] = useState(params.get('interval') === 'year')
-  const [form, setForm] = useState({ name: '', email: '', password: '', business_name: '', vertical: 'home_services', country: 'US' })
+  const [form, setForm] = useState(() => ({
+    name: '', email: '', password: '', business_name: '', vertical: 'home_services',
+    country: (params.get('country') ?? '').toUpperCase() || guessCountry(guessTimezone()),
+  }))
+  const plans = usePlans(form.country)
   const [accept, setAccept] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -135,10 +153,10 @@ export default function Signup() {
                 {p.recommended && <Badge>Most popular</Badge>}
               </div>
               <div className="mt-2 text-3xl font-semibold tabular-nums">
-                ${annual ? Math.round(p.annual_usd / 12) : p.monthly_usd}
+                {formatPrice(annual ? p.annual / 12 : p.monthly, p.currency)}
                 <span className="text-sm font-normal text-muted-foreground">/mo</span>
               </div>
-              {annual && <div className="text-xs text-muted-foreground">${p.annual_usd} billed yearly</div>}
+              {annual && <div className="text-xs text-muted-foreground">{formatPrice(p.annual, p.currency)} billed yearly</div>}
               <p className="mt-2 text-sm text-muted-foreground">{p.tagline}</p>
               <ul className="mt-3 space-y-1 text-sm">
                 {p.features.map((f) => (
@@ -150,7 +168,7 @@ export default function Signup() {
         </div>
         {cat && (
           <p className="-mt-5 mb-8 text-center text-xs text-sidebar-foreground/60">
-            Extra minutes ${cat.overage_usd_per_min.toFixed(2)} each — or set a hard cap. Agencies and chains: contact us.
+            Prices exclude VAT/GST. Extra minutes {formatPrice(cat.overage_per_min, cat.currency, true)} each — or set a hard cap. Agencies and chains: contact us.
           </p>
         )}
 

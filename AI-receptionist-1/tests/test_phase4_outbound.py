@@ -55,6 +55,14 @@ def decide(lead=None, campaign=None, facts=None, now=NOW):
 
 
 @pytest.fixture
+def frozen_api_clock(monkeypatch):
+    """The sales API reads the clock through routers.sales.utcnow; pin it to NOW so tests that mix
+    API calls with NOW-stamped data don't depend on the day they run."""
+    import routers.sales as sales_api
+    monkeypatch.setattr(sales_api, "utcnow", lambda: NOW)
+
+
+@pytest.fixture
 def ready(monkeypatch):
     """A configured dialer: switched on, trunk and sales tenant set, line-type lookups answering."""
     monkeypatch.setattr(settings, "OUTBOUND_DIALER_ENABLED", True)
@@ -670,7 +678,7 @@ async def test_import_queue_and_lead_detail_over_the_api(admin, db, ready):
     assert admin.post("/platform/sales/dnc", json={"phone": "nope"}).status_code == 422
 
 
-async def test_results_can_be_relabelled_and_amd_labelled(admin, seeded):
+async def test_results_can_be_relabelled_and_amd_labelled(admin, seeded, frozen_api_clock):
     attempt_id = await _dial(seeded)
     assert admin.get("/platform/sales/live").json()["total"] == 1
     assert admin.patch(f"/platform/sales/attempts/{attempt_id}", json={"outcome": "interested"}).status_code == 409
@@ -700,7 +708,7 @@ async def test_listen_in_is_hidden_and_take_over_is_announced_to_the_agent(admin
     assert (await seeded[m.ATTEMPTS].find_one({}))["operator"] == "api-key"
 
 
-async def test_consent_form_records_consent_and_queues_the_call(client, db, ready, monkeypatch):
+async def test_consent_form_records_consent_and_queues_the_call(client, db, ready, monkeypatch, frozen_api_clock):
     from routers.sales import CONSENT_VERSION
 
     body = {"phone": "512-555-0177", "name": "Ann", "business_name": "Ann's Salon", "consent": True,

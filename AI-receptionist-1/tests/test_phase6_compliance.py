@@ -393,3 +393,26 @@ def test_pressing_zero_asks_for_a_person():
     assert watcher.on_digit("5") is False
     assert watcher.on_digit("0") is True and "transfer_to_human" in session.replies[0]
     assert watcher.on_digit("0") is False and len(session.replies) == 1     # one press is enough
+
+
+# ── Opt-outs from people who aren't contacts yet, and platform-wide opt-outs ──
+
+async def test_stop_from_someone_who_is_not_a_contact_yet_still_applies_later(db):
+    """A STOP from a number this business has never stored must survive until they become a contact."""
+    number = "+447700900123"
+    assert not await optout.is_opted_out(db, "ten_X", number)
+    await optout.record_opt_out(db, number, channel="sms", source="test", tenant_id="ten_X")
+    assert await optout.is_opted_out(db, "ten_X", number)
+    contact = await Repos(db, "ten_X").contacts.upsert_by_phone(number, {"name": "Later caller"})
+    assert contact["do_not_contact"] is True and contact["name"] == "Later caller"
+    assert not await optout.is_opted_out(db, "ten_Y", number)              # another business is unaffected
+    await optout.record_opt_in(db, number, channel="sms", tenant_id="ten_X")
+    assert not await optout.is_opted_out(db, "ten_X", number)
+
+
+async def test_stop_to_the_shared_sender_applies_to_every_business_until_start(db):
+    number = "+61412345678"
+    await optout.record_opt_out(db, number, channel="sms", source="shared sender")          # platform scope
+    assert await optout.is_opted_out(db, "ten_any", number) and await optout.is_opted_out(db, "ten_new", number)
+    await optout.record_opt_in(db, number, channel="sms")
+    assert not await optout.is_opted_out(db, "ten_any", number)

@@ -862,16 +862,45 @@ async def update_lead(lead_id: str, body: StatusBody, tp: TenantPrincipal = Depe
 # ─────────────────────────────────────────────
 
 # ⚠ Typical codes — carriers differ and change them. Verify per carrier before giving to customers.
+# `countries`: where the row applies (the business's country picks the rows; "*" = everywhere).
+# Landlines often want the AI number in national format (0…) instead of +CC…: the note says so.
+GSM = {"no_answer": "**61*{n}#", "busy": "**67*{n}#", "unreachable": "**62*{n}#", "cancel": "##002#"}
 FORWARDING_GUIDE = [
-    {"carrier": "Most GSM mobiles (AT&T, T-Mobile, Vodafone, many others)",
-     "no_answer": "**61*{n}#", "busy": "**67*{n}#", "unreachable": "**62*{n}#", "cancel": "##004#"},
-    {"carrier": "Verizon mobile", "no_answer": "*71{n}", "busy": "*71{n}", "unreachable": "*71{n}", "cancel": "*73"},
-    {"carrier": "Most US landlines / VoIP (Comcast Business, RingCentral…)",
+    {"countries": ["*"], "carrier": "Most mobiles (GSM: Vodafone, EE, O2, Three, Telstra, Optus, T-Mobile…)", **GSM},
+    # United Kingdom
+    {"countries": ["GB"], "carrier": "BT landline (Call Diversion)",
+     "no_answer": "*61*{n}#", "busy": "*67*{n}#", "unreachable": "*21*{n}# (all calls)", "cancel": "#61#  #67#  #21#"},
+    {"countries": ["GB"], "carrier": "Virgin Media / Sky / TalkTalk landline",
+     "no_answer": "*61*{n}#", "busy": "*67*{n}#", "unreachable": "*21*{n}# (all calls)", "cancel": "#21#"},
+    {"countries": ["GB", "IE", "AU", "MT"], "carrier": "Business VoIP / hosted phone system (RingCentral, 8x8, 3CX…)",
+     "no_answer": "Set 'forward on no answer' to {n} in your provider's portal", "busy": "Portal setting",
+     "unreachable": "Portal setting", "cancel": "Portal setting"},
+    # Ireland
+    {"countries": ["IE"], "carrier": "eir / Virgin Media Ireland landline",
+     "no_answer": "*61*{n}#", "busy": "*67*{n}#", "unreachable": "*21*{n}# (all calls)", "cancel": "#21#"},
+    # Australia
+    {"countries": ["AU"], "carrier": "Telstra landline (Call Forward)",
+     "no_answer": "*61 {n} #", "busy": "*24 {n} #", "unreachable": "*21 {n} # (all calls)", "cancel": "#61#  #24#  #21#"},
+    {"countries": ["AU"], "carrier": "Optus / TPG / Aussie Broadband home phone",
+     "no_answer": "*61*{n}#", "busy": "*67*{n}#", "unreachable": "*21*{n}# (all calls)", "cancel": "#21#"},
+    # United States / Canada
+    {"countries": ["US", "CA"], "carrier": "Verizon mobile",
+     "no_answer": "*71{n}", "busy": "*71{n}", "unreachable": "*71{n}", "cancel": "*73"},
+    {"countries": ["US", "CA"], "carrier": "Most US landlines / VoIP (Comcast Business, RingCentral…)",
      "no_answer": "Set 'forward on no answer' to {n} in your provider's portal", "busy": "*90{n} (varies)",
      "unreachable": "Portal setting", "cancel": "Portal setting"},
-    {"carrier": "Google Voice", "no_answer": "Settings → Calls → Forward to {n}", "busy": "—", "unreachable": "—",
-     "cancel": "Remove the linked number"},
+    {"countries": ["US"], "carrier": "Google Voice", "no_answer": "Settings → Calls → Forward to {n}", "busy": "—",
+     "unreachable": "—", "cancel": "Remove the linked number"},
 ]
+
+
+def forwarding_guide_for(country: str, target: str) -> list:
+    c = (country or "").upper()
+    rows = [r for r in FORWARDING_GUIDE if "*" in r["countries"] or c in r["countries"]]
+    if len(rows) == 1:                       # a country without its own rows: show everything
+        rows = FORWARDING_GUIDE
+    return [{k: (v.replace("{n}", target or "<your AI number>") if isinstance(v, str) else v)
+             for k, v in row.items() if k != "countries"} for row in rows]
 
 
 @tenant_router.get("/phone-numbers")
@@ -881,11 +910,11 @@ async def phone_numbers(tp: TenantPrincipal = Depends(_staff)):
     if tp.tenant.is_legacy and settings.TWILIO_PHONE_NUMBER:
         numbers.append({"e164": settings.TWILIO_PHONE_NUMBER, "purpose": "inbound", "status": "active", "provider": "twilio"})
     target = numbers[0]["e164"] if numbers else ""
-    guide = [{k: (v.replace("{n}", target or "<your AI number>") if isinstance(v, str) else v) for k, v in row.items()}
-             for row in FORWARDING_GUIDE]
+    guide = forwarding_guide_for(tp.tenant.country, target)
     return {"numbers": numbers, "forwarding": guide,
             "note": "Most businesses keep their existing number and forward to the AI number on no answer, busy, "
-                    "or after hours. Codes vary by carrier — check with yours."}
+                    "or after hours. Codes vary by carrier — check with yours. On a landline, if the number is "
+                    "rejected, dial it in national format (starting with 0) instead of +country code."}
 
 
 class InviteBody(BaseModel):

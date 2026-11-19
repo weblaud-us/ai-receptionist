@@ -123,6 +123,25 @@ class ElevenLabsTTS(BaseTTS):
             logger.error("ElevenLabs TTS error: %s", e, exc_info=True)
             return b""
 
+    async def synthesize_mp3(self, text: str) -> bytes:
+        """MP3 for WhatsApp voice replies. synthesize() returns 8 kHz μ-law for the phone line, which
+        WhatsApp can't play as audio/mpeg."""
+        if not text:
+            return b""
+        try:
+            chunks = []
+            async for chunk in self.client.text_to_speech.convert(
+                voice_id=self.voice_id,
+                text=text,
+                model_id="eleven_flash_v2_5",
+                output_format="mp3_44100_128",
+            ):
+                chunks.append(chunk)
+            return b"".join(chunks)
+        except Exception as e:
+            logger.error("ElevenLabs MP3 error: %s", e, exc_info=True)
+            return b""
+
     async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
         if not text:
             return

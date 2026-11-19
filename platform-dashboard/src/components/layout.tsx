@@ -1,6 +1,6 @@
 import { Suspense, useState, type ComponentType } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Loader2, LogOut, Menu, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
+import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
@@ -17,6 +17,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Businesses', icon: Building2, end: true },
+  { to: '/numbers', label: 'Numbers', icon: Hash },
   { to: '/economics', label: 'Unit economics', icon: ChartNoAxesCombined },
   { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing },
   { to: '/pilots', label: 'Pilots', icon: Rocket },

@@ -85,17 +85,20 @@ async def send_info_link(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, 
 
     repos = ctx.repos()
     contact = await repos.contacts.upsert_by_phone(phone, {})
-    if contact.get("do_not_contact"):
-        return {"error": "do_not_contact", "message": "This number has asked not to be contacted. Read the information out instead."}
+    opted_out = bool(contact.get("do_not_contact"))
 
+    # The caller asked for this text on the call just now: that is their consent for this one message,
+    # even after an earlier STOP (core/notifications.notify_contact, `requested`). It doesn't
+    # re-subscribe them: an opted-out contact keeps do_not_contact and no standing SMS consent is stored.
     text = f"{t.name}: here's the link to {_label(t, kind)}: {url}"
-    ok = await notify_contact(t, phone, text)
+    ok = await notify_contact(t, phone, text, requested=True)
     if not ok:
         return {"error": "send_failed", "message": "The text couldn't be sent right now. Read the information out instead."}
 
     now = datetime.now(timezone.utc)
-    consent = {"granted": True, "at": now, "source": f"{ctx.channel}_call" if ctx.channel != "whatsapp" else "whatsapp",
-               "call_id": ctx.call_id, "kind": kind}
-    await repos.contacts.update_one({"phone": phone}, {"$set": {"consent.sms": consent, "last_seen_at": now}})
-    logger.info("Sent %s link to %s", kind, mask_phone(phone))
+    source = f"{ctx.channel}_call" if ctx.channel != "whatsapp" else "whatsapp"
+    record = {"granted": True, "at": now, "source": source, "call_id": ctx.call_id, "kind": kind}
+    field = "consent.sms_one_off" if opted_out else "consent.sms"
+    await repos.contacts.update_one({"phone": phone}, {"$set": {field: record, "last_seen_at": now}})
+    logger.info("Sent %s link to %s%s", kind, mask_phone(phone), " (requested after an opt-out)" if opted_out else "")
     return {"success": True, "kind": kind, "message": "Sent. Tell the caller to check their phone."}

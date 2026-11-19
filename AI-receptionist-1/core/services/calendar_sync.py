@@ -2,10 +2,16 @@
 Calendar sync (Roadmap Task 2.8): keep availability aware of the owner's Google Calendar, and put
 AI bookings into it.
 
-- `sync_busy(tenant)` — one free/busy query for the business calendar plus any staff calendars,
-  written where the availability engine already looks: per-staff `resources.busy_cache`, and
-  business-wide busy time as `schedule_exceptions` with `source: "google"`. Run by the jobs
+- `sync_busy(tenant)` — the business calendar's events plus one free/busy query for any staff
+  calendars, written where the availability engine already looks: per-staff `resources.busy_cache`,
+  and business-wide busy time as `schedule_exceptions` with `source: "google"`. Run by the jobs
   service every few minutes (and on demand from the dashboard); never inside a call.
+
+  The business calendar is read event by event, not with free/busy, because the app writes its own
+  bookings there for staff who have no calendar of their own. Those events are skipped (marked with
+  PRIVATE_KEY, or known by their stored event id); otherwise one booking would come back as a
+  business-wide block and close that time for every staff member. Free ("transparent") and
+  cancelled events are skipped too; all-day events block the whole day.
 - `push_booking` / `remove_booking` — fire-and-forget after a booking or cancellation.
 
 Tenant config: `tenants.integrations.google_calendar = {connected, calendar_id, refresh_token_enc,
@@ -16,7 +22,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
+from zoneinfo import ZoneInfo
 
 from core import crypto
 from core.integrations import google_calendar as gcal
@@ -30,6 +37,7 @@ from database.mongodb import get_db
 logger = logging.getLogger(__name__)
 
 SOURCE = "google"
+PRIVATE_KEY = "receptionist_appointment_id"     # on every event this app writes (gcal.insert_event `private`)
 
 
 def google_settings(tenant: TenantConfig) -> Dict[str, Any]:
@@ -64,6 +72,43 @@ async def disconnect(tenant_id: str) -> None:
     invalidate(tenant_id)
 
 
+def _event_window(event: Dict[str, Any], tz: str) -> Optional[Tuple[datetime, datetime]]:
+    start, end = event.get("start") or {}, event.get("end") or {}
+    if start.get("dateTime") and end.get("dateTime"):
+        return gcal._parse(start["dateTime"]), gcal._parse(end["dateTime"])
+    if start.get("date") and end.get("date"):                     # all day: midnight to midnight, business time
+        zone = ZoneInfo(tz)
+        return (datetime.fromisoformat(start["date"]).replace(tzinfo=zone).astimezone(timezone.utc),
+                datetime.fromisoformat(end["date"]).replace(tzinfo=zone).astimezone(timezone.utc))
+    return None
+
+
+def business_busy_from_events(events: List[Dict[str, Any]], tz: str, own_event_ids: Set[str]
+                              ) -> List[Tuple[datetime, datetime]]:
+    """The owner's busy time on the business calendar, without the app's own bookings."""
+    busy: List[Tuple[datetime, datetime]] = []
+    for ev in events:
+        if ev.get("status") == "cancelled" or ev.get("transparency") == "transparent":
+            continue
+        private = (ev.get("extendedProperties") or {}).get("private") or {}
+        if private.get(PRIVATE_KEY) or ev.get("id") in own_event_ids:
+            continue
+        window = _event_window(ev, tz)
+        if window and window[1] > window[0]:
+            busy.append(window)
+    return busy
+
+
+async def _own_event_ids(repos: Repos, calendar_id: str, since: datetime) -> Set[str]:
+    """Event ids of bookings this app wrote to `calendar_id` (also covers events written before
+    they carried PRIVATE_KEY)."""
+    rows = await repos.appointments.find(
+        {"external.google_event_id": {"$exists": True}, "external.google_calendar_id": calendar_id,
+         "end": {"$gte": since - timedelta(days=1)}},
+        limit=10_000, projection={"external.google_event_id": 1})
+    return {str((r.get("external") or {}).get("google_event_id")) for r in rows}
+
+
 async def sync_busy(tenant: TenantConfig, *, now: Optional[datetime] = None) -> Dict[str, int]:
     """Refresh cached busy times for the next `max_days_ahead` days. Returns counts per calendar."""
     if not connected(tenant):
@@ -74,18 +119,21 @@ async def sync_busy(tenant: TenantConfig, *, now: Optional[datetime] = None) -> 
     business_cal = google_settings(tenant).get("calendar_id") or "primary"
     resources = await repos.resources.find({"active": {"$ne": False}}, projection={"calendar": 1})
     staff_cals = {r["_id"]: (r.get("calendar") or {}).get("calendar_id") for r in resources}
-    calendars = sorted({business_cal, *[c for c in staff_cals.values() if c]})
+    staff_calendars = sorted({c for c in staff_cals.values() if c})
     try:
-        busy = await gcal.freebusy(_refresh_token(tenant), calendars, now, end)
+        token = _refresh_token(tenant)
+        events = await gcal.list_events(token, business_cal, now, end)
+        busy = await gcal.freebusy(token, staff_calendars, now, end) if staff_calendars else {}
     except (gcal.GoogleError, crypto.DecryptionError) as e:
-        logger.warning("Google free/busy failed for %s: %s", tenant.id, e)
+        logger.warning("Google calendar sync failed for %s: %s", tenant.id, e)
         await _set_status(tenant.id, last_error=str(e)[:300], last_error_at=now)
         return {}
+    business = business_busy_from_events(events, tenant.timezone, await _own_event_ids(repos, business_cal, now))
 
     # Business calendar → business-wide blocks (replaced wholesale each sync).
     await repos.exceptions.delete_many({"source": SOURCE})
     rows: List[Dict[str, Any]] = [{"_id": new_id("exc"), "resource_id": None, "start": s, "end": e, "source": SOURCE,
-                                   "reason": "Busy in Google Calendar"} for s, e in busy.get(business_cal, [])]
+                                   "reason": "Busy in Google Calendar"} for s, e in business]
     if rows:
         await repos.exceptions.insert_many(rows)
     # Staff with their own calendar → per-resource busy cache.
@@ -93,7 +141,7 @@ async def sync_busy(tenant: TenantConfig, *, now: Optional[datetime] = None) -> 
         cache = [{"start": s, "end": e} for s, e in busy.get(cal, [])] if cal else []
         await repos.resources.update_one({"_id": rid}, {"$set": {"busy_cache": cache, "busy_synced_at": now}})
     await _set_status(tenant.id, last_sync_at=now, last_error=None)
-    return {cal: len(v) for cal, v in busy.items()}
+    return {business_cal: len(business), **{cal: len(v) for cal, v in busy.items() if cal != business_cal}}
 
 
 async def _calendar_for(tenant: TenantConfig, resource_id: Optional[str]) -> str:
@@ -117,7 +165,8 @@ async def push_booking(tenant: TenantConfig, appointment: Dict[str, Any]) -> Non
             summary=f"{appointment.get('service_name') or 'Appointment'}{who}: {appointment.get('name', '')}",
             start=appointment["start"], end=appointment["end"], timezone_name=tenant.timezone,
             description=f"Booked by the AI receptionist ({appointment.get('source')}).\n"
-                        f"Phone: {appointment.get('phone', '')}\n{appointment.get('notes') or ''}")
+                        f"Phone: {appointment.get('phone', '')}\n{appointment.get('notes') or ''}",
+            private={PRIVATE_KEY: appointment["appointment_id"]})
         await Repos(get_db(), tenant.id).appointments.update_one(
             {"appointment_id": appointment["appointment_id"]},
             {"$set": {"external.google_event_id": event_id, "external.google_calendar_id": cal}})

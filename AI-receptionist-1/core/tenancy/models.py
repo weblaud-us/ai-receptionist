@@ -120,6 +120,31 @@ class TransferConfig(BaseModel):
     warm: bool = False
 
 
+# ⚖ Words that tell a caller they are talking to an AI. A custom greeting without one gets the
+# standard disclosure sentence added (TenantConfig.greeting_text).
+_DISCLOSURE_RE = re.compile(
+    r"\b(virtual|digital|automated|artificial|ai|a\.i\.|bot|robot|"
+    r"asistente virtual|assistant virtuel|virtuelle?r? assistent(in)?|ki|assistente virtuale|"
+    r"مساعد افتراضي|ذكاء اصطناعي)\b",
+    re.IGNORECASE)
+_FIRST_SENTENCE_RE = re.compile(r"^(.+?[.!])(\s+|$)", re.DOTALL)
+
+
+def has_ai_disclosure(text: str) -> bool:
+    return bool(_DISCLOSURE_RE.search(text or ""))
+
+
+def add_disclosure(greeting: str, disclosure: str) -> str:
+    """Put the disclosure right after the opening sentence ("Thanks for calling X."), or first when
+    the greeting opens with a question, so the caller hears it before they start talking."""
+    greeting = greeting.strip()
+    m = _FIRST_SENTENCE_RE.match(greeting)
+    if m and "?" not in m.group(1):
+        rest = greeting[m.end():].strip()
+        return f"{m.group(1)} {disclosure}" + (f" {rest}" if rest else "")
+    return f"{disclosure} {greeting}"
+
+
 _WINDOW_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
 
 
@@ -411,11 +436,18 @@ class TenantConfig(BaseModel):
     def address_text(self) -> str:
         return self.address.one_line()
 
+    def disclosure_sentence(self) -> str:
+        return f"This is {self.agent.name}, {self.name}'s virtual assistant."
+
     def greeting_text(self) -> str:
-        """⚖ AI disclosure in the first sentence (EU AI Act, US state bot laws, UAE TDRA). ≤ 4 s."""
-        text = self.agent.greeting.strip() or (
-            f"Thanks for calling {self.name}, this is {self.agent.name}, "
-            f"{self.name}'s virtual assistant.")
+        """⚖ AI disclosure in the first sentence (EU AI Act, US state bot laws, UAE TDRA). ≤ 4 s.
+        An owner's custom greeting that doesn't say it is an AI gets the disclosure added."""
+        custom = self.agent.greeting.strip()
+        if custom:
+            text = custom if has_ai_disclosure(custom) else add_disclosure(custom, self.disclosure_sentence())
+        else:
+            text = (f"Thanks for calling {self.name}, this is {self.agent.name}, "
+                    f"{self.name}'s virtual assistant.")
         if self.agent.recording.enabled and self.agent.recording.announce and "record" not in text.lower():
             text += " This call may be recorded."
         if "?" not in text:

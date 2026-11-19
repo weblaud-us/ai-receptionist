@@ -202,3 +202,44 @@ async def test_take_message_is_tenant_scoped(db):
     r = await _call(_ctx(a), "take_message", {"caller_name": "R", "callback_number": "+1555", "message": "hi"})
     assert r["success"]
     assert await Repos(db, "ten_a").messages.count() == 1 and await Repos(db, "ten_b").messages.count() == 0
+
+
+# ── Unanswered questions reach the owner whatever the knowledge-base size (B7) ──
+
+async def test_take_message_logs_the_question_it_could_not_answer(db):
+    t = _tenant(tenant_id="ten_q")
+    assert "answer_from_knowledge" not in tool_names_for(t)           # small KB: no lookup tool at all
+    r = await _call(_ctx(t), "take_message", {"caller_name": "Ann", "callback_number": "+15125550100",
+                                               "message": "Wants to know about gift cards",
+                                               "unanswered_question": "Do you sell gift cards?"})
+    assert r["success"]
+    rows = await Repos(db, "ten_q").unanswered.find({})
+    assert [(x["question"], x["call_id"], x["source"]) for x in rows] == [("Do you sell gift cards?", "call-t", "tool")]
+    # An ordinary message logs nothing
+    await _call(_ctx(t), "take_message", {"caller_name": "Bo", "callback_number": "+15125550101", "message": "Call me"})
+    assert await Repos(db, "ten_q").unanswered.count() == 1
+
+
+def test_questions_the_assistant_said_it_could_not_answer_are_found_in_the_transcript():
+    from core.tools.knowledge import questions_not_answered
+    transcript = [
+        {"role": "assistant", "text": "Thanks for calling Bella Salon. How can I help?"},
+        {"role": "user", "text": "Do you do keratin treatments?"},
+        {"role": "assistant", "text": "I don't have that information, but someone will call you back."},
+        {"role": "user", "text": "OK. And are you open Saturday?"},
+        {"role": "assistant", "text": "Yes, we're open Saturday from nine to four."},
+        {"role": "user", "text": "Is there parking nearby?"},
+        {"role": "assistant", "text": "I'm not sure about parking. Would you like me to take a message?"},
+    ]
+    assert questions_not_answered(transcript) == ["Do you do keratin treatments?", "Is there parking nearby?"]
+    assert questions_not_answered([{"role": "assistant", "text": "I don't know"}]) == []     # no caller question
+
+
+async def test_record_unanswered_skips_duplicates_within_a_call(db):
+    from core.tools.knowledge import record_unanswered
+    repos = Repos(db, "ten_d")
+    assert await record_unanswered(repos, "Do you   take cards?", channel="voice", call_id="c1")
+    assert not await record_unanswered(repos, "Do you take cards?", channel="voice", call_id="c1")
+    assert await record_unanswered(repos, "Do you take cards?", channel="voice", call_id="c2")
+    assert not await record_unanswered(repos, "   ", channel="voice", call_id="c3")
+    assert await repos.unanswered.count() == 2

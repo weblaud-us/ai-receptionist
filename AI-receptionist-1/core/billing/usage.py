@@ -91,7 +91,7 @@ async def seconds_between(db: Any, tenant_id: str, start: datetime, end: Optiona
     if end is not None:
         match["at"]["$lt"] = naive_utc(end)
     total = 0.0
-    async for row in db.usage_events.find(match, {"seconds": 1, "quantity": 1}):
+    async for row in db.usage_events.find(match, {"seconds": 1, "quantity": 1}):  # scoped: match has tenant_id
         secs = row.get("seconds")
         total += float(secs) if isinstance(secs, (int, float)) else float(row.get("quantity") or 0) * 60
     return total

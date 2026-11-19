@@ -121,8 +121,11 @@ async def create_customer(*, email: str, name: str, tenant_id: str) -> Dict[str,
 
 async def create_checkout_session(*, customer_id: str, tenant_id: str, price: str, success_url: str,
                                   cancel_url: str, trial_days: int = 0, overage_price: str = "",
-                                  setup_fee_price: str = "", attempt: str = "") -> Dict[str, Any]:
-    """A subscription Checkout. The trial still requires a card (Task 5.2: abuse prevention)."""
+                                  setup_fee_price: str = "", attempt: str = "",
+                                  currency: str = "USD") -> Dict[str, Any]:
+    """A subscription Checkout. The trial still requires a card (Task 5.2: abuse prevention).
+    `currency`: charge in one of the Prices' `currency_options` (GBP, EUR, AUD) instead of USD.
+    ⚠ VERIFY: every Price used here (plan, overage, setup fee) needs that currency option."""
     line_items: List[Dict[str, Any]] = [{"price": price, "quantity": 1}]
     if overage_price:
         line_items.append({"price": overage_price})          # metered: no quantity
@@ -141,9 +144,11 @@ async def create_checkout_session(*, customer_id: str, tenant_id: str, price: st
         "customer_update": {"address": "auto", "name": "auto"},
         "tax_id_collection": {"enabled": True},
     }
+    if currency and currency.upper() != "USD":
+        params["currency"] = currency.lower()
     if settings.STRIPE_AUTOMATIC_TAX:
         params["automatic_tax"] = {"enabled": True}
-    key = f"checkout:{tenant_id}:{price}:{trial_days}:{attempt}" if attempt else None
+    key = f"checkout:{tenant_id}:{price}:{currency}:{trial_days}:{attempt}" if attempt else None
     return await request("POST", "/checkout/sessions", params, idempotency_key=key)
 
 

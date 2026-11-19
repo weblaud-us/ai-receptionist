@@ -28,6 +28,7 @@ from core.repositories import Repos
 from core.services import availability as av
 from core.timeutils import business_now
 from core.tools.hotel import phone_variants
+from core.tools.knowledge import questions_not_answered, record_unanswered
 from database.mongodb import get_db
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,7 @@ class CallRecorder:
                                                                    {"$set": {"summary": summary}})
         except Exception:
             logger.warning("Summary for call %s failed", self.state.call_id, exc_info=True)
+        await self._log_unanswered_questions(tenant_id)
         tenant = getattr(self.state.profile, "tenant", None)
         if tenant is None:
             return
@@ -175,6 +177,22 @@ class CallRecorder:
             })
         except Exception:
             logger.debug("call.completed webhook failed", exc_info=True)
+
+    async def _log_unanswered_questions(self, tenant_id: str) -> None:
+        """Questions the assistant said it couldn't answer go on the owner's "unanswered" list (Task 2.6),
+        whatever the knowledge base size. take_message logs most of them during the call; this catches
+        the rest. Duplicates within a call are skipped. Best effort."""
+        if self.state.direction == "outbound":
+            return
+        try:
+            repos = Repos(get_db(), tenant_id)
+            if await repos.unanswered.find_one({"call_id": self.state.call_id}, {"_id": 1}):
+                return      # already logged during the call (in the model's words); don't add a near-duplicate
+            for question in questions_not_answered(self.state.transcript):
+                await record_unanswered(repos, question, channel=self.state.channel, call_id=self.state.call_id,
+                                        caller_phone=self.state.caller_phone, source="transcript")
+        except Exception:
+            logger.debug("Unanswered-question scan failed for %s", self.state.call_id, exc_info=True)
 
     async def _record_usage(self) -> None:
         """One usage event per call, rounded up to the second (Phase 5 billing reads `usage_events`),
@@ -240,8 +258,8 @@ async def _load_hotel_guest(state: CallState, variants: list[str]) -> Optional[d
     tenant = state.profile.tenant
     scope: dict[str, Any] = {} if tenant.is_legacy else {"tenant_id": tenant.id}
     guest, bookings = await asyncio.gather(
-        db.guests.find_one({**scope, "phone": {"$in": variants}}, {"name": 1, "total_stays": 1}),
-        db.bookings.find({**scope, "guest_phone": {"$in": variants}},
+        db.guests.find_one({**scope, "phone": {"$in": variants}}, {"name": 1, "total_stays": 1}),  # scoped: **scope (empty only for the pre-migration .env hotel)
+        db.bookings.find({**scope, "guest_phone": {"$in": variants}},  # scoped: **scope (empty only for the pre-migration .env hotel)
                          {"booking_id": 1, "check_in_date": 1, "status": 1, "room_type": 1})
         .sort("created_at", -1).limit(3).to_list(3),
     )

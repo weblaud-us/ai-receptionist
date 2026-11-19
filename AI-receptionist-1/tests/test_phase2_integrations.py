@@ -155,18 +155,31 @@ async def salon(db):
     return await resolve_by_id(t.id)
 
 
+def _event(start, end, **kw):
+    return {"id": kw.pop("id", f"ev_{start:%H%M}"), "status": "confirmed",
+            "start": {"dateTime": start.isoformat()}, "end": {"dateTime": end.isoformat()}, **kw}
+
+
+def _fake_events(*events):
+    async def list_events(refresh_token, calendar_id, start, end, **kw):
+        assert calendar_id == "primary"
+        return list(events)
+    return list_events
+
+
 async def test_sync_writes_business_and_staff_busy_times(db, salon, monkeypatch):
     now = datetime(2026, 11, 23, 14, 0, tzinfo=timezone.utc)
     seen = {}
 
     async def fake_freebusy(refresh_token, calendar_ids, start, end):
         seen.update(rt=refresh_token, cals=calendar_ids)
-        return {"primary": [(now + timedelta(hours=2), now + timedelta(hours=3))],
-                "mo@example.com": [(now + timedelta(hours=4), now + timedelta(hours=5))]}
+        return {"mo@example.com": [(now + timedelta(hours=4), now + timedelta(hours=5))]}
 
     monkeypatch.setattr(gcal, "freebusy", fake_freebusy)
+    monkeypatch.setattr(gcal, "list_events", _fake_events(_event(now + timedelta(hours=2), now + timedelta(hours=3))))
     counts = await calendar_sync.sync_busy(salon, now=now)
-    assert seen == {"rt": "rt-secret", "cals": ["mo@example.com", "primary"]} and counts == {"primary": 1, "mo@example.com": 1}
+    # The business calendar is read as events; only staff calendars go through free/busy.
+    assert seen == {"rt": "rt-secret", "cals": ["mo@example.com"]} and counts == {"primary": 1, "mo@example.com": 1}
     repos = Repos(db, salon.id)
     assert await repos.exceptions.count({"source": "google", "resource_id": None}) == 1
     assert len((await repos.resources.find_one({"_id": "res_mo"}))["busy_cache"]) == 1
@@ -183,15 +196,72 @@ async def test_google_busy_time_blocks_slots(db, salon, monkeypatch):
     busy_start = datetime(2026, 11, 24, 10, 0, tzinfo=ZoneInfo(TZ)).astimezone(timezone.utc)
 
     async def fake_freebusy(refresh_token, calendar_ids, start, end):
-        return {"primary": [(busy_start, busy_start + timedelta(hours=1))]}
+        return {}
 
     monkeypatch.setattr(gcal, "freebusy", fake_freebusy)
+    monkeypatch.setattr(gcal, "list_events", _fake_events(_event(busy_start, busy_start + timedelta(hours=1))))
     await calendar_sync.sync_busy(salon, now=datetime(2026, 11, 23, 12, tzinfo=timezone.utc))
     svc = SchedulingService(Repos(db, salon.id), salon)
     service = (await svc.services())[0]
     slots = await svc.find_slots(service=service, day_from=day_local.date(), now=datetime(2026, 11, 23, 12, tzinfo=timezone.utc), limit=200)
     starts = {s.start for s in slots}
     assert busy_start not in starts and busy_start + timedelta(hours=1) in starts
+
+
+async def test_the_apps_own_bookings_on_the_business_calendar_never_block_other_staff(db, salon, monkeypatch):
+    """B4: Anna has no calendar of her own, so her AI bookings are written to the business calendar.
+    The next sync must not turn them into a business-wide block that closes Mo's diary too."""
+    salon.scheduling.min_notice_minutes = 0
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+    inserted = {}
+
+    async def fake_insert(refresh_token, calendar_id, **kw):
+        inserted.update(calendar_id=calendar_id, private=kw.get("private"))
+        return "evt_anna"
+
+    monkeypatch.setattr(gcal, "insert_event", fake_insert)
+    repos = Repos(db, salon.id)
+    svc = SchedulingService(repos, salon)
+    service = (await svc.services())[0]
+    anna = await repos.resources.find_one({"_id": "res_anna"})
+    slot = (await svc.find_slots(service=service, day_from=datetime(2026, 11, 24).date(), now=now, resource=anna))[0]
+    appt = await svc.book(resource_id="res_anna", start=slot.start, service=service, name="Dana", phone="+15125550100", now=now)
+    await drain()
+    assert inserted["calendar_id"] == "primary"
+    assert inserted["private"] == {calendar_sync.PRIVATE_KEY: appt["appointment_id"]}
+
+    # Google now returns that booking (twice: with the marker, and an older copy known only by its id),
+    # the owner's own dentist appointment, a "free" event and an all-day closure the day after.
+    owner_start = slot.start + timedelta(hours=3)
+    day_after = (datetime(2026, 11, 25)).date().isoformat()
+    events = [
+        _event(slot.start, slot.end, id="evt_marked",
+               extendedProperties={"private": {calendar_sync.PRIVATE_KEY: appt["appointment_id"]}}),
+        _event(slot.start, slot.end, id="evt_anna"),
+        _event(owner_start, owner_start + timedelta(hours=1), id="evt_owner"),
+        _event(owner_start + timedelta(hours=2), owner_start + timedelta(hours=3), id="evt_free", transparency="transparent"),
+        {"id": "evt_holiday", "status": "confirmed", "start": {"date": day_after},
+         "end": {"date": (datetime(2026, 11, 26)).date().isoformat()}},
+        _event(owner_start, owner_start + timedelta(hours=1), id="evt_gone", status="cancelled"),
+    ]
+
+    async def no_staff_busy(*a, **k):
+        return {"mo@example.com": []}
+
+    monkeypatch.setattr(gcal, "list_events", _fake_events(*events))
+    monkeypatch.setattr(gcal, "freebusy", no_staff_busy)
+    counts = await calendar_sync.sync_busy(salon, now=now)
+    assert counts["primary"] == 2                                    # the owner's appointment + the holiday
+    blocks = await repos.exceptions.find({"source": "google"})
+    assert sorted(b["start"].replace(tzinfo=timezone.utc) if b["start"].tzinfo is None else b["start"] for b in blocks)[0] \
+        == owner_start
+
+    mo = await repos.resources.find_one({"_id": "res_mo"})
+    mo_slots = {s.start for s in await svc.find_slots(service=service, day_from=datetime(2026, 11, 24).date(), now=now,
+                                                     resource=mo, limit=200)}
+    assert slot.start in mo_slots                                     # Mo is still free when Anna is booked
+    assert owner_start not in mo_slots                                # the owner's own event still blocks
+    assert not any(s.date().isoformat() == day_after for s in mo_slots)   # the all-day closure blocks the day
 
 
 async def test_bookings_and_cancellations_mirror_to_google(db, salon, monkeypatch):
@@ -258,10 +328,14 @@ async def test_integration_endpoints_and_callback(db, client, monkeypatch):
         return {"refresh_token": "rt-from-google", "access_token": "at"}
 
     async def fake_freebusy(*a, **k):
-        return {"primary": []}
+        return {}
+
+    async def fake_events(*a, **k):
+        return []
 
     monkeypatch.setattr(gcal, "exchange_code", fake_exchange)
     monkeypatch.setattr(gcal, "freebusy", fake_freebusy)
+    monkeypatch.setattr(gcal, "list_events", fake_events)
     r = client.get("/integrations/google/callback", params={"code": "abc", "state": unquote(state)}, follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == "https://app.example.com/settings?tab=integrations&google=connected"
     status = client.get("/t/integrations", headers=h).json()["google_calendar"]

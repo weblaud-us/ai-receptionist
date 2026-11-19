@@ -25,6 +25,7 @@ from ai.agent import get_whatsapp_agent
 from ai.prompts import GREETING_WHATSAPP, BOOKING_CONFIRMATION_WHATSAPP
 from config import settings
 from core import dedupe
+from core.log import set_tenant
 from core.integrations.meta_auth import verify_meta
 from core.signed_links import build_call_link
 from database.mongodb import get_db
@@ -336,11 +337,18 @@ async def _transcribe_audio_bytes(audio_bytes: bytes, mime_type: Optional[str]) 
 
 
 async def _synthesize_tts_mp3(text: str) -> Optional[bytes]:
+    """MP3 bytes for a WhatsApp voice reply (uploaded as audio/mpeg). Never the phone-line μ-law."""
     if not text:
         return None
     try:
         tts = get_tts()
-        return await tts.synthesize(text)
+        mp3 = getattr(tts, "synthesize_mp3", None)
+        if mp3 is None:
+            raise RuntimeError(f"{type(tts).__name__} can't produce MP3")
+        audio = await mp3(text)
+        if audio:
+            return audio
+        raise RuntimeError("empty MP3 from the TTS provider")
     except Exception as e:
         logger.error("TTS synthesis failed: %s", e, exc_info=True)
         if settings.TTS_PROVIDER == "elevenlabs" and settings.OPENAI_API_KEY:
@@ -450,6 +458,7 @@ async def _handle_webhook_payload(payload: dict) -> None:
                 if tenant is None or not tenant.active:
                     logger.warning("WhatsApp message for an unassigned number id; ignored")
                     continue
+                set_tenant(tenant.id)
 
                 messages = value.get("messages", []) or []
                 contacts = value.get("contacts", []) or []

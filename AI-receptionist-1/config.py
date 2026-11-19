@@ -148,7 +148,9 @@ class Settings(BaseSettings):
     TRANSFER_PHONE_NUMBER:      str = Field(default="")  # E.164 staff line for transfer_to_human; empty = off
     TRANSFER_HOURS:             str = Field(default="")  # "09:00-21:00" business-local; empty = any time
     OWNER_NOTIFY_WHATSAPP:      str = Field(default="")  # comma-separated numbers told about new messages
-    LEGACY_TWILIO_VOICE:        bool = Field(default=True)  # /voice/* Media Streams path; off after cutover
+    # The old /voice/* Twilio Media Streams path (slow, one API replica only). Off by default: phone
+    # calls go through the LiveKit SIP trunk. Turn on only for a number not yet moved (Task 1.13).
+    LEGACY_TWILIO_VOICE:        bool = Field(default=False)
 
     # Permanent (non-expiring) browser call links: /talk/<business>?k=<key>. See docs/TELEPHONY_TESTING.md Part 3.
     CALL_LINK_VERSION:          int = Field(default=1)    # raise it to revoke every permanent link at once
@@ -270,8 +272,10 @@ class Settings(BaseSettings):
     LIVEKIT_SIP_INBOUND_TRUNK_ID: str = Field(default="")   # ST_… inbound trunk whose `numbers` list grows
     NUMBER_INSTANT_COUNTRIES:    str  = Field(default="US,CA")   # elsewhere needs a regulatory bundle first
     NUMBER_VERIFY_CALL:          bool = Field(default=True)  # synthetic call before a number is marked active
-    # Transfers to these prefixes are refused (premium rate). ⚠ VERIFY per market before launch.
-    TRANSFER_BLOCKED_PREFIXES:   str  = Field(default="+1900,+1976,+449,+44871,+44872,+44873,+3389,+49900,+971900")
+    # Transfers to these prefixes are refused: premium-rate, revenue-sharing and satellite ranges that
+    # toll fraud uses (US/CA, UK, IE, MT, AU, FR, DE, AT, ES, IT, NL, BE, AE, international networks).
+    # ⚠ VERIFY against each regulator's current numbering plan before launch.
+    TRANSFER_BLOCKED_PREFIXES:   str  = Field(default="+1900,+1976,+449,+4487,+44118,+4470,+35315,+35650,+61190,+3389,+3381,+3382,+49900,+49137,+43900,+43930,+43939,+34803,+34806,+34807,+34905,+39899,+39892,+31906,+31909,+32900,+32902,+32903,+32904,+32905,+32906,+32907,+32909,+971900,+870,+881,+882,+883,+979")
 
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)

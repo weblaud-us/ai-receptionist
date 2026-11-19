@@ -3,7 +3,7 @@ Logging that doesn't leak.
 
 - One line per record on stdout. JSON in staging/production (LOG_FORMAT=json), readable text
   in development. systemd / the container platform collects stdout — no log files.
-- Every record carries request_id and call_id from contextvars (tenant_id arrives in Phase 2).
+- Every record carries request_id, call_id and tenant_id from contextvars (ids only, never names).
 - A redaction filter masks phone numbers and e-mail addresses in every message.
 - Transcripts and message bodies are logged only at DEBUG. DEBUG is never on in production.
 """
@@ -20,6 +20,14 @@ from typing import Any, Optional
 
 request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_id", default=None)
 call_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("call_id", default=None)
+tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("tenant_id", default=None)
+
+CONTEXT_KEYS = ("request_id", "call_id", "tenant_id")
+
+
+def set_tenant(tenant_id: Optional[str]) -> None:
+    """Tag every log line from here on (this request, call or job step) with the business id."""
+    tenant_id_var.set(tenant_id or None)
 
 # 9–15 contiguous digits, optionally prefixed with '+' (E.164 and national formats).
 # Contiguous only, so dates (2026-11-14) and booking IDs (HTL1A2B3C4D) are left alone.
@@ -68,6 +76,7 @@ class RedactionFilter(logging.Filter):
         record.args = None
         record.request_id = request_id_var.get()
         record.call_id = call_id_var.get()
+        record.tenant_id = tenant_id_var.get()
         return True
 
 
@@ -79,7 +88,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        for key in ("request_id", "call_id"):
+        for key in CONTEXT_KEYS:
             value = getattr(record, key, None)
             if value:
                 payload[key] = value
@@ -95,7 +104,7 @@ class TextFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         line = super().format(record)
         ctx = " ".join(
-            f"{k}={getattr(record, k)}" for k in ("request_id", "call_id") if getattr(record, k, None)
+            f"{k}={getattr(record, k)}" for k in CONTEXT_KEYS if getattr(record, k, None)
         )
         return f"{line} [{ctx}]" if ctx else line
 

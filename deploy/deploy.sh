@@ -36,14 +36,14 @@ export TAG DEPLOY_ENV ENV_FILE
 dc() { docker compose -p "receptionist-${DEPLOY_ENV}" -f docker-compose.prod.yml "$@"; }
 
 # The legacy Twilio Media Streams path keeps each call's state in the API process that answered
-# /voice/incoming, so it needs exactly one API replica. It is on unless the env file says false.
+# /voice/incoming, so it needs exactly one API replica. It is off unless the env file says true.
 legacy="$(grep -E '^[[:space:]]*LEGACY_TWILIO_VOICE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d "\"' " | tr '[:upper:]' '[:lower:]')"
-if [ "$legacy" = "false" ] || [ "$legacy" = "0" ]; then
-  API_REPLICAS="api-a api-b"
-else
+if [ "$legacy" = "true" ] || [ "$legacy" = "1" ]; then
   API_REPLICAS="api-a"
   echo "!! LEGACY_TWILIO_VOICE is on: running ONE API replica (a restart briefly interrupts webhooks)."
   echo "!! Finish the SIP cutover and set LEGACY_TWILIO_VOICE=false to get two."
+else
+  API_REPLICAS="api-a api-b"
 fi
 
 # Voice worker containers: 2 (default) to 4, from WORKERS in the .deploy file.

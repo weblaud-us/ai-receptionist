@@ -35,6 +35,7 @@ from core.repositories.repos import TenantsStore
 from core.services import availability as av
 from core.services import calendar_sync
 from core.tenancy.models import TenantConfig
+from core.log import set_tenant
 from database.mongodb import get_db
 
 logger = logging.getLogger(__name__)
@@ -250,6 +251,7 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
+        set_tenant(t.id)
         for name, job in (("synced", maybe_sync_calendar(t, now)), ("reminders", send_reminders(t, now)),
                           ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {}))),
                           ("purged", purge_transcripts(t, now)),
@@ -260,6 +262,7 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
                 stats[name] += int(await job)
             except Exception:
                 logger.error("Tenant job %s failed for %s", name, t.id, exc_info=True)
+    set_tenant(None)
     return stats
 
 

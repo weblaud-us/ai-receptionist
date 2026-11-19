@@ -15,6 +15,7 @@ ADMIN_USERNAME login) are platform admins; in legacy single-hotel mode they act 
 from __future__ import annotations
 
 import hmac
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -28,7 +29,10 @@ from core.repositories.repos import UsersStore
 from core.tenancy import resolve_by_id
 from core.tenancy.models import TenantConfig, legacy_hotel_tenant
 from core.tenancy.resolver import legacy_mode
+from core.log import set_tenant
 from database.mongodb import get_db
+
+logger = logging.getLogger(__name__)
 
 ROLE_RANK = {"staff": 1, "admin": 2, "owner": 3}
 _DEFAULT_SECRETS = {"", "change-in-production"}
@@ -156,6 +160,25 @@ async def resolve_tenant_for(user: Principal, requested: Optional[str], *,
     return TenantPrincipal(user, tenant, role or "staff")
 
 
+PLATFORM_ACCESS_AUDIT_WINDOW_S = 3600
+
+
+async def audit_platform_access(user: Principal, tp: TenantPrincipal, request: Request) -> None:
+    """A platform admin opening a business they don't belong to ("impersonation") is written to that
+    business's audit log: the first request, then at most once an hour while they keep working in it.
+    Their changes are audited on top of this by each endpoint. Never blocks the request."""
+    try:
+        key = f"audit:open:{user.user_id}:{tp.tenant.id}"
+        if not await ratelimit.allow_fixed(key, 1, PLATFORM_ACCESS_AUDIT_WINDOW_S):
+            return
+        await Repos(get_db(), tp.tenant.id).audit.record(
+            user_id=f"platform:{user.user_id}", action="platform.open_business", target_type="tenant",
+            target_id=tp.tenant.id, diff={"method": request.method, "path": request.url.path},
+            ip=request.client.host if request.client else "")
+    except Exception:
+        logger.warning("Could not audit platform access to %s", tp.tenant.id, exc_info=True)
+
+
 def require_tenant(min_role: str = "staff", *, allow_inactive: bool = False) -> Callable[..., Any]:
     if min_role not in ROLE_RANK:
         raise ValueError(f"unknown role {min_role}")
@@ -169,6 +192,9 @@ def require_tenant(min_role: str = "staff", *, allow_inactive: bool = False) -> 
         if not tp.can(min_role):
             raise HTTPException(403, f"Requires the {min_role} role")
         request.state.tenant_id = tp.tenant.id
+        set_tenant(tp.tenant.id)
+        if user.platform_admin and tp.tenant.id != (user.tenant_id or "") and not tp.tenant.is_legacy:
+            await audit_platform_access(user, tp, request)
         # Per-business API limit (Task 3.8): one business's runaway script can't starve the others.
         limit = settings.API_RATE_PER_TENANT_MIN
         if limit > 0 and not await ratelimit.allow_fixed(f"api:{tp.tenant.id}", limit, 60):

@@ -71,7 +71,7 @@ def _cell(value: Any) -> str:
 
 async def _rows(db: Any, collection: str, tenant_id: str, *, projection: Optional[Dict[str, Any]] = None,
                 sort: str = "created_at") -> List[Dict[str, Any]]:
-    cur = db[collection].find({"tenant_id": tenant_id}, projection).sort(sort, 1).limit(EXPORT_MAX_ROWS)
+    cur = db[collection].find({"tenant_id": tenant_id}, projection).sort(sort, 1).limit(EXPORT_MAX_ROWS)  # scoped: tenant_id
     return await cur.to_list(EXPORT_MAX_ROWS)
 
 
@@ -166,7 +166,7 @@ async def _delete_recordings(db: Any, tenant_id: str) -> int:
     if not storage_configured():
         return 0
     deleted = 0
-    async for call in db.calls.find({"tenant_id": tenant_id, "recording.path": {"$exists": True}},
+    async for call in db.calls.find({"tenant_id": tenant_id, "recording.path": {"$exists": True}},  # scoped: tenant_id
                                     {"recording": 1}):
         if await delete_recording_object(call.get("recording") or {}):
             deleted += 1
@@ -179,7 +179,7 @@ async def delete_tenant_data(db: Any, tenant: TenantConfig, *, actor: str = "ret
     """Irreversible. Numbers must already be released (the caller does that first)."""
     counts: Dict[str, int] = {"recordings": await _delete_recordings(db, tenant.id)}
     for name in TENANT_COLLECTIONS:
-        res = await db[name].delete_many({"tenant_id": tenant.id})
+        res = await db[name].delete_many({"tenant_id": tenant.id})  # scoped: tenant_id
         counts[name] = int(getattr(res, "deleted_count", 0) or 0)
     # Members: drop the membership; a user left with no business and no admin rights is deleted.
     removed_users = 0

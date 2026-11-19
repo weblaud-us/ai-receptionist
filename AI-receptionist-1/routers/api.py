@@ -343,7 +343,9 @@ async def cancel_booking_api(booking_id: str, reason: Optional[str] = Query(None
     executor = get_tool_executor(tp.tenant)
     result = await executor.cancel_booking(booking_id, reason)
     if result.get("error"):
-        raise HTTPException(400, result["error"])
+        # Another business's booking looks exactly like a missing one (the executor is tenant-scoped).
+        missing = result["error"] == "not_found" or str(result["error"]).endswith("not found")
+        raise HTTPException(404 if missing else 400, result["error"])
     return result
 
 

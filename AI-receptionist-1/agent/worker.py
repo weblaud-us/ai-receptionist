@@ -30,7 +30,7 @@ import math
 from typing import Any, Optional
 
 from config import settings
-from core.log import call_id_var, configure_logging
+from core.log import call_id_var, configure_logging, set_tenant
 from core.observability import init_sentry
 
 configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
@@ -201,6 +201,7 @@ async def _run_unavailable(ctx: JobContext, state: CallState, gate: str) -> None
 
 
 def _tag_sentry(state: CallState) -> None:
+    set_tenant(state.profile.business_id)                 # every log line of this call
     try:
         import sentry_sdk
 

@@ -172,11 +172,15 @@ async def stats(days: int = Query(30, ge=7, le=365), tp: TenantPrincipal = Depen
         {"created_at": {"$gte": since_dt}, "booking_ids.0": {"$exists": True}})
     conv_total = sum(conv_by_channel.values())
 
-    try:
-        from voice.twilio_handler import active_sessions
-        live_calls = len(active_sessions)
-    except Exception:
-        live_calls = 0
+    live_calls = 0
+    if settings.LEGACY_TWILIO_VOICE:
+        try:
+            from voice.twilio_handler import active_sessions
+            live_calls = len(active_sessions)
+        except Exception:
+            live_calls = 0
+    live_calls += await db.calls.count_documents(
+        {"status": "in_progress", "updated_at": {"$gte": datetime.utcnow() - timedelta(seconds=LIVE_CALL_STALE_S)}})
 
     # ── needs attention ──────────────────────
     reminders_failed = await db.bookings.count_documents(
@@ -656,6 +660,8 @@ async def system(tp: TenantPrincipal = Depends(_admin)):
             "voice_calls": settings.ENABLE_VOICE_CALLS,
             "call_recording": settings.ENABLE_CALL_RECORDING,
             "livekit_realtime": settings.LIVEKIT_USE_REALTIME,
+            # The old Twilio Media Streams path (/voice/*), off after the SIP cutover (Task 1.13).
+            "legacy_twilio_voice": settings.LEGACY_TWILIO_VOICE,
         },
         "memory": {"days": settings.CONVERSATION_MEMORY_DAYS,
                    "max_messages": settings.CONVERSATION_MEMORY_MAX_MESSAGES},

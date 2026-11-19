@@ -23,7 +23,7 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -154,12 +154,38 @@ async def freebusy(refresh_token: str, calendar_ids: List[str], start: datetime,
     return out
 
 
+async def list_events(refresh_token: str, calendar_id: str, start: datetime, end: datetime,
+                      *, max_pages: int = 5) -> List[Dict[str, Any]]:
+    """Events on one calendar between start and end, recurring events expanded. Each item has id,
+    status, transparency, start/end ({dateTime} or all-day {date}) and private extended properties."""
+    params: Dict[str, str] = {
+        "timeMin": _iso(start), "timeMax": _iso(end), "singleEvents": "true", "maxResults": "2500",
+        "fields": "nextPageToken,items(id,status,transparency,start,end,extendedProperties/private)",
+    }
+    items: List[Dict[str, Any]] = []
+    for _ in range(max_pages):
+        path = f"/calendars/{quote(calendar_id, safe='@')}/events"
+        data = await _api(refresh_token, "GET", path, params=params) or {}
+        items.extend(data.get("items") or [])
+        token = data.get("nextPageToken")
+        if not token:
+            break
+        params = {**params, "pageToken": token}
+    return items
+
+
 async def insert_event(refresh_token: str, calendar_id: str, *, summary: str, start: datetime, end: datetime,
-                       description: str = "", timezone_name: str = "UTC") -> str:
-    body = {"summary": summary[:200], "description": description[:2000],
-            "start": {"dateTime": _iso(start), "timeZone": timezone_name},
-            "end": {"dateTime": _iso(end), "timeZone": timezone_name},
-            "source": {"title": "AI receptionist", "url": settings.DASHBOARD_URL or "https://example.com"}}
+                       description: str = "", timezone_name: str = "UTC",
+                       private: Optional[Dict[str, str]] = None) -> str:
+    """`private`: extended properties only this app sees. The sync uses them to tell its own
+    bookings apart from the owner's events."""
+    body: Dict[str, Any] = {
+        "summary": summary[:200], "description": description[:2000],
+        "start": {"dateTime": _iso(start), "timeZone": timezone_name},
+        "end": {"dateTime": _iso(end), "timeZone": timezone_name},
+        "source": {"title": "AI receptionist", "url": settings.DASHBOARD_URL or "https://example.com"}}
+    if private:
+        body["extendedProperties"] = {"private": {k: str(v)[:1024] for k, v in private.items()}}
     data = await _api(refresh_token, "POST", f"/calendars/{calendar_id}/events", json_body=body)
     return str(data["id"])
 

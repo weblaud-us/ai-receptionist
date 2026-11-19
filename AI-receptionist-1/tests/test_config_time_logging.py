@@ -115,3 +115,22 @@ def test_style_filter_keeps_ai_disclosure():
 
     reply = "I'm an AI assistant for the hotel. Would you like me to take a message?"
     assert "AI assistant" in get_voice_agent()._enforce_style(reply)
+
+
+def test_log_lines_carry_the_business_id():
+    """Support can filter one business's logs: tenant_id rides on every record (ids only)."""
+    import contextvars
+    import json as _json
+
+    from core.log import JsonFormatter, TextFormatter, set_tenant
+
+    def emit():
+        set_tenant("ten_abc")
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "Booked for %s", ("+15125550100",), None)
+        RedactionFilter().filter(record)
+        return record
+
+    record = contextvars.copy_context().run(emit)        # isolated: doesn't leak into other tests
+    payload = _json.loads(JsonFormatter().format(record))
+    assert payload["tenant_id"] == "ten_abc" and "+15125550100" not in payload["msg"]
+    assert "tenant_id=ten_abc" in TextFormatter().format(record)

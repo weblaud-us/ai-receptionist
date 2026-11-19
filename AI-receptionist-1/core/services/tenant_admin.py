@@ -47,7 +47,8 @@ def default_hours_for(vertical: str) -> List[HoursEntry]:
     if vertical == "restaurant":
         return [HoursEntry(dow=d, open="11:30", close="22:00") for d in range(7)]
     if vertical == "salon":
-        return [HoursEntry(dow=d, open="09:00", close="18:00") for d in range(1, 6)] + \
+        # Tuesday–Friday 9–6, Saturday 9–4 (dow 0 = Monday).
+        return [HoursEntry(dow=d, open="09:00", close="18:00") for d in range(1, 5)] + \
                [HoursEntry(dow=5, open="09:00", close="16:00")]
     return [HoursEntry(dow=d, open="08:00", close="17:00") for d in range(5)]
 

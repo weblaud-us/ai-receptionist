@@ -93,7 +93,10 @@ export default function Calls() {
         <RecentCalls />
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <OutboundCall enabled={integrations?.twilio_voice !== false} />
+          {/* One-way announcement calls exist only on the old Twilio path (removed after the SIP cutover). */}
+          {system.data?.features?.legacy_twilio_voice === true && (
+            <OutboundCall enabled={integrations?.twilio_voice !== false} />
+          )}
           <WhatsAppForm enabled={integrations?.meta_whatsapp !== false} />
         </div>
       </div>

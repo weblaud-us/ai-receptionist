@@ -101,7 +101,9 @@ async def get_billing(tp: TenantPrincipal = Depends(_staff_any)):
         "hard_cap": b.hard_cap, "verified_phone": mask_phone(b.verified_phone) if b.verified_phone else "",
         "usage": usage.summary(t, seconds), "gate": usage.gate(t, seconds),
         "limits": t.limits.model_dump(), "overage_usd_per_min": plans.OVERAGE_USD_PER_MIN,
-        "catalogue": plans.catalogue(), "can_manage": tp.can("owner"),
+        "currency": plans.billing_currency(t.currency),
+        "overage_per_min": plans.OVERAGE_PER_MIN.get(plans.billing_currency(t.currency), plans.OVERAGE_USD_PER_MIN),
+        "catalogue": plans.catalogue(t.currency), "can_manage": tp.can("owner"),
     }
 
 
@@ -137,6 +139,7 @@ async def checkout(body: CheckoutBody, request: Request, tp: TenantPrincipal = D
         trial_days = settings.TRIAL_DAYS if not b.trial_used and t.status in ("incomplete", "trial") else 0
         session = await stripe_api.create_checkout_session(
             customer_id=customer_id, tenant_id=t.id, price=price, trial_days=trial_days,
+            currency=plans.billing_currency(t.currency),
             overage_price=settings.STRIPE_PRICE_OVERAGE.strip(),
             setup_fee_price=settings.STRIPE_PRICE_SETUP_FEE.strip() if body.setup_fee else "",
             success_url=lifecycle.dashboard("/onboarding?checkout=success"),
@@ -195,7 +198,7 @@ async def verify_phone_start(body: PhoneBody, tp: TenantPrincipal = Depends(_own
     from core.auth.tokens import token_hash
     from core.billing.usage import utcnow
 
-    await get_db().phone_verifications.replace_one(
+    await get_db().phone_verifications.replace_one(  # scoped: _id is the tenant id
         {"_id": tp.tenant.id},
         {"_id": tp.tenant.id, "phone": number, "code_hash": token_hash(code), "tries": 0,
          "expires_at": utcnow() + PHONE_CODE_TTL}, upsert=True)
@@ -214,13 +217,13 @@ async def verify_phone_confirm(body: CodeBody, request: Request, tp: TenantPrinc
     from core.billing.usage import aware, utcnow
 
     db = get_db()
-    row = await db.phone_verifications.find_one({"_id": tp.tenant.id})
+    row = await db.phone_verifications.find_one({"_id": tp.tenant.id})  # scoped: _id is the tenant id
     if not row or (aware(row.get("expires_at")) or utcnow()) < utcnow() or row.get("tries", 0) >= PHONE_CODE_TRIES:
         raise HTTPException(400, "That code has expired — ask for a new one")
     if not secrets.compare_digest(token_hash(body.code), row["code_hash"]):
-        await db.phone_verifications.update_one({"_id": tp.tenant.id}, {"$inc": {"tries": 1}})
+        await db.phone_verifications.update_one({"_id": tp.tenant.id}, {"$inc": {"tries": 1}})  # scoped: _id is the tenant id
         raise HTTPException(400, "That code didn't match")
-    await db.phone_verifications.delete_one({"_id": tp.tenant.id})
+    await db.phone_verifications.delete_one({"_id": tp.tenant.id})  # scoped: _id is the tenant id
     await lifecycle.apply(db, tp.tenant, {"verified_phone": row["phone"]},
                           extra={} if tp.tenant.notifications.owner_phone else {"notifications.owner_phone": row["phone"]},
                           audit="billing.phone_verified", actor=tp.user.user_id)
@@ -345,7 +348,7 @@ async def cost_model(admin: Principal = Depends(require_platform_admin)):
     db = get_db()
     since = usage.utcnow() - timedelta(days=30)
     totals = {"calls": 0, "seconds": 0.0, "cost_usd": 0.0}
-    async for row in db.usage_events.aggregate([
+    async for row in db.usage_events.aggregate([  # cross-tenant: platform economics, totals only
         {"$match": {"kind": "voice_minute", "at": {"$gte": usage.naive_utc(since)}}},
         {"$group": {"_id": None, "calls": {"$sum": 1}, "seconds": {"$sum": {"$ifNull": ["$seconds", 0]}},
                     "cost": {"$sum": {"$ifNull": ["$cost_usd", 0]}}}},
@@ -355,10 +358,16 @@ async def cost_model(admin: Principal = Depends(require_platform_admin)):
     async for row in db.tenants.aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
         by_status[str(row["_id"])] = row["n"]
     by_plan: Dict[str, int] = {}
+    mrr = 0.0
     async for row in db.tenants.aggregate([{"$match": {"status": {"$in": ["trial", "active", "past_due"]}}},
-                                           {"$group": {"_id": "$billing.plan", "n": {"$sum": 1}}}]):
-        by_plan[str(row["_id"] or "manual")] = row["n"]
-    mrr = sum(n * (plans.get_plan(k).monthly_usd if plans.get_plan(k) else 0) for k, n in by_plan.items())
+                                           {"$group": {"_id": {"plan": "$billing.plan", "currency": "$currency"},
+                                                       "n": {"$sum": 1}}}]):
+        key = str(row["_id"].get("plan") or "manual")
+        by_plan[key] = by_plan.get(key, 0) + row["n"]
+        plan = plans.get_plan(key)
+        if plan:   # list price in the business's currency, reported in USD
+            mrr += row["n"] * plan.monthly_revenue_usd(str(row["_id"].get("currency") or ""))
+    mrr = round(mrr, 2)
     return {**costs.model(), "last_30d": totals, "tenants_by_status": by_status, "tenants_by_plan": by_plan,
             "list_mrr_usd": mrr}
 
@@ -386,10 +395,18 @@ async def retry_number_order(order_id: str, admin: Principal = Depends(require_p
     return {"order": to_jsonable(number_service.public_order(order))}
 
 
+class ApproveOrderBody(BaseModel):
+    bundle_sid: str = Field(default="", max_length=40)      # BU… approved regulatory bundle
+    address_sid: str = Field(default="", max_length=40)     # AD… (most AU/UK/EU numbers)
+
+
 @platform_billing_router.post("/number-orders/{order_id}/approve")
-async def approve_number_order(order_id: str, admin: Principal = Depends(require_platform_admin)):
+async def approve_number_order(order_id: str, body: Optional[ApproveOrderBody] = None,
+                               admin: Principal = Depends(require_platform_admin)):
+    body = body or ApproveOrderBody()
     try:
-        await number_service.complete_regulatory(get_db(), order_id, admin=admin.user_id)
+        await number_service.complete_regulatory(get_db(), order_id, admin=admin.user_id,
+                                                 bundle_sid=body.bundle_sid, address_sid=body.address_sid)
     except number_service.ProvisioningError as exc:
         raise _numbers_http(exc)
     await _run_order_in_background(order_id)

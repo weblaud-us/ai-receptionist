@@ -59,7 +59,7 @@ from agent.speech import clean_stream
 from agent.state import CallState
 from agent.telemetry import attach_telemetry
 from config import settings
-from core.log import call_id_var
+from core.log import call_id_var, set_tenant
 from core.outbound import dialer, gate, optout, outcomes, persona, sales_tools
 from core.outbound import models as m
 from core.outbound.sales_tools import SalesContext
@@ -288,6 +288,7 @@ async def _load(meta: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optiona
 
 async def sales_caller(ctx: JobContext) -> None:
     call_id_var.set(ctx.room.name)
+    set_tenant(settings.SALES_TENANT_ID or None)
     try:
         meta = json.loads(ctx.job.metadata or "{}")
     except ValueError:

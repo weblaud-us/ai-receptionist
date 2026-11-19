@@ -1,6 +1,10 @@
 """
-Booking reminder background service — single-tenant.
-Sends one WhatsApp reminder one day before check-in.
+Hotel check-in reminders: one WhatsApp message the day before check-in.
+
+Runs per business: every active hotel tenant's own bookings, with its own name, timezone and
+WhatsApp number. Before migration m0003 (no tenants yet) it serves the .env hotel's bookings,
+which have no tenant_id. A booking is never sent under another business's name, and a guest who
+opted out (STOP) gets nothing.
 
 With Redis the jobs worker calls `run_once()` on a schedule (jobs/worker.py); without it the API
 process runs the loop below. Either way each reminder is claimed atomically before it is sent.
@@ -17,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from config import settings
 from database.mongodb import get_db
-from database.tenancy import get_hotel_profile
+from database.tenancy import get_hotel_profile, tenant_profile
 from services.calendar import build_booking_calendar_links
 
 logger = logging.getLogger(__name__)
@@ -50,7 +54,7 @@ def _build_reminder_message(booking: Dict[str, Any], hotel: Dict[str, Any]) -> s
         room_type=str(booking.get("room_type", "standard")),
     )
     lines = [
-        f"Sir, this is a friendly reminder from {hotel.get('name', settings.HOTEL_NAME)}.",
+        f"Hello, this is a friendly reminder from {hotel.get('name', settings.HOTEL_NAME)}.",
         f"Your check-in is tomorrow ({booking.get('check_in_date')}) at {hotel.get('checkin_time', settings.HOTEL_CHECKIN_TIME)}.",
         f"Booking ID: {booking.get('booking_id')}",
         f"Room: {str(booking.get('room_type', '')).title()} (Room {booking.get('room_number', '-')})",
@@ -63,7 +67,7 @@ def _build_reminder_message(booking: Dict[str, Any], hotel: Dict[str, Any]) -> s
     lines += [
         "",
         f"Hotel address: {hotel.get('address', settings.HOTEL_ADDRESS)}",
-        "Reply here if you need any changes, sir.",
+        "Reply here if you need any changes.",
     ]
     return "\n".join(lines)
 
@@ -108,14 +112,24 @@ class BookingReminderService:
             return
         if not settings.ENABLE_WHATSAPP:
             return
-        hotel = get_hotel_profile()
-        try:
-            await self._process_hotel(hotel)
-        except Exception as e:
-            logger.error("Reminder processing failed: %s", e, exc_info=True)
+        from core.tenancy.resolver import legacy_mode
 
-    async def _process_hotel(self, hotel: Dict[str, Any]) -> None:
+        if await legacy_mode():
+            hotels = [(get_hotel_profile(), None)]            # pre-migration: the .env hotel only
+        else:
+            hotels = [(tenant_profile(t), t.id) for t in await _hotel_tenants()]
+        for hotel, tenant_id in hotels:
+            try:
+                await self._process_hotel(hotel, tenant_id=tenant_id)
+            except Exception as e:
+                logger.error("Reminder processing failed for %s: %s", tenant_id or "legacy hotel", e, exc_info=True)
+
+    async def _process_hotel(self, hotel: Dict[str, Any], tenant_id: Optional[str] = None) -> None:
+        """One business's reminders. `tenant_id=None`: the pre-migration bookings (no tenant_id)."""
+        from core.compliance.optout import is_opted_out
+
         db = get_db()
+        scope: Dict[str, Any] = {"tenant_id": tenant_id} if tenant_id else {"tenant_id": {"$in": [None, "default"]}}
         tz_name = hotel.get("timezone") or settings.HOTEL_TIMEZONE or "UTC"
         try:
             local_today = datetime.now(ZoneInfo(tz_name)).date()
@@ -123,8 +137,9 @@ class BookingReminderService:
             local_today = datetime.utcnow().date()
 
         reminder_date = (local_today + timedelta(days=1)).isoformat()
-        bookings = await db.bookings.find(
+        bookings = await db.bookings.find(  # scoped: one business (or the pre-migration hotel)
             {
+                **scope,
                 "status": "confirmed",
                 "check_in_date": reminder_date,
                 "$or": [
@@ -138,12 +153,17 @@ class BookingReminderService:
             phone = booking.get("guest_phone")
             if not phone:
                 continue
+            if tenant_id and await is_opted_out(db, tenant_id, phone):
+                await db.bookings.update_one(  # scoped: the booking's own business
+                    {**scope, "booking_id": booking.get("booking_id")},
+                    {"$set": {"one_day_reminder_sent": True, "one_day_reminder_skipped": "opted_out"}})
+                continue
             # Claim first (atomic): with several runners, or a retry, only the one whose update
             # matches sends the reminder. A claim older than CLAIM_RETRY_AFTER whose send failed
             # is free to be claimed again.
             now = datetime.utcnow()
-            claimed = await db.bookings.find_one_and_update(
-                {"booking_id": booking.get("booking_id"), "status": "confirmed",
+            claimed = await db.bookings.find_one_and_update(  # scoped: the booking's own business
+                {**scope, "booking_id": booking.get("booking_id"), "status": "confirmed",
                  "one_day_reminder_sent": {"$ne": True},
                  "$or": [{"one_day_reminder_claimed_at": {"$exists": False}},
                          {"one_day_reminder_claimed_at": None},
@@ -167,10 +187,28 @@ class BookingReminderService:
                 logger.info("1-day reminder sent for booking=%s", booking.get("booking_id"))
             else:
                 update["one_day_reminder_error"] = "send_failed"
-            await db.bookings.update_one(
-                {"booking_id": booking.get("booking_id")},
+            await db.bookings.update_one(  # scoped: the booking's own business
+                {**scope, "booking_id": booking.get("booking_id")},
                 {"$set": update},
             )
+
+
+async def _hotel_tenants() -> list:
+    from core.repositories.repos import TenantsStore
+    from core.tenancy.models import TenantConfig
+
+    out = []
+    for doc in await TenantsStore(get_db()).list(limit=10_000):
+        if doc.get("vertical") != "hotel":
+            continue
+        try:
+            t = TenantConfig.from_doc(doc)
+        except Exception:
+            logger.warning("Skipping invalid tenant %s", doc.get("_id"))
+            continue
+        if t.active:
+            out.append(t)
+    return out
 
 
 _service: Optional[BookingReminderService] = None

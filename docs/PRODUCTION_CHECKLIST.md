@@ -411,3 +411,35 @@ Details: [PHASE_7_TESTING.md](PHASE_7_TESTING.md) · [PILOT_PLAYBOOK.md](PILOT_P
 **Acceptance (ROADMAP §12)**
 - [ ] Pilot exit criteria met (PILOT_PLAYBOOK.md §7).
 - [ ] LAUNCH_CHECKLIST.md all ticked.
+
+## Launch readiness — Australia, UK, EU (English first)
+
+Added with the launch-readiness fixes. US/Canada-only steps above (A2P 10DLC, SHAKEN/STIR, CNAM,
+FTC SAN, TCPA review) move to the US/CA wave.
+
+**Prices and Stripe**
+- [ ] Decide the local prices in `core/billing/plans.py` → `PRICE_BOOK`, `OVERAGE_PER_MIN`, `SETUP_FEE`
+      (the numbers there are placeholders). Mirror them exactly as **`currency_options` (GBP, EUR, AUD)**
+      on every Stripe Price: the six plan Prices, the overage Price and the setup-fee Price.
+      ⚠ VERIFY that the metered overage Price accepts currency options.
+- [ ] Stripe Tax registrations: UK VAT, EU OSS, Australian GST.
+- [ ] Refresh `USD_PER_UNIT` (margin reports only) every quarter.
+
+**Numbers**
+- [ ] `SUPPORT_EMAIL` set: every AU/UK/EU number order e-mails it. Platform app → **Numbers** shows the
+      orders waiting; approve each with the Twilio bundle SID (and address SID).
+- [ ] Your own regulatory bundles for the demo number and the UK/AU sales lines.
+- [ ] `TRANSFER_BLOCKED_PREFIXES` reviewed against each regulator's numbering plan (the default now
+      covers UK, IE, MT, AU, the main EU countries and satellite ranges).
+
+**Voice and hosting**
+- [ ] `LEGACY_TWILIO_VOICE` is now **off by default**. Leave it off unless a number is still on the old
+      Twilio webhook. Check your local `.env`: it still turns the old path on.
+- [ ] Run the 20-call latency script **from an Australian phone and a UK phone** before choosing the
+      regions (ROADMAP Task 3.2). Workers far from the caller will miss the 1.0 s target.
+- [ ] Keep the language picker English-only until the fixed phrases are localized.
+
+**Legal**
+- [ ] Australian privacy/consumer-law review ([COMPLIANCE.md §7a](COMPLIANCE.md#7a-australia-first-launch-market-not-in-roadmap-11)),
+      including the `[AU]` placeholders in `legal/PRIVACY.md` and `legal/TERMS.md`.
+- [ ] EU and UK representatives appointed; ICO fee paid; ROPA and DPIA (§9–10) filled in.

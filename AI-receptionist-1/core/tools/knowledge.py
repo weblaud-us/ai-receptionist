@@ -91,10 +91,55 @@ async def answer_from_knowledge(ctx: "ToolContext", args: Dict[str, Any]) -> Dic
 
 
 async def log_unanswered(ctx: "ToolContext", question: str) -> None:
+    await record_unanswered(ctx.repos(), question, channel=ctx.channel, call_id=ctx.call_id,
+                            caller_phone=ctx.caller_phone)
+
+
+async def record_unanswered(repos: Any, question: str, *, channel: str, call_id: Any = None,
+                            caller_phone: Any = None, source: str = "tool") -> bool:
+    """Add a question to the owner's "unanswered" list, once per call. Never raises."""
+    question = " ".join((question or "").split())[:500]
+    if not question:
+        return False
     try:
-        await ctx.repos().unanswered.insert_one({
-            "question": question[:500], "channel": ctx.channel, "call_id": ctx.call_id,
-            "caller_phone": ctx.caller_phone, "status": "open", "created_at": datetime.now(timezone.utc),
+        if call_id and await repos.unanswered.find_one({"call_id": call_id, "question": question}, {"_id": 1}):
+            return False
+        await repos.unanswered.insert_one({
+            "question": question, "channel": channel, "call_id": call_id, "caller_phone": caller_phone,
+            "status": "open", "source": source, "created_at": datetime.now(timezone.utc),
         })
+        return True
     except Exception:
         logger.debug("Could not log unanswered question", exc_info=True)
+        return False
+
+
+# What the assistant says when it doesn't know (BASE_VOICE_RULES: "never invent… say someone will call
+# back"). A caller turn followed by one of these is a question the knowledge base should answer.
+_DONT_KNOW_RE = re.compile(
+    r"\b(i\s+don'?t\s+have\s+(that|this|any)\s+(information|info|detail)|i'?m\s+not\s+sure|"
+    r"i\s+don'?t\s+know|i\s+can'?t\s+(answer|tell\s+you|confirm)|"
+    r"(that|this)\s+(isn'?t|is\s+not)\s+something\s+i\s+(have|know)|"
+    r"i\s+(don'?t|do\s+not)\s+have\s+details|someone\s+will\s+(call|get)\s+(you\s+)?back\s+(about|on|with))",
+    re.IGNORECASE)
+
+
+def questions_not_answered(transcript: List[Dict[str, Any]], limit: int = 5) -> List[str]:
+    """Caller questions the assistant said it couldn't answer, from a finished conversation."""
+    found: List[str] = []
+    last_user = ""
+    for item in transcript:
+        text = " ".join(str(item.get("text") or "").split())
+        if not text:
+            continue
+        if item.get("role") == "user":
+            last_user = text
+        elif last_user and _DONT_KNOW_RE.search(text):
+            if last_user not in found:
+                found.append(last_user[:500])
+            last_user = ""
+        else:
+            last_user = ""
+        if len(found) >= limit:
+            break
+    return found

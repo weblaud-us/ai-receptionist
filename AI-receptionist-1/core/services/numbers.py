@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -160,12 +161,32 @@ async def start_order(db: Any, tenant: TenantConfig, number: str, *, requested_b
         order["status"] = "needs_documents"
         order["documents"] = documents or {}
         order["note"] = ("Numbers in this country need a regulatory bundle (business address proof, ID) approved "
-                         "by the carrier first — usually 1–3 business days. Use call forwarding or browser "
-                         "testing meanwhile.")
+                         "by the carrier first — usually 1–3 business days. We'll e-mail you when it's live. "
+                         "Use call forwarding or browser testing meanwhile.")
     await db.number_orders.insert_one(order)
+    if order["status"] == "needs_documents":
+        await _alert_operator(tenant, order)
     await Repos(db, tenant.id).audit.record(user_id=requested_by, action="number.order", target_type="phone_number",
                                             target_id=number, diff={"status": order["status"]})
     return order
+
+
+async def _alert_operator(tenant: TenantConfig, order: Dict[str, Any]) -> None:
+    """Tell the platform team a number needs its regulatory bundle (AU, UK, EU…). Never raises."""
+    to = settings.SUPPORT_EMAIL or settings.PILOT_REPORT_BCC
+    if not to:
+        logger.warning("Number order %s needs documents but SUPPORT_EMAIL is not set", order["_id"])
+        return
+    try:
+        from core.integrations.email import send_email
+
+        await send_email(to, f"[numbers] {tenant.name} needs a {order['country']} number",
+                         f"{tenant.name} ({tenant.id}) ordered {order['e164']} ({order['country']}).\n\n"
+                         "1. Create or reuse their regulatory bundle (and address) in the Twilio console.\n"
+                         "2. When Twilio approves it, open the platform app → Numbers, paste the bundle SID and "
+                         f"approve order {order['_id']}.\n")
+    except Exception:
+        logger.warning("Could not e-mail the number-order alert for %s", order["_id"], exc_info=True)
 
 
 def _country_of(number: str) -> str:
@@ -193,12 +214,19 @@ async def _find_owned(number: str) -> Optional[str]:
     return rows[0]["sid"] if rows else None
 
 
-async def _purchase(number: str, tenant_id: str) -> str:
+async def _purchase(number: str, tenant_id: str, *, bundle_sid: str = "", address_sid: str = "") -> str:
+    """Buy the number. Outside the instant countries Twilio needs the approved regulatory bundle
+    (BundleSid) and usually an address (AddressSid) on the purchase itself."""
     sid = await _find_owned(number)
     if sid:
         return sid
     url = f"{TWILIO_API.format(sid=settings.TWILIO_ACCOUNT_SID)}/IncomingPhoneNumbers.json"
-    resp = await _twilio("POST", url, data={"PhoneNumber": number, "FriendlyName": f"receptionist {tenant_id}"[:64]})
+    data = {"PhoneNumber": number, "FriendlyName": f"receptionist {tenant_id}"[:64]}
+    if bundle_sid:
+        data["BundleSid"] = bundle_sid
+    if address_sid:
+        data["AddressSid"] = address_sid
+    resp = await _twilio("POST", url, data=data)
     if resp.status_code >= 400:
         detail = ((resp.json() if resp.content else {}) or {}).get("message", "")
         raise ProvisioningError(f"Could not buy the number: {detail or resp.status_code}", status=502)
@@ -259,8 +287,10 @@ async def run_order(db: Any, order_id: str) -> Dict[str, Any]:
     try:
         step = "purchased"
         if not order["steps"].get("purchased"):
-            await _step(db, order, "purchased", {"sid": "fake" if fake else await _purchase(number, tenant_id),
-                                                 "at": utcnow()})
+            reg = order.get("regulatory") or {}
+            sid = "fake" if fake else await _purchase(number, tenant_id, bundle_sid=reg.get("bundle_sid", ""),
+                                                      address_sid=reg.get("address_sid", ""))
+            await _step(db, order, "purchased", {"sid": sid, "at": utcnow()})
         step = "trunk"
         if not order["steps"].get("trunk"):
             if not fake:
@@ -308,13 +338,26 @@ async def _make_public_number(db: Any, tenant_id: str, number: str) -> None:
         invalidate(tenant_id)
 
 
-async def complete_regulatory(db: Any, order_id: str, *, admin: str) -> Dict[str, Any]:
-    """Platform admin: the carrier approved the bundle → continue the order as an instant one."""
+_BUNDLE_RE = re.compile(r"^BU[0-9a-fA-F]{32}$")
+_ADDRESS_RE = re.compile(r"^AD[0-9a-fA-F]{32}$")
+
+
+async def complete_regulatory(db: Any, order_id: str, *, admin: str, bundle_sid: str = "",
+                              address_sid: str = "") -> Dict[str, Any]:
+    """Platform admin: Twilio approved the business's regulatory bundle → continue the order as an
+    instant one, buying the number with that bundle (and address). Operator-assisted provisioning for
+    AU, UK and EU numbers until documents can be uploaded in the app."""
     order = await db.number_orders.find_one({"_id": order_id})
     if not order or order["status"] != "needs_documents":
         raise ProvisioningError("Only orders waiting for documents can be continued", status=409)
-    await db.number_orders.update_one({"_id": order_id}, {"$set": {"status": "pending", "approved_by": admin,
-                                                                   "approved_at": utcnow()}})
+    bundle_sid, address_sid = (bundle_sid or "").strip(), (address_sid or "").strip()
+    if order.get("provider") == "twilio" and not _BUNDLE_RE.match(bundle_sid):
+        raise ProvisioningError("Enter the approved Twilio bundle SID (BU…) for this business", status=422)
+    if address_sid and not _ADDRESS_RE.match(address_sid):
+        raise ProvisioningError("The address SID must look like AD…", status=422)
+    await db.number_orders.update_one({"_id": order_id}, {"$set": {
+        "status": "pending", "approved_by": admin, "approved_at": utcnow(),
+        "regulatory": {"bundle_sid": bundle_sid, "address_sid": address_sid}}})
     return await db.number_orders.find_one({"_id": order_id}) or order
 
 
