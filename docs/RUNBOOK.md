@@ -153,12 +153,43 @@ dc logs --since 1h sales-worker | grep -iE "not dialled|failed|opt"
 The internal DNC list cannot be edited from the product. If a number must come off (e.g. typed in
 by mistake), do it in Mongo by hand, with a note of who asked and when.
 
+## Billing and numbers
+
+**A customer says they paid but the assistant is paused / the banner still says "payment failed".**
+1. Stripe dashboard → the customer → Events: did `invoice.paid` reach the endpoint (Webhooks →
+   your endpoint → attempts)? A 4xx means a bad `STRIPE_WEBHOOK_SECRET`; a 5xx is in our logs
+   ("Stripe … failed") and Stripe keeps retrying for 3 days.
+2. `db.stripe_events.find().sort({received_at:-1}).limit(20)`: `ignored` with a note explains why
+   (unknown tenant, an old subscription id).
+3. To fix by hand: `PATCH /platform/tenants/{id}` with `{"status": "active"}`. Stripe stays the
+   source of truth, so the next event re-syncs.
+
+**Overage looks wrong on an invoice.** Our numbers are in `usage_events` (seconds per call,
+`billable`), the period's total in `tenant.billing.period_seconds`, what was sent in
+`billing.overage_reported` / `overage_pending`. Stripe's side: Billing → Meters → the meter →
+events for that customer. Identifiers are `tenant:period:cumulative_total`, so a duplicate is
+visible at a glance. A stuck `overage_pending` means Stripe kept refusing it (bad customer id,
+meter missing) — the error is in the jobs worker log.
+
+**A number order is stuck.** `GET /platform/number-orders?status=failed`. The order shows the step
+that failed and why (Twilio refused the purchase, trunk attach, LiveKit trunk update, test call).
+Fix the cause, then `POST /platform/number-orders/{id}/retry` — it continues from that step.
+`verify_failed` = the number is bought and routed but our test call heard no greeting: call it
+yourself; if the agent answers, retry. `needs_documents` = waiting for a regulatory bundle; once
+Twilio approves it, `POST /platform/number-orders/{id}/approve`.
+
+**A trial is being abused (toll fraud, spam).** Suspend at once: `PATCH /platform/tenants/{id}`
+with `{"status": "suspended"}`; cancel in Stripe; check where transfers went (`calls.transfer`).
+Trial transfers only reach the owner's SMS-verified number and premium-rate prefixes are blocked;
+add new bad prefixes to `TRANSFER_BLOCKED_PREFIXES`.
+
 ## A key leaked
 
 Rotate in this order (ROADMAP Task 0.2), each: create new → update `/etc/receptionist/$E.env` (and the
 secret manager) → `deploy/deploy.sh <current tag> $E` → revoke old:
 
-1. Anything that costs money or sends messages: OpenAI, Anthropic, ElevenLabs, Deepgram, Cartesia, Twilio, Meta.
+1. Anything that costs money or sends messages: Stripe (secret key and webhook secret), OpenAI, Anthropic,
+   ElevenLabs, Deepgram, Cartesia, Twilio, Meta.
 2. LiveKit API key/secret.
 3. Atlas DB user password.
 4. `SECRET_KEY` (logs everyone out; old call links and calendar links stop working).
@@ -175,15 +206,17 @@ GDPR: if personal data may have been accessed, the 72-hour notification clock st
 
 ## A customer asks for data export / deletion
 
-- **Export:** there is no export button yet. Use `mongoexport` against Atlas with the query
-  `{"tenant_id": "ten_…"}` for each collection (`calls`, `contacts`, `appointments`, `messages`,
-  `leads`, `knowledge_items`, `services`). Send as a zip through a link that expires.
+- **Export:** the owner clicks **Plan & billing → Export all data** (`GET /t/export`, a zip of calls,
+  transcripts, contacts, appointments and messages). It works while the business is paused or
+  cancelled. As platform admin you can do it for them with `X-Tenant-Id`.
 - **One caller's data** (a caller, not the business): find the contact by phone in that tenant;
   delete their `contacts` row and unset `transcript` on their `calls`; recordings in the bucket
   under the call ids.
-- **Delete a business:** set status `cancelled` (stops calls immediately), wait out the agreed
-  retention, then delete every document with that `tenant_id` and its recordings. Release its
-  numbers in `phone_numbers` and in Twilio.
+- **Delete a business:** `POST /platform/tenants/{id}/cancel` (cancels the Stripe subscription,
+  stops the assistant, starts the `CANCEL_RETENTION_DAYS` clock). The billing tick releases the
+  numbers and deletes everything when the clock runs out (`core/services/offboarding.py`). To delete
+  sooner, set `billing.delete_after` and `billing.number_release_after` to now and run
+  `python -m scripts.billing_tick`. `deletion_log` records what was removed.
 
 Log every request and when it was completed (legal deadline: one month under GDPR).
 

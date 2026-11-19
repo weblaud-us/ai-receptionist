@@ -1,14 +1,7 @@
 /** Formatting helpers for tenant data: times in the business's timezone, outcomes, roles. */
 
-export const TIMEZONES = [
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles',
-  'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Vancouver', 'America/Halifax',
-  'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
-  'Europe/Amsterdam', 'Europe/Stockholm', 'Europe/Warsaw', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Qatar',
-  'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Dhaka', 'Asia/Kolkata', 'UTC',
-]
-
-export const CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'BDT', 'INR']
+// Shared with the platform app (business provisioning form).
+export { CURRENCIES, TIMEZONES } from '@receptionist/shared/lib/format'
 
 /** A UTC ISO timestamp shown as wall-clock time in the business's timezone. */
 export function inZone(iso: string | null | undefined, tz: string, opts: Intl.DateTimeFormatOptions = {}): string {

@@ -98,11 +98,16 @@ def _diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def update_tenant(tenant: TenantConfig, changes: Dict[str, Any], *, allowed: frozenset,
-                        user_id: Optional[str], ip: str = "") -> TenantConfig:
-    """Validate a partial update by re-building the whole TenantConfig, then write + audit + bust cache."""
+                        user_id: Optional[str], ip: str = "", enforce_plan: bool = True) -> TenantConfig:
+    """Validate a partial update by re-building the whole TenantConfig, then write + audit + bust cache.
+    `enforce_plan`: apply the plan rules (core/billing/policy.py); platform admins pass False."""
     unknown = set(changes) - allowed
     if unknown:
         raise ValueError(f"These fields can't be changed here: {', '.join(sorted(unknown))}")
+    if enforce_plan:
+        from core.billing.policy import check_changes
+
+        check_changes(tenant, changes)                      # PolicyError is a ValueError → 422
     before = tenant.to_doc()
     merged = {**before}
     for key, value in changes.items():

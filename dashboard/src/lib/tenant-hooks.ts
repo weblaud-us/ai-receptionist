@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './api'
+import { api } from '@receptionist/shared/lib/api'
 import type {
   Appointment,
   Contact,
@@ -9,7 +9,6 @@ import type {
   Lead,
   Overview,
   PhoneNumberInfo,
-  PlatformTenant,
   Resource,
   ScheduleException,
   Service,
@@ -125,13 +124,6 @@ export const useAudit = () =>
       api<{ entries: { id: string; action: string; target_type: string; user_id: string; at: string; diff: Record<string, unknown> }[] }>(
         '/t/audit',
       ),
-  })
-
-export const usePlatformTenants = (enabled = true) =>
-  useQuery({
-    queryKey: ['p-tenants'],
-    queryFn: () => api<{ tenants: PlatformTenant[]; total: number }>('/platform/tenants', { tenant: null }),
-    enabled,
   })
 
 /* ───────────── mutations ───────────── */
@@ -263,34 +255,6 @@ export function useTeamMutations() {
   }
 }
 
-export function usePlatformMutations() {
-  const done = useInvalidate('p-tenants')
-  return {
-    provision: useMutation({
-      mutationFn: (body: Record<string, unknown>) =>
-        api<{ tenant: { id: string; name: string }; set_password_link: string | null }>('/platform/tenants', {
-          method: 'POST',
-          body,
-          tenant: null,
-        }),
-      onSuccess: done,
-    }),
-    update: useMutation({
-      mutationFn: ({ id, ...body }: { id: string } & Record<string, unknown>) =>
-        api(`/platform/tenants/${id}`, { method: 'PATCH', body, tenant: null }),
-      onSuccess: done,
-    }),
-    assignNumber: useMutation({
-      mutationFn: (body: { e164: string; tenant_id: string }) =>
-        api('/platform/phone-numbers', { method: 'POST', body, tenant: null }),
-      onSuccess: done,
-    }),
-    releaseNumber: useMutation({
-      mutationFn: (e164: string) => api(`/platform/phone-numbers/${encodeURIComponent(e164)}`, { method: 'DELETE', tenant: null }),
-      onSuccess: done,
-    }),
-  }
-}
 
 /* ───────────── integrations, recordings, two-factor ───────────── */
 
@@ -358,13 +322,3 @@ export const useVoices = (provider: string) =>
 
 export const useRecordingUrl = () =>
   useMutation({ mutationFn: (callId: string) => api<{ url: string; expires_in: number }>(`/t/calls/${callId}/recording`) })
-
-export function useMfa() {
-  return {
-    setup: useMutation({ mutationFn: () => api<{ secret: string; otpauth_uri: string }>('/auth/mfa/setup', { method: 'POST' }) }),
-    enable: useMutation({
-      mutationFn: (code: string) => api<import('./api').TokenResponse>('/auth/mfa/enable', { method: 'POST', body: { code } }),
-    }),
-    disable: useMutation({ mutationFn: (code: string) => api('/auth/mfa/disable', { method: 'POST', body: { code } }) }),
-  }
-}

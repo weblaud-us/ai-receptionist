@@ -213,6 +213,41 @@ class Settings(BaseSettings):
     PUBLIC_DEMO_CALL_PER_IP_HOUR: int = Field(default=3)
     PUBLIC_DEMO_CALL_MAX_PER_DAY: int = Field(default=200)
 
+    # ── Billing and self-serve signup (Phase 5) ───────────
+    # Stripe is called over its REST API (core/billing/stripe_api.py). Empty STRIPE_SECRET_KEY =
+    # billing off: sign-ups start a local trial and nothing is charged (development only).
+    STRIPE_SECRET_KEY:       str  = Field(default="")   # sk_live_… / sk_test_… (restricted keys work)
+    STRIPE_WEBHOOK_SECRET:   str  = Field(default="")   # whsec_… for POST /billing/stripe/webhook
+    STRIPE_PRICE_STARTER_MONTHLY: str = Field(default="")
+    STRIPE_PRICE_STARTER_ANNUAL:  str = Field(default="")
+    STRIPE_PRICE_GROWTH_MONTHLY:  str = Field(default="")
+    STRIPE_PRICE_GROWTH_ANNUAL:   str = Field(default="")
+    STRIPE_PRICE_PRO_MONTHLY:     str = Field(default="")
+    STRIPE_PRICE_PRO_ANNUAL:      str = Field(default="")
+    STRIPE_PRICE_OVERAGE:    str  = Field(default="")   # metered price on the Billing Meter below
+    STRIPE_METER_EVENT_NAME: str  = Field(default="overage_minutes")
+    STRIPE_PRICE_SETUP_FEE:  str  = Field(default="")   # optional one-off "done-for-you setup" price
+    STRIPE_AUTOMATIC_TAX:    bool = Field(default=True)  # Stripe Tax: US sales tax, EU/UK VAT, UAE VAT
+    SIGNUP_ENABLED:          bool = Field(default=False)  # public POST /signup
+    SIGNUP_RATE_PER_IP_HOUR: int  = Field(default=5)
+    TRIAL_DAYS:              int  = Field(default=14)
+    TRIAL_MINUTES:           int  = Field(default=50)    # hard cap during the trial (toll-fraud protection)
+    PAST_DUE_SUSPEND_DAYS:   int  = Field(default=7)     # unpaid this long → suspended (calls forwarded)
+    CANCEL_RETENTION_DAYS:   int  = Field(default=30)    # data kept (reactivation possible), then deleted
+    TERMS_URL:               str  = Field(default="")
+    PRIVACY_URL:             str  = Field(default="")
+
+    # ── Number provisioning (Phase 5, Task 5.4) ───────────
+    # New numbers are bought on Twilio, attached to the Elastic SIP trunk and added to the LiveKit
+    # inbound trunk. With TELEPHONY_PROVIDER=softphone (development) a fake +1555 number is mapped instead.
+    NUMBER_PROVISIONING_ENABLED: bool = Field(default=False)
+    TWILIO_SIP_TRUNK_SID:        str  = Field(default="")   # TK… the trunk new numbers attach to
+    LIVEKIT_SIP_INBOUND_TRUNK_ID: str = Field(default="")   # ST_… inbound trunk whose `numbers` list grows
+    NUMBER_INSTANT_COUNTRIES:    str  = Field(default="US,CA")   # elsewhere needs a regulatory bundle first
+    NUMBER_VERIFY_CALL:          bool = Field(default=True)  # synthetic call before a number is marked active
+    # Transfers to these prefixes are refused (premium rate). ⚠ VERIFY per market before launch.
+    TRANSFER_BLOCKED_PREFIXES:   str  = Field(default="+1900,+1976,+449,+44871,+44872,+44873,+3389,+49900,+971900")
+
     # ── Conversation Memory ───────────────────────────────
     CONVERSATION_MEMORY_DAYS:         int = Field(default=15)
     CONVERSATION_MEMORY_MAX_MESSAGES: int = Field(default=20)
@@ -306,6 +341,18 @@ class Settings(BaseSettings):
                 self.TWILIO_LOOKUP_AUTH_TOKEN or self.TWILIO_AUTH_TOKEN)
 
     @property
+    def billing_enabled(self) -> bool:
+        return bool(self.STRIPE_SECRET_KEY.strip())
+
+    @property
+    def number_instant_countries(self) -> frozenset[str]:
+        return self._codes(self.NUMBER_INSTANT_COUNTRIES)
+
+    @property
+    def transfer_blocked_prefixes(self) -> tuple[str, ...]:
+        return tuple(p.strip() for p in self.TRANSFER_BLOCKED_PREFIXES.split(",") if p.strip().startswith("+"))
+
+    @property
     def tts_fallbacks(self) -> list[str]:
         return [n.strip().lower() for n in self.VOICE_TTS_FALLBACKS.split(",") if n.strip()]
 
@@ -381,6 +428,23 @@ class Settings(BaseSettings):
                 problems.append("OUTBOUND_DIALER_ENABLED needs SALES_TENANT_ID")
             if not all(self.twilio_lookup_credentials):
                 problems.append("OUTBOUND_DIALER_ENABLED needs Twilio credentials for line-type lookups")
+        if self.SIGNUP_ENABLED:
+            if not (self.billing_enabled and self.STRIPE_WEBHOOK_SECRET):
+                problems.append("SIGNUP_ENABLED needs STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET")
+            if not (self.STRIPE_PRICE_STARTER_MONTHLY or self.STRIPE_PRICE_GROWTH_MONTHLY
+                    or self.STRIPE_PRICE_PRO_MONTHLY):
+                problems.append("SIGNUP_ENABLED needs at least one STRIPE_PRICE_*_MONTHLY")
+            if not (self.RESEND_API_KEY and self.EMAIL_FROM):
+                problems.append("SIGNUP_ENABLED needs e-mail (RESEND_API_KEY, EMAIL_FROM) for verification")
+            if not self.DASHBOARD_URL.startswith("https://"):
+                problems.append("SIGNUP_ENABLED needs DASHBOARD_URL (https) for Checkout return links")
+        if self.billing_enabled and not self.STRIPE_WEBHOOK_SECRET:
+            problems.append("STRIPE_WEBHOOK_SECRET is required with STRIPE_SECRET_KEY")
+        if self.NUMBER_PROVISIONING_ENABLED and self.telephony_provider == "twilio":
+            if not (self.TWILIO_ACCOUNT_SID and self.TWILIO_AUTH_TOKEN):
+                problems.append("NUMBER_PROVISIONING_ENABLED needs TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN")
+            if not (self.TWILIO_SIP_TRUNK_SID and self.LIVEKIT_SIP_INBOUND_TRUNK_ID):
+                problems.append("NUMBER_PROVISIONING_ENABLED needs TWILIO_SIP_TRUNK_SID and LIVEKIT_SIP_INBOUND_TRUNK_ID")
         if problems:
             raise ValueError("Unsafe production config: " + "; ".join(problems))
         return self

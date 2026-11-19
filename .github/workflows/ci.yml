@@ -75,21 +75,22 @@ jobs:
           EVAL_ANTHROPIC_API_KEY: ${{ secrets.EVAL_ANTHROPIC_API_KEY }}
           RUN_EVALS: ${{ secrets.EVAL_OPENAI_API_KEY != '' && secrets.EVAL_ANTHROPIC_API_KEY != '' && '1' || '0' }}
 
-  dashboard:
+  # Client dashboard, platform admin app and the shared package (npm workspaces at the repo root).
+  frontends:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: dashboard/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm run typecheck:shared
       - run: npm run build
+      - name: The client bundle carries no platform-admin code
+        run: "! grep -lE '/platform/(tenants|sales|costs)' dashboard/dist/assets/*.js"
 
   # Roadmap Task 3.8: known-vulnerable dependencies and committed secrets fail the build.
   security:
@@ -109,8 +110,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Dashboard dependencies (npm audit, production only)
-        working-directory: dashboard
+      - name: Frontend dependencies (npm audit, production only, all workspaces)
         run: npm audit --omit=dev --audit-level=high
       # Scans the files as committed now. Scan the full history once by hand (PRODUCTION_CHECKLIST §1):
       # anything found there must be rotated, not just deleted.
@@ -135,8 +135,15 @@ jobs:
           test "$(docker run --rm receptionist-api:ci id -u)" = "10001"
           docker run --rm -e APP_ENV=development receptionist-api:ci python -c "import main, jobs.worker; print('imports ok')"
           docker run --rm -e APP_ENV=development receptionist-worker:ci python -c "import agent.worker; print('worker imports ok')"
-      - name: Dashboard image
-        run: docker buildx build --load --build-arg VITE_API_URL=https://api.example.com -t receptionist-dashboard:ci dashboard
+      - name: Frontend images (built from the repo root, npm workspaces)
+        run: |
+          for app in dashboard platform-dashboard; do
+            docker buildx build --load -f "$app/Dockerfile" \
+              --build-arg VITE_API_URL=https://api.example.com \
+              --build-arg VITE_CLIENT_URL=https://app.example.com \
+              --build-arg VITE_PLATFORM_URL=https://admin.example.com \
+              -t "receptionist-$app:ci" .
+          done
       - name: Compose files are valid
         run: |
           cp AI-receptionist-1/.env.example AI-receptionist-1/.env

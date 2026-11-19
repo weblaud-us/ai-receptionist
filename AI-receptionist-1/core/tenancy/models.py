@@ -20,7 +20,8 @@ from core.tenancy.ids import new_id
 
 Vertical = Literal["home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic"]
 VERTICALS: tuple[str, ...] = ("home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic")
-TenantStatus = Literal["trial", "active", "past_due", "suspended", "cancelled"]
+# incomplete = signed up, Checkout not finished yet (Phase 5); it answers no calls.
+TenantStatus = Literal["incomplete", "trial", "active", "past_due", "suspended", "cancelled"]
 
 _HHMM = re.compile(r"^([01]\d|2[0-4]):([0-5]\d)$")
 _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -261,6 +262,42 @@ class Limits(BaseModel):
     included_minutes: int = Field(default=500, ge=0)
     # Calls at once before callers hear "all lines are busy" / go to staff (Task 3.6, needs Redis).
     max_concurrent_calls: int = Field(default=3, ge=1, le=500)
+    max_users: int = Field(default=0, ge=0)          # dashboard users incl. pending invites; 0 = unlimited
+    max_numbers: int = Field(default=0, ge=0)        # self-serve phone numbers; 0 = unlimited
+
+
+class BillingState(BaseModel):
+    """Plan and subscription (Phase 5). Written by the Stripe webhook and the billing jobs, never by
+    the owner directly (owners change plans in Stripe's Customer Portal). `plan="manual"` = a business
+    you provisioned by hand and invoice outside Stripe: no trial cap, no Stripe sync."""
+
+    model_config = ConfigDict(extra="ignore")
+    plan: str = "manual"                     # starter | growth | pro | agency | manual
+    interval: Literal["month", "year"] = "month"
+    stripe_customer_id: str = ""
+    stripe_subscription_id: str = ""
+    subscription_status: str = ""            # Stripe's own word: trialing, active, past_due, canceled…
+    trial_used: bool = False                 # one trial per business
+    trial_ends_at: Optional[datetime] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    period_seconds: float = 0                # billable seconds this period, refreshed at every call end
+    hard_cap: bool = False                   # owner's choice: stop at 100 % instead of paying overage
+    past_due_since: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+    cancelled_at: Optional[datetime] = None
+    delete_after: Optional[datetime] = None
+    number_release_after: Optional[datetime] = None
+    deleted_at: Optional[datetime] = None
+    verified_phone: str = ""                 # owner's number, confirmed by SMS code (trial transfers)
+    alerts_sent: Dict[str, List[int]] = Field(default_factory=dict)       # period key → [80, 100]
+    overage_reported: Dict[str, int] = Field(default_factory=dict)        # period key → minutes sent to Stripe
+    overage_pending: Dict[str, Any] = Field(default_factory=dict)         # a report not yet confirmed
+    overage_last_report: Optional[datetime] = None
+
+    @property
+    def self_serve(self) -> bool:
+        return self.plan != "manual"
 
 
 class HotelSettings(BaseModel):
@@ -297,6 +334,7 @@ class TenantConfig(BaseModel):
     integrations: Integrations = Field(default_factory=Integrations)
     links: Links = Field(default_factory=Links)
     limits: Limits = Field(default_factory=Limits)
+    billing: BillingState = Field(default_factory=BillingState)
     hotel: HotelSettings = Field(default_factory=HotelSettings)
     policies: Dict[str, str] = Field(default_factory=dict)   # e.g. {"parking": "...", "payment": "..."}
     onboarding: Dict[str, Any] = Field(default_factory=dict)  # wizard progress: {"step": "...", "completed_at": ...}

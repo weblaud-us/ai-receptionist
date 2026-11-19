@@ -1,15 +1,15 @@
 import { useState } from 'react'
 import { ClipboardList, Phone } from 'lucide-react'
-import { EmptyState, ErrorBanner, PageHeader, TableSkeleton } from '@/components/app/blocks'
-import { SimpleSelect } from '@/components/app/simple-select'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { timeAgo, titleCase } from '@/lib/format'
+import { EmptyState, ErrorBanner, PageHeader, TableSkeleton } from '@receptionist/shared/components/blocks'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
+import { Badge } from '@receptionist/shared/components/ui/badge'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Card } from '@receptionist/shared/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
+import { timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { URGENCY_STYLE } from '@/lib/tenant-format'
 import { useLeads, useUpdateLead } from '@/lib/tenant-hooks'
-import { cn } from '@/lib/utils'
+import { cn } from '@receptionist/shared/lib/utils'
 
 const STATUSES = ['new', 'contacted', 'won', 'lost']
 

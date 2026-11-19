@@ -235,6 +235,9 @@ async def test_knowledge_and_unanswered(world, client, db):
 
 async def test_platform_provisions_tenant_owner_and_number(world, client, db):
     root = _h(world["root"])
+    catalog = client.get("/platform/verticals", headers=root)            # no X-Tenant-Id needed
+    assert catalog.status_code == 200 and any(v["key"] == "restaurant" for v in catalog.json()["verticals"])
+    assert client.get("/platform/verticals", headers=_h(world["owner_a"])).status_code == 403
     r = client.post("/platform/tenants", headers=root, json={
         "name": "Sunny Diner", "vertical": "restaurant", "timezone": "Europe/London", "country": "GB",
         "currency": "GBP", "owner_email": "chef@sunny.co.uk", "inbound_number": "+44 20 7946 0000"})
@@ -258,8 +261,12 @@ async def test_platform_provisions_tenant_owner_and_number(world, client, db):
 async def test_suspended_tenant_users_are_locked_out(world, client, db):
     await db.tenants.update_one({"_id": "ten_A"}, {"$set": {"status": "suspended"}})
     invalidate()
-    assert client.get("/t/context", headers=_h(world["owner_a"])).status_code == 403
-    assert client.get("/t/context", headers=_h(world["root"], "ten_A")).status_code == 200
+    # Phase 5: the app shell and billing stay reachable (to pay or export); everything else is locked.
+    assert client.get("/t/calls", headers=_h(world["owner_a"])).status_code == 403
+    assert client.get("/t/messages", headers=_h(world["owner_a"])).status_code == 403
+    assert client.get("/t/context", headers=_h(world["owner_a"])).status_code == 200
+    assert client.get("/t/billing", headers=_h(world["owner_a"])).status_code == 200
+    assert client.get("/t/calls", headers=_h(world["root"], "ten_A")).status_code == 200
 
 
 # ── Migration 0003 ───────────────────────────────────────

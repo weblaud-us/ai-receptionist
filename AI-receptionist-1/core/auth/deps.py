@@ -119,8 +119,11 @@ async def _memberships(user: Principal) -> List[Dict[str, Any]]:
     return list(doc.get("memberships") or [])
 
 
-async def resolve_tenant_for(user: Principal, requested: Optional[str]) -> TenantPrincipal:
-    """Pick the tenant this request acts on and verify the user may act there."""
+async def resolve_tenant_for(user: Principal, requested: Optional[str], *,
+                             allow_inactive: bool = False) -> TenantPrincipal:
+    """Pick the tenant this request acts on and verify the user may act there.
+    `allow_inactive`: suspended / cancelled businesses may still reach billing, export and the app
+    shell (to pay or take their data), but nothing else. A deleted business reaches nothing."""
     tenant_id = (requested or "").strip() or user.tenant_id
     if not tenant_id:
         if user.platform_admin and await legacy_mode():
@@ -145,12 +148,15 @@ async def resolve_tenant_for(user: Principal, requested: Optional[str]) -> Tenan
         if tenant_id == "default" or (user.platform_admin and await legacy_mode()):
             return TenantPrincipal(user, legacy_hotel_tenant(), role or "owner")
         raise HTTPException(404, "Business not found")
-    if tenant.status in ("suspended", "cancelled") and not user.platform_admin:
-        raise HTTPException(403, f"This business is {tenant.status}")
+    if not user.platform_admin:
+        if tenant.billing.deleted_at:
+            raise HTTPException(403, "This business has been deleted")
+        if tenant.status in ("suspended", "cancelled") and not allow_inactive:
+            raise HTTPException(403, f"This business is {tenant.status}")
     return TenantPrincipal(user, tenant, role or "staff")
 
 
-def require_tenant(min_role: str = "staff") -> Callable[..., Any]:
+def require_tenant(min_role: str = "staff", *, allow_inactive: bool = False) -> Callable[..., Any]:
     if min_role not in ROLE_RANK:
         raise ValueError(f"unknown role {min_role}")
 
@@ -159,7 +165,7 @@ def require_tenant(min_role: str = "staff") -> Callable[..., Any]:
         user: Principal = Depends(current_user),
         x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     ) -> TenantPrincipal:
-        tp = await resolve_tenant_for(user, x_tenant_id)
+        tp = await resolve_tenant_for(user, x_tenant_id, allow_inactive=allow_inactive)
         if not tp.can(min_role):
             raise HTTPException(403, f"Requires the {min_role} role")
         request.state.tenant_id = tp.tenant.id

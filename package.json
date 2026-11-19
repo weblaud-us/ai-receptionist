@@ -1,0 +1,24 @@
+{
+  "name": "receptionist-frontends",
+  "private": true,
+  "description": "npm workspaces: the client dashboard, the platform admin app and the code they share.",
+  "workspaces": [
+    "packages/*",
+    "dashboard",
+    "platform-dashboard"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w dashboard",
+    "dev:platform": "npm run dev -w platform-dashboard",
+    "build": "npm run build -w dashboard -w platform-dashboard",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck:shared": "npm run typecheck -w @receptionist/shared",
+    "stack": "docker compose up --build",
+    "stack:dialer": "docker compose --profile dialer up --build",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f api worker jobs dashboard platform-dashboard"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

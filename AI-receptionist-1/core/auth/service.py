@@ -105,7 +105,8 @@ def reset_rate_limits() -> None:
 def public_user(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": doc["_id"], "email": doc.get("email"), "name": doc.get("name", ""),
             "is_platform_admin": bool(doc.get("is_platform_admin")),
-            "mfa_enabled": bool((doc.get("mfa") or {}).get("enabled"))}
+            "mfa_enabled": bool((doc.get("mfa") or {}).get("enabled")),
+            "email_verified": bool(doc.get("email_verified_at")) or bool(doc.get("is_platform_admin"))}
 
 
 async def _membership_view(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -345,3 +346,33 @@ async def accept_invite(token: str, *, password: Optional[str], name: str = "") 
 def dashboard_link(path: str) -> str:
     base = (settings.DASHBOARD_URL or "").rstrip("/")
     return f"{base}{path}" if base else path
+
+
+# ── E-mail verification (Phase 5 self-serve signup) ──────────────────────────
+
+VERIFY_TTL = timedelta(days=3)
+
+
+async def start_email_verification(user_id: str) -> str:
+    token = new_opaque_token()
+    db = get_db()
+    await db.email_verifications.delete_many({"user_id": user_id})
+    await db.email_verifications.insert_one({"token_hash": token_hash(token), "user_id": user_id,
+                                             "expires_at": utcnow() + VERIFY_TTL, "created_at": utcnow()})
+    return token
+
+
+async def finish_email_verification(token: str) -> Dict[str, Any]:
+    db = get_db()
+    row = await db.email_verifications.find_one({"token_hash": token_hash(token or "")})
+    if not row or (_aware(row.get("expires_at")) or utcnow()) < utcnow():
+        raise HTTPException(400, "This link is invalid or has expired — sign in and send a new one")
+    await db.email_verifications.delete_many({"user_id": row["user_id"]})
+    await db.users.update_one({"_id": row["user_id"]}, {"$set": {"email_verified_at": utcnow()}})
+    doc = await UsersStore(db).get(row["user_id"])
+    return doc or {}
+
+
+async def issue_session(doc: Dict[str, Any], tenant_id: Optional[str], *, user_agent: str = "") -> LoginResult:
+    """Sign a just-created user in (self-serve signup)."""
+    return await _issue(doc, tenant_id, user_agent=user_agent)

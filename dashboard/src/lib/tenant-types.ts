@@ -1,4 +1,5 @@
-/** Types for the Phase 2 tenant API (/t/*, /platform/*). */
+/** Types for the Phase 2 tenant API (/t/*). */
+import type { BillingBrief } from './billing'
 
 export type Role = 'owner' | 'admin' | 'staff'
 export type Vertical = 'home_services' | 'salon' | 'restaurant' | 'hotel' | 'clinic' | 'professional' | 'generic'
@@ -124,6 +125,7 @@ export interface TenantContext {
   legacy: boolean
   vertical: { key: Vertical; label: string; labels: VerticalLabels; uses_scheduling: boolean; tools: string[] }
   greeting: string
+  billing?: BillingBrief
 }
 
 export interface VerticalInfo {
@@ -303,18 +305,3 @@ export interface ForwardingRow {
   cancel: string
 }
 
-export interface PlatformTenant {
-  id: string
-  name: string
-  slug: string
-  vertical: Vertical
-  status: string
-  region: string
-  timezone: string
-  calls_30d: number
-  minutes_30d: number
-  included_minutes: number | null
-  max_concurrent_calls: number
-  numbers: string[]
-  created_at: string
-}

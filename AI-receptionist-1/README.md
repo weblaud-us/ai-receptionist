@@ -120,7 +120,9 @@ CI (`.github/workflows/ci.yml` at the repo root) runs all three plus the dashboa
 every PR (plus dependency audit, secret scan and image builds). Releases are git tags: `v*-rc.*` deploys to
 staging, `v*` to staging then production ([deploy/README.md](../deploy/README.md)). Phase 3 details and
 acceptance checks: [docs/PHASE_3_TESTING.md](../docs/PHASE_3_TESTING.md); the outbound sales dialer (Phase 4,
-off by default): [docs/PHASE_4_TESTING.md](../docs/PHASE_4_TESTING.md); incidents: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
+off by default): [docs/PHASE_4_TESTING.md](../docs/PHASE_4_TESTING.md); billing, self-serve signup and number
+provisioning (Phase 5, off by default): [docs/PHASE_5_TESTING.md](../docs/PHASE_5_TESTING.md); incidents:
+[docs/RUNBOOK.md](../docs/RUNBOOK.md).
 Whole stack locally: `make dev` at the repo root.
 
 ## Health
@@ -151,6 +153,7 @@ core/                   framework-light shared logic
   metrics.py            Prometheus /metrics: HTTP + call outcomes, latency, provider health
   phone.py, timeutils.py, signed_links.py
   outbound/             Phase 4 dialer: compliance gate, rules, DNC/consent, CSV import, dialer engine, sales persona + tools, funnel
+  billing/              Phase 5: plans, cost model, Stripe (REST + webhooks), usage + call gate, overage metering, plan rules, billing jobs
 ai/                     WhatsApp (and legacy phone) agent loop and prompts
 voice/                  legacy Twilio media-stream path, STT/TTS clients
 whatsapp/               Meta webhook + sending

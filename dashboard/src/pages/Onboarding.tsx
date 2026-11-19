@@ -1,33 +1,35 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ArrowLeft, ArrowRight, Check, Loader2, Plus, Trash2 } from 'lucide-react'
-import { ErrorBanner, Field, PageHeader } from '@/components/app/blocks'
+import { ErrorBanner, Field, PageHeader } from '@receptionist/shared/components/blocks'
 import { HoursEditor } from '@/components/app/hours-editor'
-import { SimpleSelect } from '@/components/app/simple-select'
+import { NumberPicker } from '@/components/app/number-picker'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { VoicePicker } from '@/components/app/voice-picker'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { isValidPhone, normalizePhone } from '@/lib/format'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
+import { Input } from '@receptionist/shared/components/ui/input'
+import { Textarea } from '@receptionist/shared/components/ui/textarea'
+import { isValidPhone, normalizePhone } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { TIMEZONES } from '@/lib/tenant-format'
 import { useOnboarding, useServiceMutations, useServices, useUpdateSettings, useVerticals } from '@/lib/tenant-hooks'
 import type { HoursEntry } from '@/lib/tenant-types'
-import { cn } from '@/lib/utils'
+import { cn } from '@receptionist/shared/lib/utils'
 import { TestCallButton } from './Assistant'
 
-const STEPS = ['type', 'basics', 'hours', 'services', 'handoff', 'voice', 'test'] as const
+const STEPS = ['type', 'basics', 'hours', 'services', 'handoff', 'voice', 'test', 'number'] as const
 type Step = (typeof STEPS)[number]
 const TITLES: Record<Step, string> = {
   type: 'What kind of business?', basics: 'The basics', hours: 'Opening hours', services: 'What callers can book',
-  handoff: 'Transfers and alerts', voice: 'Voice and greeting', test: 'Call your assistant',
+  handoff: 'Transfers and alerts', voice: 'Voice and greeting', test: 'Call your assistant', number: 'Get a phone number',
 }
 
 export default function Onboarding() {
   const ctx = useCtx()
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const ob = useOnboarding()
   const save = useUpdateSettings()
   const steps = STEPS.filter((s) => s !== 'services' || ctx.vertical.uses_scheduling)
@@ -40,9 +42,16 @@ export default function Onboarding() {
     setStep(next)
     ob.step.mutate({ step: next })
   }
-  const finish = () => ob.step.mutate({ step: 'test', completed: true }, {
-    onSuccess: () => { toast.success("You're live! Now forward your calls."); navigate('/phone') },
+  const finish = () => ob.step.mutate({ step: 'number', completed: true }, {
+    onSuccess: () => { toast.success("You're live! Your first real call will show up under Calls."); navigate('/phone') },
   })
+
+  useEffect(() => {
+    // Back from Stripe Checkout (Phase 5): the webhook may land a moment after the redirect.
+    if (params.get('checkout') !== 'success') return
+    toast.success("Payment set up — your trial has started. Let's set up your assistant.")
+    setParams({}, { replace: true })
+  }, [params, setParams])
 
   if (ctx.legacy) {
     return <ErrorBanner error={new Error('This deployment still runs from .env. Run migration m0003 before using setup.')} />
@@ -74,15 +83,25 @@ export default function Onboarding() {
           {step === 'test' && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Ask it what you'd ask as a customer: your hours, a booking, something it shouldn't know. Then forward your phone line to it.
+                Ask it what you'd ask as a customer: your hours, a booking, something it shouldn't know.
               </p>
               <TestCallButton />
+            </div>
+          )}
+          {step === 'number' && (
+            <div className="space-y-4">
+              <CardDescription>
+                Pick a local number for your assistant. Most businesses keep their existing number and forward it here on no
+                answer, busy or after hours — we show you how on the next page. Porting your number is possible later.
+              </CardDescription>
+              <NumberPicker />
             </div>
           )}
           <div className="flex justify-between border-t pt-4">
             <Button variant="ghost" disabled={i === 0} onClick={() => setStep(steps[i - 1])}><ArrowLeft /> Back</Button>
             {step === 'services' && <Button onClick={() => go(steps[i + 1])}>Next <ArrowRight /></Button>}
-            {step === 'test' && <Button disabled={busy} onClick={finish}><Check /> Finish setup</Button>}
+            {step === 'test' && <Button onClick={() => go(steps[i + 1])}>Next <ArrowRight /></Button>}
+            {step === 'number' && <Button disabled={busy} onClick={finish}><Check /> Finish setup</Button>}
             {busy && <Loader2 className="size-5 animate-spin text-muted-foreground" />}
           </div>
         </CardContent>

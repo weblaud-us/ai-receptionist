@@ -164,18 +164,23 @@ class BusyLineAgent(Agent):
     caller to the staff line when one is open, otherwise one polite sentence and hang up.
     """
 
+    outcome = "busy"
+    reason = "concurrency_limit"
+    message = BUSY_MESSAGE
+    transfer_message = BUSY_TRANSFER_MESSAGE
+
     def __init__(self, state: CallState) -> None:
         super().__init__(instructions="Say nothing.", tools=[])
         self.state = state
 
     async def on_enter(self) -> None:
         profile = self.state.profile
-        self.state.set_outcome("busy", override=True)
-        self.state.ended_reason = "concurrency_limit"
+        self.state.set_outcome(self.outcome, override=True)
+        self.state.ended_reason = self.reason
         job = get_job_context(required=False)
         sip = _sip_participant(job.room) if job else None
         if job is not None and sip is not None and profile.transfer_open():
-            handle = self.session.say(BUSY_TRANSFER_MESSAGE.format(name=profile.tenant.name),
+            handle = self.session.say(self.transfer_message.format(name=profile.tenant.name),
                                       allow_interruptions=False)
             await handle.wait_for_playout()
             try:
@@ -188,12 +193,33 @@ class BusyLineAgent(Agent):
             except Exception:
                 self.state.transfer = "failed"
                 logger.warning("Busy-line transfer failed for call %s", self.state.call_id, exc_info=True)
-        handle = self.session.say(BUSY_MESSAGE.format(name=profile.tenant.name), allow_interruptions=False)
+        handle = self.session.say(self.message.format(name=profile.tenant.name), allow_interruptions=False)
         await handle.wait_for_playout()
         if job is None:
             self.session.shutdown()
             return
-        await hang_up("concurrency_limit")
+        await hang_up(self.reason)
+
+
+UNAVAILABLE_MESSAGE = ("Thanks for calling {name}. We can't take your call right now. "
+                       "Please call back a little later. Goodbye.")
+UNAVAILABLE_TRANSFER_MESSAGE = "Thanks for calling {name}. I'm connecting you to the team now."
+
+
+class ServiceUnavailableAgent(BusyLineAgent):
+    """
+    The business is suspended, cancelled (inside its grace period) or over a hard minute cap (Phase 5).
+    Never silence: forward to the staff line when it is open, otherwise one neutral sentence. The
+    caller is never told why — billing is between us and the business.
+    """
+
+    outcome = "unavailable"
+    message = UNAVAILABLE_MESSAGE
+    transfer_message = UNAVAILABLE_TRANSFER_MESSAGE
+
+    def __init__(self, state: CallState, reason: str = "suspended") -> None:
+        super().__init__(state)
+        self.reason = f"billing_{reason}"
 
 
 class SilenceWatcher:

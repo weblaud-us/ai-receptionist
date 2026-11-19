@@ -10,7 +10,8 @@ name: deploy
 #
 # One-time setup (docs/PRODUCTION_CHECKLIST.md §5): GitHub environments `staging` and `production`
 # with secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PORT, APP_DIR and variables
-# API_URL (https://api.example.com), optional SENTRY_DSN_DASHBOARD. Add yourself as a required
+# API_URL (https://api.example.com), APP_URL (https://app.example.com), PLATFORM_URL
+# (https://admin.example.com), optional SENTRY_DSN_DASHBOARD. Add yourself as a required
 # reviewer on `production` to approve each production deploy.
 on:
   push:

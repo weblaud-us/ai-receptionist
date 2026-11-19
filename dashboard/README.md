@@ -17,13 +17,22 @@ Talks to the AI Receptionist backend in `../AI-receptionist-1`.
 | `/settings` | Read-only server config, integration status (no secrets), webhook URLs |
 
 ## Run
+The frontends are npm workspaces: this app, the platform admin app (`../platform-dashboard`) and
+the code they share (`../packages/shared`: UI kit, API client, auth, sign-in pages). Install once,
+from the repo root:
 ```bash
-cp .env.example .env        # set VITE_API_URL
-npm install
-npm run dev                 # http://localhost:5173
-npm run build               # type-check + production build -> dist/
+cp dashboard/.env.example dashboard/.env      # set VITE_API_URL
+npm install                                   # at the repo root, never inside dashboard/
+npm run dev                                   # client dashboard  http://localhost:5173
+npm run dev:platform                          # platform admin    http://localhost:5174
+npm run build                                 # type-check + production build of both
 npm run lint
 ```
+
+Platform admins work in the platform admin app. Its **Open** button hands a business over to
+this app at `/impersonate/<tenant id>`, which shows a "viewing as platform admin" banner with
+**Exit to platform**. A platform admin who signs in here with no business open is sent to the
+platform app.
 
 ## Backend setup required
 In `AI-receptionist-1/.env`:
@@ -31,6 +40,6 @@ In `AI-receptionist-1/.env`:
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=<choose a strong password>   # login is disabled while this is empty
 SECRET_KEY=<non-default random string>      # signs the login token; login is refused if left at the default
-CORS_ORIGINS=http://localhost:5173          # your dashboard origin(s)
+CORS_ORIGINS=http://localhost:5173,http://localhost:5174   # both frontends
 ```
 Then restart the backend. All `/bookings`, `/rooms`, `/admin` and `/debug` routes require the login token.

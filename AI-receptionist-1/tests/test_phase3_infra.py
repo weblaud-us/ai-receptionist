@@ -176,8 +176,9 @@ async def test_enqueue_reports_false_without_redis_so_callers_run_inline():
 
 def test_worker_registers_the_jobs_and_schedule():
     ws = jobs_worker.WorkerSettings
-    assert [f.name for f in ws.functions] == ["whatsapp_inbound"]
-    assert {c.name for c in ws.cron_jobs} == {"tenant_jobs_tick", "booking_reminders_tick", "sales_dialer_tick"}
+    assert [f.name for f in ws.functions] == ["whatsapp_inbound", "provision_number"]
+    assert {c.name for c in ws.cron_jobs} == {"tenant_jobs_tick", "booking_reminders_tick", "sales_dialer_tick",
+                                             "billing_tick"}
     assert jobs_worker.every_minutes(5) == set(range(0, 60, 5))
     assert jobs_worker.every_minutes(30) == {0, 30}
     assert jobs_worker.every_minutes(0.2) == set(range(60))         # never less than every minute

@@ -150,13 +150,16 @@ async def logout(response: Response, rcpt_refresh: Optional[str] = Cookie(defaul
 async def me(user: Principal = Depends(current_user)):
     memberships = []
     mfa_enabled = False
+    email_verified = user.legacy
     if not user.legacy:
         doc = await UsersStore(get_db()).get(user.user_id)
         if doc:
             memberships = await service._membership_view(doc)
             mfa_enabled = bool((doc.get("mfa") or {}).get("enabled"))
+            email_verified = bool(doc.get("email_verified_at")) or bool(doc.get("is_platform_admin"))
     return {"user": {"id": user.user_id, "email": user.email, "name": user.name,
-                     "is_platform_admin": user.platform_admin, "mfa_enabled": mfa_enabled},
+                     "is_platform_admin": user.platform_admin, "mfa_enabled": mfa_enabled,
+                     "email_verified": email_verified},
             "session_mfa": user.mfa, "tenant_id": user.tenant_id, "role": user.role, "memberships": memberships}
 
 

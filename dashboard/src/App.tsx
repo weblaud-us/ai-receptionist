@@ -1,11 +1,13 @@
-import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
-import { RequireAuth } from '@/auth/auth'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { FullPageSpinner, RequireAuth, useAuth } from '@receptionist/shared/auth/auth'
 import { AppLayout } from '@/components/app/layout'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
 import { useTenant } from '@/lib/tenant'
+import { ToPlatform } from '@/components/app/to-platform'
 import type { Role } from '@/lib/tenant-types'
 import Login, { AcceptInvite, ForgotPassword, ResetPassword } from '@/pages/Login'
+import Signup, { VerifyEmail } from '@/pages/Signup'
 
 // One chunk per page keeps the first load small (charts only load with the overviews).
 const HotelOverview = lazy(() => import('@/pages/Overview'))
@@ -26,9 +28,8 @@ const Knowledge = lazy(() => import('@/pages/Knowledge'))
 const Assistant = lazy(() => import('@/pages/Assistant'))
 const PhoneNumbers = lazy(() => import('@/pages/PhoneNumbers'))
 const Team = lazy(() => import('@/pages/Team'))
-const Platform = lazy(() => import('@/pages/Platform'))
-const Dialer = lazy(() => import('@/pages/Dialer'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
+const Billing = lazy(() => import('@/pages/Billing'))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -40,18 +41,37 @@ const Fallback = () => (
 /** Hotel tenants keep the hotel overview; every other business gets the generic one. */
 function Home() {
   const { ctx } = useTenant()
-  if (!ctx) return <Navigate to="/platform" replace />
+  if (!ctx) return <ToPlatform />
   return ctx.vertical.key === 'hotel' ? <HotelOverview /> : <TenantOverview />
 }
 
 /** Pages that only exist for some businesses or roles. */
 function Only({ hotel, scheduling, role, children }: { hotel?: boolean; scheduling?: boolean; role?: Role; children: ReactNode }) {
   const { ctx, can } = useTenant()
-  if (!ctx) return <Navigate to="/platform" replace />
+  if (!ctx) return <ToPlatform />
   if (hotel && ctx.vertical.key !== 'hotel') return <Navigate to="/" replace />
   if (scheduling && !ctx.vertical.uses_scheduling) return <Navigate to="/" replace />
   if (role && !can(role)) return <Navigate to="/" replace />
   return <>{children}</>
+}
+
+/**
+ * Hand-off from the platform admin app: open a business as a platform admin (every change is
+ * audited server-side). Anyone else just lands on their own overview.
+ */
+function Impersonate() {
+  const { tenantId } = useParams()
+  const { user, switchTenant } = useAuth()
+  const navigate = useNavigate()
+  const admin = !!user?.is_platform_admin
+  useEffect(() => {
+    if (!admin || !tenantId) {
+      navigate('/', { replace: true })
+      return
+    }
+    void switchTenant(tenantId).then(() => navigate('/', { replace: true }))
+  }, [admin, tenantId, switchTenant, navigate])
+  return <FullPageSpinner />
 }
 
 export default function App() {
@@ -62,6 +82,9 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/impersonate/:tenantId" element={<RequireAuth><Impersonate /></RequireAuth>} />
         <Route
           element={
             <RequireAuth>
@@ -90,8 +113,7 @@ export default function App() {
           <Route path="team" element={<Only><Team /></Only>} />
           <Route path="settings" element={<Only><SettingsPage /></Only>} />
           <Route path="onboarding" element={<Only role="admin"><Onboarding /></Only>} />
-          <Route path="platform" element={<Platform />} />
-          <Route path="dialer" element={<Dialer />} />
+          <Route path="billing" element={<Only><Billing /></Only>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

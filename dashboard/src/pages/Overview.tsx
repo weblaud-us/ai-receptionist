@@ -28,15 +28,15 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react'
-import { EmptyState, ErrorBanner, PageHeader } from '@/components/app/blocks'
-import { SimpleSelect } from '@/components/app/simple-select'
+import { EmptyState, ErrorBanner, PageHeader } from '@receptionist/shared/components/blocks'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { BookingStatusBadge } from '@/components/app/status'
 import { BookingSheet } from '@/components/bookings/BookingSheet'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
-import { Skeleton } from '@/components/ui/skeleton'
-import { compactMoney, dateOnly, money, titleCase } from '@/lib/format'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
+import { Progress } from '@receptionist/shared/components/ui/progress'
+import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
+import { compactMoney, dateOnly, money, titleCase } from '@receptionist/shared/lib/format'
 import { useSetBookingStatus, useStats } from '@/lib/hooks'
 import type { MiniBooking, Stats } from '@/lib/types'
 

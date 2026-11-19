@@ -4,7 +4,8 @@ Collections: rooms, bookings, room_nights, guests, conversations, call_sessions 
 calls (voice agent), messages (take_message), and the Phase 2 tenant collections (tenants, users,
 phone_numbers, services, resources, appointments, slot_locks, contacts, knowledge_items, …) and
 the Phase 4 outbound dialer (sales_leads, campaigns, call_attempts, dnc_list, dnc_registry,
-consent_records).
+consent_records) and Phase 5 billing (stripe_events, number_orders, email_verifications,
+phone_verifications, deletion_log).
 
 Indexes are created by `python -m migrations.m0002_indexes` (run by deploy.sh), not at every
 startup — index builds slow down boot and must never run inside a call. In development the API
@@ -132,7 +133,34 @@ async def create_indexes(db: AsyncIOMotorDatabase):
 
     await _create_tenant_indexes(db)
     await _create_outbound_indexes(db)
+    await _create_billing_indexes(db)
     logger.info("✅ DB indexes created")
+
+
+async def _create_billing_indexes(db: AsyncIOMotorDatabase):
+    """Phase 5: billing, self-serve signup, number provisioning, offboarding."""
+
+    await db.tenants.create_indexes([
+        IndexModel([("billing.stripe_customer_id", ASCENDING)], name="billing_customer",
+                   partialFilterExpression={"billing.stripe_customer_id": {"$gt": ""}}),
+    ])
+    await db.stripe_events.create_indexes([IndexModel([("received_at", DESCENDING)])])   # _id = Stripe event id
+    await db.number_orders.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("e164", ASCENDING), ("status", ASCENDING)]),
+        IndexModel([("status", ASCENDING), ("created_at", DESCENDING)]),
+    ])
+    await db.email_verifications.create_indexes([
+        IndexModel([("token_hash", ASCENDING)], unique=True),
+        IndexModel([("user_id", ASCENDING)]),
+        IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0),
+    ])
+    await db.phone_verifications.create_indexes([IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0)])
+    await db.usage_events.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("kind", ASCENDING), ("at", ASCENDING)]),
+        IndexModel([("call_id", ASCENDING), ("kind", ASCENDING)]),
+    ])
+    await db.deletion_log.create_indexes([IndexModel([("tenant_id", ASCENDING)])])
 
 
 async def _create_outbound_indexes(db: AsyncIOMotorDatabase):

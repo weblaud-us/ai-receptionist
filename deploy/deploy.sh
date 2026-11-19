@@ -7,7 +7,7 @@
 # Called by .github/workflows/deploy.yml over SSH. Safe to run by hand; the same command with the
 # previous tag is the rollback. Needs: Docker with the compose plugin, `docker login ghcr.io`
 # done once, /etc/receptionist/<environment>.env (app settings) and
-# /etc/receptionist/<environment>.deploy (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN). See deploy/README.md.
+# /etc/receptionist/<environment>.deploy (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN). See deploy/README.md.
 #
 # Order matters:
 #   1. indexes          idempotent migration, never at boot or inside a call
@@ -26,7 +26,7 @@ cd "$(dirname "$0")"
 ENV_FILE="/etc/receptionist/${DEPLOY_ENV}.env"
 DEPLOY_FILE="/etc/receptionist/${DEPLOY_ENV}.deploy"
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE" >&2; exit 1; }
-[ -f "$DEPLOY_FILE" ] || { echo "Missing $DEPLOY_FILE (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN)" >&2; exit 1; }
+[ -f "$DEPLOY_FILE" ] || { echo "Missing $DEPLOY_FILE (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN)" >&2; exit 1; }
 set -a
 # shellcheck disable=SC1090
 . "$DEPLOY_FILE"
@@ -99,8 +99,8 @@ else
   COMPOSE_PROFILES="dialer" dc rm -sf sales-worker >/dev/null 2>&1 || true
 fi
 
-echo "==> [6/6] Dashboard and proxy"
-dc up -d --wait --no-deps dashboard
+echo "==> [6/6] Dashboard, platform admin app and proxy"
+dc up -d --wait --no-deps dashboard platform-dashboard
 dc up -d --no-deps caddy
 
 for _ in $(seq 1 30); do

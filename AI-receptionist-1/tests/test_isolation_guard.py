@@ -21,7 +21,10 @@ PHASE2_FILES = [
     ROOT / "agent" / "tools.py",
     ROOT / "agent" / "profile.py",
 ]
-PLATFORM = {"tenants", "users", "sessions", "invites", "password_resets", "phone_numbers", "calls"}
+PLATFORM = {"tenants", "users", "sessions", "invites", "password_resets", "phone_numbers", "calls",
+            # Phase 5: number orders are retried across tenants by the platform admin (like the routing
+            # table); the deletion log must outlive the tenant's own data.
+            "number_orders", "deletion_log"}
 DIRECT = re.compile(r"\b(?:get_db\(\)|\bdb)\.(\w+)\.(?:find|find_one|insert_one|insert_many|update_one|update_many|"
                     r"delete_one|delete_many|count_documents|aggregate|distinct)\b")
 

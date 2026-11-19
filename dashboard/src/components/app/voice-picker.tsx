@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Pause, Play } from 'lucide-react'
-import { SimpleSelect } from '@/components/app/simple-select'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Input } from '@receptionist/shared/components/ui/input'
 import { useVoices } from '@/lib/tenant-hooks'
 import type { Voice } from '@/lib/tenant-types'
 

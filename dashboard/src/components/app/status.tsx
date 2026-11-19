@@ -1,6 +1,6 @@
-import { Badge } from '@/components/ui/badge'
-import { titleCase } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { Badge } from '@receptionist/shared/components/ui/badge'
+import { titleCase } from '@receptionist/shared/lib/format'
+import { cn } from '@receptionist/shared/lib/utils'
 
 const BOOKING: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',

@@ -3,7 +3,8 @@
 # `docker compose` on it by hand when following docs/RUNBOOK.md.
 #
 #   Caddy (TLS) ─┬─ api-a, api-b        2 API replicas; state is in Redis
-#                └─ dashboard           static build
+#                ├─ dashboard           client dashboard, static build (APP_DOMAIN)
+#                └─ platform-dashboard  platform admin app, static build (ADMIN_DOMAIN)
 #   worker-a, worker-b                  LiveKit voice workers (outbound connections only)
 #   jobs                                reminders, digests, calendar sync, WhatsApp replies, the dialer tick
 #   sales-worker (profile "dialer")     outbound sales calls, only when the dialer is switched on
@@ -14,7 +15,7 @@
 # while worker-a drains its live calls (up to LIVEKIT_DRAIN_TIMEOUT), worker-b answers new ones.
 #
 # Variables (deploy.sh exports them): IMAGE_PREFIX (ghcr.io/owner/receptionist), TAG (v1.2.3),
-# DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN.
+# DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN.
 
 x-logging: &logging
   driver: json-file
@@ -75,12 +76,22 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # Platform admin app. Its own origin, so its CSP can allow LiveKit (dialer listen-in / takeover)
+  # without loosening the client dashboard's.
+  platform-dashboard:
+    image: ${IMAGE_PREFIX}-platform-dashboard:${TAG}-${DEPLOY_ENV:?set DEPLOY_ENV}
+    environment:
+      CSP_CONNECT_SRC: https://${API_DOMAIN:?set API_DOMAIN} ${LIVEKIT_WSS_URL:-} ${CSP_EXTRA_CONNECT_SRC:-}
+    restart: unless-stopped
+    logging: *logging
+
   caddy:
     image: caddy:2-alpine
     ports: ["80:80", "443:443"]
     environment:
       API_DOMAIN: ${API_DOMAIN}
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

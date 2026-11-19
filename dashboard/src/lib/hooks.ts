@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './api'
+import { api } from '@receptionist/shared/lib/api'
 import type {
   Availability,
   Booking,

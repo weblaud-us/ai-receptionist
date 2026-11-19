@@ -132,7 +132,11 @@ async def resolve_profile(*, dialed_number: Optional[str] = None,
     Phone calls resolve by the dialled number; browser calls carry the tenant id in the token.
     """
     tenant = await resolve_by_id(tenant_id) if tenant_id else await resolve_by_phone_number(dialed_number)
-    if tenant is None or not tenant.active:
+    if tenant is None or tenant.billing.deleted_at:
         return None
+    if not tenant.active:
+        # Suspended / cancelled (inside the grace period): the worker forwards the call or asks the caller
+        # to call back (core/billing/usage.gate) — no snapshot needed. Not-yet-subscribed: unknown number.
+        return VoiceProfile(tenant=tenant) if tenant.status in ("suspended", "cancelled") else None
     snapshot = await load_snapshot(Repos(get_db(), tenant.id), tenant)
     return VoiceProfile(tenant=tenant, snapshot=snapshot)

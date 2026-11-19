@@ -16,17 +16,17 @@ import {
   UserX,
   X,
 } from 'lucide-react'
-import { ConfirmDialog, ErrorBanner, Field, KeyValue } from '@/components/app/blocks'
-import { SimpleSelect } from '@/components/app/simple-select'
+import { ConfirmDialog, ErrorBanner, Field, KeyValue } from '@receptionist/shared/components/blocks'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { BookingStatusBadge, PaymentBadge } from '@/components/app/status'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Textarea } from '@/components/ui/textarea'
-import { API_BASE } from '@/lib/api'
-import { dateOnly, dateTime, money, sourceLabel, titleCase } from '@/lib/format'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Input } from '@receptionist/shared/components/ui/input'
+import { Separator } from '@receptionist/shared/components/ui/separator'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@receptionist/shared/components/ui/sheet'
+import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
+import { Textarea } from '@receptionist/shared/components/ui/textarea'
+import { API_BASE } from '@receptionist/shared/lib/api'
+import { dateOnly, dateTime, money, sourceLabel, titleCase } from '@receptionist/shared/lib/format'
 import {
   useBooking,
   useCancelBooking,

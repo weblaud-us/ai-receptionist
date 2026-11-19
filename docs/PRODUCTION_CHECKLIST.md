@@ -58,7 +58,7 @@ The app **refuses to start** in production if any of these are wrong (`config.py
 | `LOG_FORMAT` | `json` |
 | `SECRET_KEY` | 32+ random characters, never the default |
 | `ADMIN_SECRET_KEY` | empty, or 32+ random characters |
-| `CORS_ORIGINS` | the dashboard URL(s), e.g. `https://app.YOUR_DOMAIN.com`. Never `*` |
+| `CORS_ORIGINS` | both frontends: `https://app.YOUR_DOMAIN.com,https://admin.YOUR_DOMAIN.com`. Never `*` |
 | `WEBHOOK_BASE_URL` | the public `https://api.YOUR_DOMAIN.com`. Twilio signature checks depend on it being exact |
 | `CALL_BASE_URL` | the public URL guests open for browser calls |
 | `VERIFY_TWILIO_SIGNATURE` | `true` |
@@ -67,11 +67,13 @@ The app **refuses to start** in production if any of these are wrong (`config.py
 | `MONGODB_URI` / `MONGODB_DB_NAME` | the production Atlas user and database |
 | `SENTRY_DSN` | the production backend project DSN |
 
-Dashboard (set at build time):
+Client dashboard and platform admin app (set at build time, same values for both):
 
 | Variable | Production value |
 |---|---|
 | `VITE_API_URL` | `https://api.YOUR_DOMAIN.com` |
+| `VITE_CLIENT_URL` | `https://app.YOUR_DOMAIN.com` (client dashboard) |
+| `VITE_PLATFORM_URL` | `https://admin.YOUR_DOMAIN.com` (platform admin app) |
 | `VITE_SENTRY_DSN` | the production dashboard project DSN |
 | `VITE_APP_ENV` | `production` |
 
@@ -176,8 +178,11 @@ Development and testing use a dev LiveKit project and a dev Twilio trunk. For pr
       and `ADMIN_SECRET_KEY` once nothing uses them.
 - [ ] `TOKEN_ENCRYPTION_KEY` set (Fernet key) and stored in the secret manager. Losing it means
       every calendar must be reconnected and every two-factor setup redone.
-- [ ] `COOKIE_SECURE=true`; `COOKIE_SAMESITE=lax` if dashboard and API share a site (app./api.),
-      otherwise `none`; `CORS_ORIGINS` lists the dashboard origin; `DASHBOARD_URL` set for links.
+- [ ] `COOKIE_SECURE=true`; `COOKIE_SAMESITE=lax` with app./admin./api. on one site (otherwise
+      `none`); `CORS_ORIGINS` lists both frontend origins; `DASHBOARD_URL` (client app) set for links.
+- [ ] Platform admin app (`ADMIN_DOMAIN`) restricted beyond the login: IP allow-list in the
+      Caddyfile or an SSO/Access proxy (e.g. Cloudflare Access) in front. Every platform admin has
+      two-factor on (the API already refuses /platform/* without it).
 - [ ] Google Calendar: OAuth client (Web), redirect URI `{WEBHOOK_BASE_URL}/integrations/google/callback`,
       **app verification submitted** (weeks). ⚠ Verify the current scope classification.
 - [ ] SMS: `TWILIO_SMS_FROM` on an A2P 10DLC-registered campaign or a verified toll-free number (US);
@@ -197,7 +202,8 @@ Details and acceptance checks: [PHASE_3_TESTING.md](PHASE_3_TESTING.md). Host se
 **Hosting**
 - [ ] One Docker host per environment (staging, production), same region as LiveKit and Atlas
       (`WORKERS=2`–`4` in the `.deploy` file, sized from the load test);
-      `/etc/receptionist/<env>.env` and `<env>.deploy` written; DNS for API and dashboard.
+      `/etc/receptionist/<env>.env` and `<env>.deploy` written (incl. `ADMIN_DOMAIN`,
+      `LIVEKIT_WSS_URL`); DNS for the API, the client dashboard and the platform admin app.
 - [ ] **Atlas M10+** for production (shared tiers have no SLA), continuous backup with
       point-in-time restore on, TLS only, IP allowlist = the hosts (or a private endpoint),
       separate DB users per environment.
@@ -210,7 +216,8 @@ Details and acceptance checks: [PHASE_3_TESTING.md](PHASE_3_TESTING.md). Host se
 
 **GitHub**
 - [ ] Environments `staging` and `production` with secrets `DEPLOY_HOST`, `DEPLOY_USER`,
-      `DEPLOY_SSH_KEY`, `DEPLOY_PORT`, `APP_DIR` and variables `API_URL` (+ `SENTRY_DSN_DASHBOARD`).
+      `DEPLOY_SSH_KEY`, `DEPLOY_PORT`, `APP_DIR` and variables `API_URL`, `APP_URL`, `PLATFORM_URL`
+      (+ `SENTRY_DSN_DASHBOARD`).
       Required reviewer on `production`.
 - [ ] Protect `main` (CI must pass) and protect tags `v*` (only you can push them).
 - [ ] Dependabot alerts and secret scanning on (repo → Security). Run gitleaks over the **full
@@ -296,3 +303,47 @@ every box in **Legal** and **Numbers** is ticked.
 - [ ] AMD ≥ 90% correct on 100 hand-labelled calls (Results → "Who really answered?").
 - [ ] 50 real calls: answer rate, conversation rate and demos recorded on the Results page.
 - [ ] Caller ID shows your name; no spam label after week 1.
+
+## Phase 5 — billing and self-serve signup
+
+Details: [PHASE_5_TESTING.md](PHASE_5_TESTING.md). Keep `SIGNUP_ENABLED=false` and
+`NUMBER_PROVISIONING_ENABLED=false` until the boxes below are ticked.
+
+**Prices and costs** 💰
+- [ ] Every rate in `core/billing/costs.py` checked against the vendor's current pricing page
+      (Twilio SIP, LiveKit, Deepgram, ElevenLabs, your LLM); margins on **Unit economics** still ≥ 80 %.
+- [ ] Prices in `core/billing/plans.py` match the Stripe Prices behind `STRIPE_PRICE_*`.
+
+**Stripe (live mode)**
+- [ ] Products + monthly/yearly prices for Starter, Growth, Pro; a Billing Meter
+      (`STRIPE_METER_EVENT_NAME`, sum of `value`, customer key `stripe_customer_id`) and the
+      usage-based overage price on it → `STRIPE_PRICE_OVERAGE`.
+- [ ] Customer Portal configured: card update, switch between the three plans (prorated), cancel at
+      period end, invoice history, your terms and privacy links.
+- [ ] Stripe Tax on, with registrations where you must collect (US states where SaaS is taxable,
+      EU OSS / UK VAT, UAE VAT); B2B reverse charge via tax-ID collection. ⚖ Ask your accountant.
+- [ ] Smart Retries and failed-payment e-mails on (Billing → Revenue recovery).
+- [ ] Webhook endpoint `https://<api>/billing/stripe/webhook` with the six events
+      (`checkout.session.completed`, `customer.subscription.created/updated/deleted`, `invoice.paid`,
+      `invoice.payment_failed`) → `STRIPE_WEBHOOK_SECRET`.
+- [ ] A restricted API key (Customers, Checkout Sessions, Subscriptions, Billing Portal, Meter events)
+      → `STRIPE_SECRET_KEY`.
+
+**Signup and onboarding**
+- [ ] `DASHBOARD_URL`, `TERMS_URL`, `PRIVACY_URL` set; e-mail (Resend, SPF/DKIM/DMARC) working —
+      the verification e-mail arrives and isn't in spam.
+- [ ] Terms of service, privacy policy, DPA and sub-processor list published (Phase 6).
+- [ ] The "Start free trial" button on the website links to `<dashboard>/signup?plan=growth`.
+
+**Numbers**
+- [ ] `TWILIO_SIP_TRUNK_SID` and `LIVEKIT_SIP_INBOUND_TRUNK_ID` set; Twilio geo permissions let the
+      outbound trunk dial new numbers (test call); `NUMBER_VERIFY_CALL=true`.
+- [ ] One self-serve order on staging went through every step and the number answered.
+- [ ] `TRANSFER_BLOCKED_PREFIXES` reviewed for every market you sell in. ⚠ VERIFY.
+- [ ] Twilio balance alerts and auto-recharge; a spending limit per subaccount.
+
+**Acceptance (ROADMAP §10)**
+- [ ] A stranger signs up, pays, configures, gets a number and receives a real call in < 15 min, unassisted.
+- [ ] Overage minutes appear correctly on the next invoice (Stripe test clock).
+- [ ] Failed payment → past due → paused → calls forwarded, never silence.
+- [ ] Cancel → export works → data deleted after the retention period.

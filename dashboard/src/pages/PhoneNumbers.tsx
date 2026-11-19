@@ -1,16 +1,20 @@
 import { toast } from 'sonner'
 import { Copy, Phone, PhoneForwarded } from 'lucide-react'
-import { EmptyState, ErrorBanner, PageHeader } from '@/components/app/blocks'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { EmptyState, ErrorBanner, PageHeader } from '@receptionist/shared/components/blocks'
+import { Badge } from '@receptionist/shared/components/ui/badge'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
+import { NumberPicker } from '@/components/app/number-picker'
+import { useTenant } from '@/lib/tenant'
 import { usePhoneNumbers } from '@/lib/tenant-hooks'
 import { TestCallButton } from './Assistant'
 
 export default function PhoneNumbers() {
   const q = usePhoneNumbers()
+  const { can, ctx } = useTenant()
   const numbers = q.data?.numbers ?? []
+  const canBuy = can('owner') && !!ctx?.billing?.self_serve
   return (
     <>
       <PageHeader title="Phone numbers" description="Your assistant's number, and how to send your existing line to it." />
@@ -22,8 +26,9 @@ export default function PhoneNumbers() {
             <CardDescription>Calls to this number are answered by your assistant.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {numbers.length === 0 && !q.isLoading && (
-              <EmptyState title="No number yet" description="We'll assign one during setup. Until then, try your assistant from the browser." />
+            {numbers.length === 0 && !q.isLoading && (canBuy
+              ? <NumberPicker />
+              : <EmptyState title="No number yet" description="We'll assign one during setup. Until then, try your assistant from the browser." />
             )}
             {numbers.map((n) => (
               <div key={n.e164} className="flex items-center justify-between rounded-lg border px-3 py-2">

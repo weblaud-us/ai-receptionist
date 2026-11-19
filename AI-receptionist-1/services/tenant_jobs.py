@@ -218,6 +218,13 @@ class TenantJobsService:
             except Exception:
                 logger.error("Tenant jobs run failed", exc_info=True)
             try:
+                # No Redis = no jobs worker: billing (Phase 5) runs here too. Idempotent per tick.
+                from core.billing import jobs as billing_jobs
+
+                await billing_jobs.run_once(get_db())
+            except Exception:
+                logger.error("Billing run failed", exc_info=True)
+            try:
                 await asyncio.wait_for(self._stop.wait(), timeout=max(30, settings.TENANT_JOBS_POLL_SECONDS))
             except asyncio.TimeoutError:
                 continue

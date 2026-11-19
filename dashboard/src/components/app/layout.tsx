@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ConciergeBell,
   Contact,
+  CreditCard,
   LayoutDashboard,
   Loader2,
   LogOut,
@@ -20,25 +21,25 @@ import {
   Moon,
   Phone,
   PhoneCall,
-  PhoneOutgoing,
   Scissors,
   Settings,
-  ShieldCheck,
   Sun,
   Users,
   Wrench,
 } from 'lucide-react'
-import { useAuth } from '@/auth/auth'
-import { ErrorBanner } from '@/components/app/blocks'
-import { SimpleSelect } from '@/components/app/simple-select'
-import { Button } from '@/components/ui/button'
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { useAuth } from '@receptionist/shared/auth/auth'
+import { BillingBanner } from '@/components/app/billing-banner'
+import { ExitToPlatformButton, ImpersonationBanner, ToPlatform } from '@/components/app/to-platform'
+import { ErrorBanner } from '@receptionist/shared/components/blocks'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
+import { Button } from '@receptionist/shared/components/ui/button'
+import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { useLiveCalls } from '@/lib/hooks'
 import { useTenant } from '@/lib/tenant'
 import { ROLE_LABEL } from '@/lib/tenant-format'
 import type { Role, TenantContext } from '@/lib/tenant-types'
-import { useTheme } from '@/lib/theme'
-import { cn } from '@/lib/utils'
+import { useTheme } from '@receptionist/shared/providers/theme'
+import { cn } from '@receptionist/shared/lib/utils'
 
 interface NavItem {
   to: string
@@ -50,7 +51,7 @@ interface NavItem {
 }
 
 /** Navigation adapts to the business: hotels keep rooms and bookings; everyone else gets appointments. */
-function navFor(ctx: TenantContext, platformAdmin: boolean): { title?: string; items: NavItem[] }[] {
+function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
   const L = ctx.vertical.labels
   const isHotel = ctx.vertical.key === 'hotel'
   const work: NavItem[] = isHotel
@@ -89,20 +90,20 @@ function navFor(ctx: TenantContext, platformAdmin: boolean): { title?: string; i
       items: [
         { to: '/settings', label: 'Settings', icon: Settings },
         { to: '/team', label: 'Team', icon: Users },
-        ...(platformAdmin ? [{ to: '/platform', label: 'Platform', icon: ShieldCheck }, { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing }] : []),
+        ...(ctx.legacy ? [] : [{ to: '/billing', label: 'Plan & billing', icon: CreditCard, role: 'owner' as Role }]),
       ],
     },
   ]
 }
 
+/** Pages a business without an active plan can still open (to pay, export or leave). */
+const INACTIVE_OK = ['/billing']
+
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const { ctx, can } = useTenant()
-  const { user } = useAuth()
   const live = useLiveCalls(!!ctx)
   const liveCount = live.data?.total ?? 0
-  const groups = ctx
-    ? navFor(ctx, !!user?.is_platform_admin)
-    : [{ items: [{ to: '/platform', label: 'Platform', icon: ShieldCheck }, { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing }] as NavItem[] }]
+  const groups = ctx ? navFor(ctx) : []
   return (
     <nav className="flex flex-col gap-4 px-3">
       {groups.map((g, gi) => (
@@ -150,7 +151,7 @@ function Brand() {
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-sidebar-foreground">{ctx?.tenant.name ?? 'AI Receptionist'}</div>
-        <div className="text-xs text-sidebar-foreground/60">{ctx ? ctx.vertical.label.split(',')[0] : 'Platform'}</div>
+        <div className="text-xs text-sidebar-foreground/60">{ctx?.vertical.label.split(',')[0]}</div>
       </div>
     </div>
   )
@@ -163,9 +164,7 @@ function BusinessSwitcher() {
     if (!ctx || ctx.legacy) return null
     return (
       <div className="px-4 pb-3">
-        <Button size="xs" variant="outline" className="w-full" onClick={() => void switchTenant(null)}>
-          ← All businesses
-        </Button>
+        <ExitToPlatformButton label="← Back to platform" className="w-full" />
       </div>
     )
   }
@@ -199,8 +198,11 @@ export function AppLayout() {
   const location = useLocation()
   const [menu, setMenu] = useState(false)
 
-  // A platform admin with no business picked lands on the platform page.
-  if (needsTenant && !['/platform', '/dialer'].includes(location.pathname)) return <Navigate to="/platform" replace />
+  // A platform admin with no business open belongs in the platform admin app.
+  if (needsTenant) return <ToPlatform />
+  // Not subscribed yet, paused or cancelled: the dashboard's data is locked, billing is not.
+  const inactive = ctx && !ctx.platform_admin && ['incomplete', 'suspended', 'cancelled'].includes(ctx.billing?.status ?? '')
+  if (inactive && !INACTIVE_OK.includes(location.pathname)) return <Navigate to="/billing" replace />
 
   const role = ctx ? (ctx.platform_admin ? 'Platform admin' : ROLE_LABEL[ctx.role]) : user?.is_platform_admin ? 'Platform admin' : ''
 
@@ -232,25 +234,31 @@ export function AppLayout() {
       </aside>
 
       <div className="flex min-w-0 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur lg:px-8">
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu">
-            <Menu />
-          </Button>
-          <div className="flex-1" />
-          <ThemeToggle />
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => void logout()} aria-label="Log out">
-            <LogOut />
-          </Button>
-        </header>
+        <div className="sticky top-0 z-20">
+          <ImpersonationBanner />
+          <header className="flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur lg:px-8">
+            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu">
+              <Menu />
+            </Button>
+            <div className="flex-1" />
+            <ThemeToggle />
+            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => void logout()} aria-label="Log out">
+              <LogOut />
+            </Button>
+          </header>
+        </div>
         <main className="flex-1 px-4 py-6 lg:px-8">
           {error ? (
             <ErrorBanner error={error} onRetry={refetch} />
-          ) : loading && !needsTenant ? (
+          ) : loading ? (
             <div className="flex justify-center py-20">
               <Loader2 className="size-6 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <Outlet />
+            <>
+              <BillingBanner />
+              <Outlet />
+            </>
           )}
         </main>
       </div>

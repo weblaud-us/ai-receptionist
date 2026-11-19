@@ -65,6 +65,7 @@ tenant_router = APIRouter(prefix="/t", tags=["Tenant"])
 _staff = require_tenant("staff")
 _admin = require_tenant("admin")
 _owner = require_tenant("owner")
+_staff_any_status = require_tenant("staff", allow_inactive=True)   # the app shell of a suspended business
 
 LIVE_CALL_STALE_S = 120
 _HIDDEN_TENANT_FIELDS = ("billing",)
@@ -120,10 +121,22 @@ def _tenant_view(tp: TenantPrincipal) -> Dict[str, Any]:
     return to_jsonable(doc)
 
 
+def _billing_brief(tp: TenantPrincipal) -> Dict[str, Any]:
+    """What the dashboard banner needs; the full picture is GET /t/billing (owners)."""
+    from core.billing import usage
+
+    b = tp.tenant.billing
+    return {"plan": b.plan, "status": tp.tenant.status, "self_serve": b.self_serve,
+            "trial_ends_at": to_jsonable(b.trial_ends_at), "delete_after": to_jsonable(b.delete_after),
+            "cancel_at_period_end": b.cancel_at_period_end, "gate": usage.gate(tp.tenant),
+            "billing_enabled": settings.billing_enabled}
+
+
 @tenant_router.get("/context")
-async def context(tp: TenantPrincipal = Depends(_staff)):
+async def context(tp: TenantPrincipal = Depends(_staff_any_status)):
     spec = get_vertical(tp.tenant.vertical)
     return {
+        "billing": _billing_brief(tp),
         "tenant": _tenant_view(tp),
         "role": tp.role,
         "platform_admin": tp.user.platform_admin,
@@ -900,6 +913,12 @@ async def team(tp: TenantPrincipal = Depends(_staff)):
 
 @tenant_router.post("/team/invite")
 async def invite(body: InviteBody, request: Request, tp: TenantPrincipal = Depends(_owner)):
+    if tp.tenant.limits.max_users and not tp.user.platform_admin:
+        members = len(await UsersStore(get_db()).for_tenant(tp.tenant.id))
+        pending = await get_db().invites.count_documents({"tenant_id": tp.tenant.id})
+        if members + pending >= tp.tenant.limits.max_users:
+            raise HTTPException(402, f"Your plan includes {tp.tenant.limits.max_users} user(s). "
+                                     "Upgrade on the Billing page to invite more.")
     token = await auth_service.create_invite(tenant_id=tp.tenant.id, email=body.email, role=body.role,
                                              invited_by=tp.user.user_id)
     link = auth_service.dashboard_link(f"/accept-invite?token={token}")

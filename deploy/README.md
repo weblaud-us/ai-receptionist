@@ -44,12 +44,19 @@ ANTHROPIC_API_KEY=…                      # LLM fallback
 ```
 IMAGE_PREFIX=ghcr.io/owner/receptionist
 API_DOMAIN=api.example.com
-APP_DOMAIN=app.example.com
+APP_DOMAIN=app.example.com              # client dashboard (businesses)
+ADMIN_DOMAIN=admin.example.com          # platform admin app
 WORKERS=2                                # voice worker containers, 2–4
-# CSP_EXTRA_CONNECT_SRC=https://o123.ingest.sentry.io   # if the dashboard reports to Sentry
+LIVEKIT_WSS_URL=wss://your-project.livekit.cloud   # platform app CSP: dialer listen-in / takeover
+# CSP_EXTRA_CONNECT_SRC=https://o123.ingest.sentry.io   # if the dashboards report to Sentry
 ```
 
-DNS: `API_DOMAIN` and `APP_DOMAIN` → the host. Firewall: allow 80/443 (and SSH) only. Caddy gets
+`APP_DOMAIN` and `ADMIN_DOMAIN` must be subdomains of the same site as `API_DOMAIN` (e.g.
+app./admin./api.example.com): both apps share the API's refresh cookie with `COOKIE_SAMESITE=lax`.
+List both origins in `CORS_ORIGINS` in the env file:
+`CORS_ORIGINS=https://app.example.com,https://admin.example.com`.
+
+DNS: `API_DOMAIN`, `APP_DOMAIN` and `ADMIN_DOMAIN` → the host. Firewall: allow 80/443 (and SSH) only. Caddy gets
 the certificates on first start. Put Cloudflare (proxied) in front afterwards for WAF/DDoS.
 
 Twilio trunk → **Disaster Recovery URL**: the independent fallback below (not this host).

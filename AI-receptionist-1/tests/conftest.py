@@ -59,6 +59,15 @@ _TEST_ENV = {
     "METRICS_TOKEN": "",
     "AUTH_RATE_PER_IP_MIN": "0",     # exercised explicitly in test_phase3_infra.py
     "API_RATE_PER_TENANT_MIN": "600",
+    "OUTBOUND_DIALER_ENABLED": "false",   # a local .env may switch the dialer on; tests opt in explicitly
+    "SALES_TENANT_ID": "",
+    # Phase 5: billing and provisioning off unless a test switches them on
+    "STRIPE_SECRET_KEY": "",
+    "STRIPE_WEBHOOK_SECRET": "",
+    "SIGNUP_ENABLED": "false",
+    "NUMBER_PROVISIONING_ENABLED": "false",
+    "TELEPHONY_PROVIDER": "",
+    "DASHBOARD_URL": "",
 }
 os.environ.update(_TEST_ENV)
 

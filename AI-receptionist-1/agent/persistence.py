@@ -20,6 +20,8 @@ from agent.state import CallState
 from agent.summary import summarise_call
 from agent.telemetry import summarise
 from config import settings
+from core.billing.costs import call_cost_usd
+from core.billing.usage import refresh_period_usage
 from core.integrations import webhooks
 from core.phone import mask_phone
 from core.repositories import Repos
@@ -164,20 +166,37 @@ class CallRecorder:
             logger.debug("call.completed webhook failed", exc_info=True)
 
     async def _record_usage(self) -> None:
-        """One usage event per call, in whole minutes (Phase 5 billing reads `usage_events`)."""
+        """One usage event per call, rounded up to the second (Phase 5 billing reads `usage_events`),
+        then this period's usage cached on the tenant so the next call knows about a cap."""
         tenant_id = self.state.profile.business_id
         if tenant_id == "unassigned":
             return
-        seconds = (_utcnow() - self.state.started_at).total_seconds()
+        seconds = math.ceil((_utcnow() - self.state.started_at).total_seconds())
+        outbound = self.state.direction == "outbound"
+        cost = call_cost_usd(seconds, recording=bool(self.state.recording), outbound=outbound)
+        # Your own sales calls (Phase 4) are a cost to you, not usage a customer pays for.
+        # Calls answered as "unavailable" (suspended / capped) aren't charged to the business either.
+        billable = not (settings.SALES_TENANT_ID and tenant_id == settings.SALES_TENANT_ID)             and self.state.outcome != "unavailable"
         try:
-            await Repos(get_db(), tenant_id).usage.update_one(
+            repos = Repos(get_db(), tenant_id)
+            await repos.usage.update_one(
                 {"call_id": self.state.call_id, "kind": "voice_minute"},
-                {"$set": {"quantity": max(1, math.ceil(seconds / 60)), "seconds": round(seconds, 1),
-                          "direction": self.state.direction, "at": _utcnow()},
+                {"$set": {"quantity": max(1, math.ceil(seconds / 60)), "seconds": seconds,
+                          "direction": self.state.direction, "cost_usd": cost, "billable": billable,
+                          "at": _utcnow()},
                  "$setOnInsert": {"invoiced": False}},
                 upsert=True)
+            await repos.calls.update_one({"call_id": self.state.call_id}, {"$set": {"cost_usd": cost}})
         except Exception:
             logger.warning("Usage event for call %s failed", self.state.call_id, exc_info=True)
+            return
+        tenant = getattr(self.state.profile, "tenant", None)
+        if tenant is None or tenant.is_legacy or not billable:
+            return
+        try:
+            await refresh_period_usage(get_db(), tenant)
+        except Exception:
+            logger.debug("Period usage refresh failed for %s", tenant_id, exc_info=True)
 
 
 async def load_contact(state: CallState) -> Optional[dict[str, Any]]:

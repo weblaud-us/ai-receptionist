@@ -11,6 +11,9 @@ The jobs worker (arq): everything that must not run inside an API request or a p
 | booking_reminders_tick  | every BOOKING_REMINDER_POLL_MINUTES | hotel day-before WhatsApp reminders             |
 | whatsapp_inbound        | queued by the Meta webhook        | read the message, run the agent, send the reply  |
 | sales_dialer_tick       | every 20 s                        | outbound sales dialer: gate leads, start calls   |
+| billing_tick            | every 15 min                      | usage refresh + alerts, Stripe overage meter,    |
+|                         |                                   | past-due suspension, offboarding (core.billing.jobs) |
+| provision_number        | queued by POST /t/numbers         | buy + connect a number, 5 tries with backoff     |
 
 Rules every job follows:
 - Idempotent. Cron jobs are unique per tick across all workers (arq), and each reminder / digest
@@ -149,6 +152,27 @@ async def sales_dialer_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
     return stats
 
 
+@job("billing_tick")
+async def billing_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
+    # Not retried: every step is idempotent and the next tick is 15 minutes away.
+    from core.billing import jobs as billing_jobs
+    from database.mongodb import get_db
+
+    stats = await billing_jobs.run_once(get_db())
+    if any(stats.get(k) for k in ("alerts", "reported_minutes", "suspended", "released", "deleted", "errors")):
+        logger.info("Billing: %s", stats)
+    return stats
+
+
+@job("provision_number", max_tries=5)
+async def provision_number(ctx: Dict[str, Any], order_id: str) -> str:
+    from core.services import numbers
+    from database.mongodb import get_db
+
+    order = await numbers.run_order(get_db(), order_id)
+    return str(order.get("status"))
+
+
 # ── Worker ───────────────────────────────────────────────────────────────────
 
 async def startup(ctx: Dict[str, Any]) -> None:
@@ -177,7 +201,8 @@ def every_minutes(step: float) -> Set[int]:
 
 class WorkerSettings:
     # keep_result=0: arq stores a job's arguments with its result; a WhatsApp payload must not linger in Redis.
-    functions = [func(whatsapp_inbound, name="whatsapp_inbound", max_tries=1, timeout=180, keep_result=0)]
+    functions = [func(whatsapp_inbound, name="whatsapp_inbound", max_tries=1, timeout=180, keep_result=0),
+                 func(provision_number, name="provision_number", max_tries=5, timeout=120)]
     cron_jobs = [
         cron(tenant_jobs_tick, name="tenant_jobs_tick", minute=every_minutes(settings.TENANT_JOBS_POLL_SECONDS / 60),
              run_at_startup=True, timeout=280),
@@ -185,6 +210,7 @@ class WorkerSettings:
              minute=every_minutes(settings.BOOKING_REMINDER_POLL_MINUTES), run_at_startup=True, timeout=600),
         # Always scheduled: with OUTBOUND_DIALER_ENABLED=false the tick only tidies up and returns.
         cron(sales_dialer_tick, name="sales_dialer_tick", second={0, 20, 40}, timeout=18, keep_result=0),
+        cron(billing_tick, name="billing_tick", minute={0, 15, 30, 45}, run_at_startup=True, timeout=600),
     ]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL.strip() or "redis://localhost:6379/0")
     on_startup = startup

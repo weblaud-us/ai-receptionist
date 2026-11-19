@@ -4,6 +4,7 @@ Platform admin API (Roadmap Tasks 2.3.4 and 2.10) — prefix /platform, for you 
 A separate router with its own dependency (`require_platform_admin`); every write is recorded in
 the target tenant's `audit_log`.
 
+GET    /platform/verticals               vertical catalog (for the provisioning form; no tenant needed)
 GET    /platform/tenants                 every business: status, vertical, calls and minutes (30 d)
 POST   /platform/tenants                 provision a business + owner (owner gets a set-password link)
 GET    /platform/tenants/{id}
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from core.auth import Principal, require_platform_admin, service as auth_service
 from core.phone import digits
+from core.prompts.verticals import vertical_catalog
 from core.repositories import Repos
 from core.repositories.base import utcnow
 from core.repositories.repos import PhoneNumbersStore, TenantsStore, UsersStore
@@ -86,6 +88,11 @@ def _e164(raw: str) -> str:
     if len(d) < 8:
         raise HTTPException(422, "Phone number must be in international format, e.g. +15125551234")
     return "+" + d
+
+
+@platform_router.get("/verticals")
+async def verticals(admin: Principal = Depends(require_platform_admin)):
+    return {"verticals": vertical_catalog()}
 
 
 @platform_router.get("/tenants")
@@ -174,7 +181,7 @@ async def patch_tenant(tenant_id: str, body: Dict[str, Any], request: Request,
     try:
         updated = await update_tenant(tenant, body, allowed=EDITABLE_FIELDS | PLATFORM_FIELDS,
                                       user_id=f"platform:{admin.user_id}",
-                                      ip=request.client.host if request.client else "")
+                                      ip=request.client.host if request.client else "", enforce_plan=False)
     except ValueError as e:
         raise HTTPException(422, str(e)[:500])
     return {"tenant": _clean(updated.to_doc())}

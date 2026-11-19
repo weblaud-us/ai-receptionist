@@ -1,0 +1,11 @@
+# Frontend images build from the repo root (npm workspaces). Send only what they need.
+**/node_modules
+**/dist
+.git
+.github
+.vscode
+AI-receptionist-1
+deploy
+docs
+*.md
+!packages/shared/README.md

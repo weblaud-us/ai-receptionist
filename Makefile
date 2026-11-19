@@ -1,7 +1,8 @@
-# One command for the common tasks. On Windows without `make`, run the docker compose line itself.
+# One command for the common tasks. On Windows without `make`: npm run stack (see package.json),
+# or run the docker compose line itself.
 .PHONY: dev down test logs images
 
-dev:            ## API + voice worker + jobs worker + dashboard + MongoDB + Redis
+dev:            ## API + voice worker + jobs worker + client dashboard (:5173) + platform app (:5174) + MongoDB + Redis
 	docker compose up --build
 
 down:           ## stop everything (data volumes are kept)

@@ -19,9 +19,15 @@ def _sign(key: bytes, msg: str) -> bytes:
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
 
-def presign_get(
+def presign_get(key: str, **kw: object) -> str:
+    """A time-limited GET URL for one object (dashboard playback)."""
+    return presign(key, method="GET", **kw)  # type: ignore[arg-type]
+
+
+def presign(
     key: str,
     *,
+    method: str = "GET",
     bucket: Optional[str] = None,
     expires: int = 600,
     now: Optional[datetime] = None,
@@ -57,7 +63,7 @@ def presign_get(
         "X-Amz-SignedHeaders": "host",
     }
     query = "&".join(f"{quote(k, safe='~')}={quote(v, safe='~')}" for k, v in sorted(params.items()))
-    canonical = "\n".join(["GET", path, query, f"host:{host}", "", "host", "UNSIGNED-PAYLOAD"])
+    canonical = "\n".join([method.upper(), path, query, f"host:{host}", "", "host", "UNSIGNED-PAYLOAD"])
     to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
     k = _sign(_sign(_sign(_sign(f"AWS4{secret_key}".encode(), day), region), "s3"), "aws4_request")
     signature = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()

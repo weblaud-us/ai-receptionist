@@ -14,8 +14,9 @@ updates:
       python-minor:
         update-types: [minor, patch]
 
+  # npm workspaces (dashboard/, platform-dashboard/, packages/shared/) share the root lockfile.
   - package-ecosystem: npm
-    directory: /dashboard
+    directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     groups:
@@ -27,5 +28,5 @@ updates:
     schedule: { interval: monthly }
 
   - package-ecosystem: docker
-    directories: [/AI-receptionist-1, /dashboard]
+    directories: [/AI-receptionist-1, /dashboard, /platform-dashboard]
     schedule: { interval: monthly }

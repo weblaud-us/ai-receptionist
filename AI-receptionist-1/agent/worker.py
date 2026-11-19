@@ -54,12 +54,15 @@ from agent.db import ensure_db  # noqa: E402
 from agent.health import attach_provider_health  # noqa: E402
 from agent.persistence import CallRecorder, load_contact, record_contact_call  # noqa: E402
 from agent.profile import VoiceProfile, resolve_profile, unassigned_profile  # noqa: E402
-from agent.receptionist import BusyLineAgent, ReceptionistAgent, SilenceWatcher, UnassignedNumberAgent  # noqa: E402
+from agent.receptionist import (  # noqa: E402
+    BusyLineAgent, ReceptionistAgent, ServiceUnavailableAgent, SilenceWatcher, UnassignedNumberAgent,
+)
 from agent.recording import start_recording  # noqa: E402
 from agent.session_factory import build_session  # noqa: E402
 from agent.state import CallState  # noqa: E402
 from agent.telemetry import attach_telemetry  # noqa: E402
 from core import concurrency  # noqa: E402
+from core.billing.usage import gate as billing_gate  # noqa: E402
 from core.phone import mask_phone  # noqa: E402
 
 logger = logging.getLogger("agent.worker")
@@ -188,6 +191,15 @@ async def _run_busy_line(ctx: JobContext, state: CallState) -> None:
                         room_options=room_io.RoomOptions(delete_room_on_close=True))
 
 
+async def _run_unavailable(ctx: JobContext, state: CallState, gate: str) -> None:
+    logger.info("Call %s for %s answered as unavailable (%s)", state.call_id, state.profile.business_id, gate)
+    session = build_session(ctx.proc.userdata, state)
+    recorder = CallRecorder(state)
+    ctx.add_shutdown_callback(recorder.finish)
+    await session.start(agent=ServiceUnavailableAgent(state, gate), room=ctx.room,
+                        room_options=room_io.RoomOptions(delete_room_on_close=True))
+
+
 def _tag_sentry(state: CallState) -> None:
     try:
         import sentry_sdk
@@ -220,6 +232,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     state = _call_state(ctx, caller, profile)
     _tag_sentry(state)
+    gate = billing_gate(profile.tenant)
+    if gate != "ok":                          # Phase 5: suspended or over a hard cap — never silence
+        await _run_unavailable(ctx, state, gate)
+        return
     if not await _line_free(state):
         await _run_busy_line(ctx, state)
         return

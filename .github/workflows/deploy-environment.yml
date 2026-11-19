@@ -26,16 +26,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Vite bakes the API URL into the bundle, so the dashboard is built per environment.
-      - name: Build and push the dashboard for this environment
+      # Vite bakes the URLs into the bundles, so both frontends are built per environment
+      # (from the repo root: they are npm workspaces sharing packages/shared).
+      - name: Build and push the client dashboard and platform admin app for this environment
         run: |
-          test -n "${{ vars.API_URL }}" || { echo "Set the API_URL variable on the ${{ inputs.environment }} environment" >&2; exit 1; }
-          docker buildx build --push \
-            --build-arg VITE_API_URL="${{ vars.API_URL }}" \
-            --build-arg VITE_APP_ENV="${{ inputs.environment }}" \
-            --build-arg VITE_SENTRY_DSN="${{ vars.SENTRY_DSN_DASHBOARD }}" \
-            --build-arg VITE_GIT_SHA="$(git rev-parse --short HEAD)" \
-            -t "${{ inputs.image_prefix }}-dashboard:${{ inputs.tag }}-${{ inputs.environment }}" dashboard
+          missing() { echo "Set the $1 variable on the ${{ inputs.environment }} environment" >&2; exit 1; }
+          [ -n "$VAR_API_URL" ] || missing API_URL
+          [ -n "$VAR_APP_URL" ] || missing APP_URL
+          [ -n "$VAR_PLATFORM_URL" ] || missing PLATFORM_URL
+          for app in dashboard platform-dashboard; do
+            docker buildx build --push -f "$app/Dockerfile" \
+              --build-arg VITE_API_URL="$VAR_API_URL" \
+              --build-arg VITE_CLIENT_URL="$VAR_APP_URL" \
+              --build-arg VITE_PLATFORM_URL="$VAR_PLATFORM_URL" \
+              --build-arg VITE_APP_ENV="${{ inputs.environment }}" \
+              --build-arg VITE_SENTRY_DSN="${{ vars.SENTRY_DSN_DASHBOARD }}" \
+              --build-arg VITE_GIT_SHA="$(git rev-parse --short HEAD)" \
+              -t "${{ inputs.image_prefix }}-$app:${{ inputs.tag }}-${{ inputs.environment }}" .
+          done
+        env:
+          VAR_API_URL: ${{ vars.API_URL }}
+          VAR_APP_URL: ${{ vars.APP_URL }}
+          VAR_PLATFORM_URL: ${{ vars.PLATFORM_URL }}
       # The server keeps a checkout of this repo only for deploy/ (compose file, Caddyfile, script).
       # Workers drain live calls one at a time, so a deploy can take up to ~2 × LIVEKIT_DRAIN_TIMEOUT.
       - name: Roll the release onto the server

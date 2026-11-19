@@ -62,6 +62,11 @@ _ROUTERS = [
     ("routers.telephony", "telephony_router"),        # Phase 3: Twilio disaster-recovery TwiML
     ("routers.sales", "sales_router"),                # Phase 4: outbound dialer (platform admin)
     ("routers.sales", "public_sales_router"),         # Phase 4: "get a call from our AI" consent form
+    ("routers.signup", "public_plans_router"),        # Phase 5: plan catalogue
+    ("routers.signup", "signup_router"),              # Phase 5: self-serve signup + e-mail verification
+    ("routers.billing", "billing_router"),            # Phase 5: plan, usage, Checkout/Portal, numbers, export
+    ("routers.billing", "stripe_webhook_router"),     # Phase 5: Stripe events
+    ("routers.billing", "platform_billing_router"),   # Phase 5: costs, number orders, cancel
 ]
 
 
@@ -140,7 +145,7 @@ _CALL_PAGES = ("/call/", "/talk/")       # may be embedded in a business's own w
 # Endpoints where a guess is worth something. Not /auth/refresh or /auth/logout: an office of
 # dashboard users behind one NAT refreshes constantly and must never be locked out by it.
 _GUESSABLE = frozenset({"/auth/login", "/auth/mfa/verify", "/auth/password/forgot", "/auth/password/reset",
-                        "/auth/invite/accept"})
+                        "/auth/invite/accept", "/signup", "/signup/verify-email"})
 
 
 @app.middleware("http")
