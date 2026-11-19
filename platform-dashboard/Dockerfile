@@ -35,7 +35,7 @@ RUN test -n "$VITE_CLIENT_URL" || (echo "VITE_CLIENT_URL build arg is required" 
 RUN test -n "$VITE_PLATFORM_URL" || (echo "VITE_PLATFORM_URL build arg is required" >&2; exit 1)
 RUN npm run build -w platform-dashboard
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 # Origins the app may call: the API, the LiveKit wss:// URL (the sales dialer listens in and takes
 # over calls in the browser) and the Sentry ingest host if VITE_SENTRY_DSN is set.
 ENV CSP_CONNECT_SRC=""
