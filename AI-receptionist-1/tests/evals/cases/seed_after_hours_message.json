@@ -1,0 +1,23 @@
+{
+  "id": "seed_after_hours_message",
+  "title": "Asks for a person after hours: no transfer, offers a message",
+  "vertical": "home_services",
+  "tenant": {
+    "name": "Northside Plumbing",
+    "vertical": "home_services",
+    "timezone": "America/Chicago",
+    "country": "US",
+    "currency": "USD",
+    "description": "Residential plumbing repairs.",
+    "hours": [],
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [],
+    "knowledge": [{"question": "Do you charge for estimates?", "answer": "Estimates are free within city limits."}]
+  },
+  "caller_turns": ["Hi, can I talk to someone at the office please?"],
+  "expect": {
+    "intent": "Explains nobody can take the call right now and offers to take a message or capture the job details. Does not claim to be transferring the caller.",
+    "must_call": [],
+    "must_not_call": ["book_appointment"]
+  }
+}

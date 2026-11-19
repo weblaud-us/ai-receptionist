@@ -121,8 +121,10 @@ every PR (plus dependency audit, secret scan and image builds). Releases are git
 staging, `v*` to staging then production ([deploy/README.md](../deploy/README.md)). Phase 3 details and
 acceptance checks: [docs/PHASE_3_TESTING.md](../docs/PHASE_3_TESTING.md); the outbound sales dialer (Phase 4,
 off by default): [docs/PHASE_4_TESTING.md](../docs/PHASE_4_TESTING.md); billing, self-serve signup and number
-provisioning (Phase 5, off by default): [docs/PHASE_5_TESTING.md](../docs/PHASE_5_TESTING.md); incidents:
-[docs/RUNBOOK.md](../docs/RUNBOOK.md).
+provisioning (Phase 5, off by default): [docs/PHASE_5_TESTING.md](../docs/PHASE_5_TESTING.md); legal and
+compliance (Phase 6): [docs/PHASE_6_TESTING.md](../docs/PHASE_6_TESTING.md) and [docs/COMPLIANCE.md](../docs/COMPLIANCE.md);
+pilots, results reports, transcript review and launch (Phase 7): [docs/PHASE_7_TESTING.md](../docs/PHASE_7_TESTING.md);
+incidents: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
 Whole stack locally: `make dev` at the repo root.
 
 ## Health
@@ -143,7 +145,8 @@ core/                   framework-light shared logic
   repositories/         tenant-scoped data access (TenantRepo, Repos, scoped_db)
   auth/                 users, passwords, tokens, roles, TOTP, FastAPI dependencies
   prompts/              prompt builder + vertical templates
-  services/             availability, scheduling, calendar sync, tenant admin
+  services/             availability, scheduling, calendar sync, tenant admin, insights (Phase 7 results report),
+                        reviews (transcript review → redacted eval cases)
   tools/                AI tools shared by voice + WhatsApp (registry.run_tool is the entry point)
   integrations/         Twilio/Meta signatures, WhatsApp, SMS, e-mail, Google Calendar, outgoing webhooks, ElevenLabs voices, S3 links
   notifications.py      owner + caller notifications
@@ -154,17 +157,21 @@ core/                   framework-light shared logic
   phone.py, timeutils.py, signed_links.py
   outbound/             Phase 4 dialer: compliance gate, rules, DNC/consent, CSV import, dialer engine, sales persona + tools, funnel
   billing/              Phase 5: plans, cost model, Stripe (REST + webhooks), usage + call gate, overage metering, plan rules, billing jobs
+  compliance/           Phase 6: legal document versions + acceptance, sub-processors, opt-outs from any channel,
+                        data subject requests (find / export / erase), recording retention
 ai/                     WhatsApp (and legacy phone) agent loop and prompts
 voice/                  legacy Twilio media-stream path, STT/TTS clients
 whatsapp/               Meta webhook + sending
 routers/                auth, tenant (/t), platform admin, hotel + admin APIs, LiveKit, OAuth callbacks,
-                        telephony (Twilio disaster-recovery TwiML), sales (/platform/sales + /public/demo-call)
+                        telephony (Twilio disaster-recovery TwiML, inbound SMS STOP/START), sales (/platform/sales + /public/demo-call),
+                        compliance (/t/legal, /t/privacy, /public/legal, /public/site), launch (/t/insights, pilots, reviews, margins)
 jobs/                   arq job worker (python -m jobs): tenant jobs, hotel reminders, WhatsApp replies
 services/               hotel reminders, calendar links, tenant jobs (reminders, digest, calendar sync)
 database/               Mongo connection + indexes, hotel models, legacy profile helpers
 migrations/             data migrations + index creation (python -m migrations.<name>)
 scripts/                operator scripts (latency_report, synthetic_call = health check + load test,
-                        import_dnc_registry = load do-not-call lists for the dialer)
+                        import_dnc_registry = load do-not-call lists for the dialer, export_eval_cases = approved
+                        eval cases → tests/evals/cases, tenant_jobs_tick, opt_out)
 telephony/              LiveKit SIP trunk + dispatch rule templates, Twilio setup
 deploy/systemd/         legacy VPS unit files (containers replace them: ../deploy/)
 tests/                  pytest suite (tests/evals: real-LLM conversation evals)

@@ -137,6 +137,11 @@ async def signup(body: SignupBody, request: Request, response: Response):
         await get_db().users.delete_one({"_id": user["_id"]})
         raise HTTPException(422, str(e)[:300])
     await auth_service.add_membership(user["_id"], tenant.id, "owner")
+    # Phase 6: evidence of what was agreed to — which versions, when, from where.
+    from core.compliance import legal
+
+    await legal.record_user_acceptance(get_db(), user["_id"], legal.SIGNUP_DOCUMENTS, ip=ip,
+                                       user_agent=request.headers.get("user-agent", ""))
     await Repos(get_db(), tenant.id).audit.record(user_id=user["_id"], action="tenant.signup", target_type="tenant",
                                                   target_id=tenant.id, diff={"plan": plan.key, "ip": ip}, ip=ip)
     emailed = await _send_verification(user["_id"], email)

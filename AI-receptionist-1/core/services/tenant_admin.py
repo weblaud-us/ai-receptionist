@@ -21,9 +21,9 @@ from database.mongodb import get_db
 EDITABLE_FIELDS = frozenset({
     "name", "phone", "website", "address", "description", "timezone", "locale", "currency", "country",
     "agent", "hours", "transfer", "emergency_instructions", "notifications", "scheduling", "policies", "hotel",
-    "vertical", "onboarding", "links",
+    "vertical", "onboarding", "links", "answering_mode",
 })
-PLATFORM_FIELDS = frozenset({"status", "limits", "region", "billing", "integrations", "slug"})
+PLATFORM_FIELDS = frozenset({"status", "limits", "region", "billing", "integrations", "slug", "pilot"})
 
 
 def slugify(name: str) -> str:

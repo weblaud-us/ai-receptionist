@@ -11,6 +11,9 @@ jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process
 - transcript purge — strips transcripts and per-turn rows from calls older than the tenant's
                     `agent.transcript_retention_days` (Task 2.2). The call record itself (who,
                     when, outcome, summary, usage) is kept for billing and statistics.
+- recording purge — deletes recordings older than `agent.recording.retention_days` (Phase 6).
+- monthly report  — "your assistant this month" on the 1st (Phase 7, Task 7.3).
+- pilot report    — weekly scorecard to pilot businesses on Mondays (Phase 7, Task 7.1).
 
 Every reminder and digest is claimed with an atomic update before it is sent, so several job
 workers (or a retry) never send one twice.
@@ -172,17 +175,87 @@ async def purge_transcripts(t: TenantConfig, now: datetime) -> int:
     return purged
 
 
+# ── recording retention (Phase 6) ────────────────────────────────────────────
+
+async def purge_recordings(t: TenantConfig, now: datetime) -> int:
+    from core.compliance.retention import purge_recordings as purge
+
+    return await purge(get_db(), t, now)
+
+
+# ── monthly report and weekly pilot report (Phase 7) ─────────────────────────
+
+async def _claim(t: TenantConfig, field: str, value: str) -> bool:
+    """Claim a once-per-period send before sending, so a crash or a second runner can't send twice."""
+    res = await get_db().tenants.update_one({"_id": t.id, f"jobs.{field}": {"$ne": value}},
+                                            {"$set": {f"jobs.{field}": value}})
+    return res.modified_count == 1
+
+
+async def _unanswered_questions(t: TenantConfig, since: datetime, until: datetime) -> List[str]:
+    rows = await Repos(get_db(), t.id).unanswered.find(
+        {"status": "open", "created_at": {"$gte": since, "$lt": until}}, limit=10)
+    return [r["question"] for r in rows if r.get("question")]
+
+
+async def maybe_send_monthly_report(t: TenantConfig, now: datetime) -> bool:
+    from core.services import insights
+
+    if not (settings.MONTHLY_REPORT_ENABLED and t.notifications.monthly_report and t.notifications.owner_email):
+        return False
+    local = now.astimezone(ZoneInfo(t.timezone))
+    if local.day != 1 or local.hour < settings.REPORT_HOUR:
+        return False
+    since, until, label = insights.previous_month(t, now)
+    if t.created_at and (t.created_at if t.created_at.tzinfo else t.created_at.replace(tzinfo=timezone.utc)) >= until:
+        return False                     # signed up this month: nothing to report yet
+    if not await _claim(t, "monthly_report_for", label):
+        return False
+    report = await insights.value_report(get_db(), t, since, until)
+    month = since.astimezone(ZoneInfo(t.timezone)).strftime("%B")
+    text = insights.report_text(t, report, f"Your assistant at {t.name} in {month}:",
+                                unanswered=await _unanswered_questions(t, since, until))
+    return await send_email(t.notifications.owner_email, f"{t.name}: your assistant in {month}", text)
+
+
+async def maybe_send_pilot_report(t: TenantConfig, now: datetime) -> bool:
+    from core.services import insights
+
+    if not (t.pilot.active and t.notifications.owner_email):
+        return False
+    local = now.astimezone(ZoneInfo(t.timezone))
+    if local.weekday() != 0 or local.hour < settings.REPORT_HOUR:
+        return False
+    iso = local.isocalendar()
+    if not await _claim(t, "pilot_report_week", f"{iso[0]}-W{iso[1]:02d}"):
+        return False
+    since, until = now - timedelta(days=7), now
+    report = await insights.value_report(get_db(), t, since, until)
+    text = insights.report_text(t, report, f"Pilot week report for {t.name} (last 7 days):",
+                                unanswered=await _unanswered_questions(t, since, until))
+    text += ("\n\nOn our weekly call we'll go through anything that went wrong. Reply to this e-mail with "
+             "a score from 1 to 10 for how the assistant did this week.")
+    ok = await send_email(t.notifications.owner_email, f"{t.name}: pilot week report", text)
+    if settings.PILOT_REPORT_BCC:
+        await send_email(settings.PILOT_REPORT_BCC, f"[pilot] {t.name}: week report", text)
+    return ok
+
+
 # ── runner ───────────────────────────────────────────────────────────────────
 
 async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
-    stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0}
+    stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
+             "monthly_reports": 0, "pilot_reports": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
         for name, job in (("synced", maybe_sync_calendar(t, now)), ("reminders", send_reminders(t, now)),
                           ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {}))),
-                          ("purged", purge_transcripts(t, now))):
+                          ("purged", purge_transcripts(t, now)),
+                          ("recordings_deleted", purge_recordings(t, now)),
+                          ("monthly_reports", maybe_send_monthly_report(t, now)),
+                          ("pilot_reports", maybe_send_pilot_report(t, now))):
             try:
                 stats[name] += int(await job)
             except Exception:

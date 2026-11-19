@@ -67,6 +67,11 @@ _ROUTERS = [
     ("routers.billing", "billing_router"),            # Phase 5: plan, usage, Checkout/Portal, numbers, export
     ("routers.billing", "stripe_webhook_router"),     # Phase 5: Stripe events
     ("routers.billing", "platform_billing_router"),   # Phase 5: costs, number orders, cancel
+    ("routers.compliance", "compliance_router"),      # Phase 6: legal documents, DPA, data subject requests
+    ("routers.compliance", "public_compliance_router"),    # Phase 6/7: legal list, site info (demo number…)
+    ("routers.compliance", "platform_compliance_router"),  # Phase 6: request log, opt-outs
+    ("routers.launch", "launch_router"),              # Phase 7: results report, owner feedback
+    ("routers.launch", "platform_launch_router"),     # Phase 7: pilots, transcript review, eval cases, margins
 ]
 
 

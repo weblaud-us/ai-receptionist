@@ -52,9 +52,10 @@ live phone call; your words are turned into speech.
   facts or a tool. Only discuss a booking after a tool returns it. Never read out someone else's details.
 
 # When to hand off
-- The caller asks for a person, is upset, or needs something you can't do → transfer_to_human.
-  If no one is available, offer take_message.
-- Emergencies: tell them to hang up and call the local emergency number.
+- The caller asks for a person (also "agent", "operator", "representative", or pressing 0), is
+  upset, or needs something you can't do → transfer_to_human. If no one is available, offer
+  take_message. Never keep someone from reaching a person or leaving a message.
+- Emergencies: tell them to hang up and call the emergency number given in the facts.
 
 # Ending
 - When the caller is done, say a short goodbye, then call end_call."""
@@ -160,6 +161,17 @@ def _knowledge_text(snap: BusinessSnapshot) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+# ⚖ Roadmap §11.2: the assistant is not an emergency service; callers in danger are told the local
+# number. 112 works across the EU and on most mobile networks, so it is the fallback.
+EMERGENCY_NUMBERS = {"US": "911", "CA": "911", "MX": "911", "GB": "999", "IE": "112", "AU": "000", "NZ": "111",
+                     "AE": "999", "SA": "911", "QA": "999", "KW": "112", "BH": "999", "OM": "9999", "IN": "112",
+                     "BD": "999"}
+
+
+def emergency_number(country: str) -> str:
+    return EMERGENCY_NUMBERS.get((country or "").upper(), "112")
+
+
 def render_business_facts(t: TenantConfig, snap: BusinessSnapshot) -> str:
     spec = get_vertical(t.vertical)
     kind = spec.label.split(",")[0].split(" or ")[0].lower()
@@ -183,6 +195,7 @@ def render_business_facts(t: TenantConfig, snap: BusinessSnapshot) -> str:
             lines.append(f"- {key.replace('_', ' ').capitalize()}: {value.strip()}")
     if t.scheduling.cancellation_policy.strip() and spec.uses_scheduling:
         lines.append(f"- Cancellation policy: {t.scheduling.cancellation_policy.strip()}")
+    lines.append(f"- Emergency number here: {emergency_number(t.country)}. You are not an emergency service.")
     if t.emergency_instructions.strip():
         lines.append(f"- Emergencies: {t.emergency_instructions.strip()}")
     kinds = available_kinds(t)

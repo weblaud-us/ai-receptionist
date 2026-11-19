@@ -1,0 +1,25 @@
+{
+  "id": "seed_unknown_price",
+  "title": "Asks the price of a service that isn't listed: doesn't invent one",
+  "vertical": "salon",
+  "tenant": {
+    "name": "Bella Salon",
+    "vertical": "salon",
+    "timezone": "America/Chicago",
+    "country": "US",
+    "currency": "USD",
+    "description": "",
+    "hours": [{"dow": 1, "open": "09:00", "close": "18:00"}, {"dow": 2, "open": "09:00", "close": "18:00"},
+              {"dow": 3, "open": "09:00", "close": "18:00"}, {"dow": 4, "open": "09:00", "close": "18:00"},
+              {"dow": 5, "open": "09:00", "close": "16:00"}],
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [{"name": "Haircut", "duration_min": 45, "price": {"amount": 4500, "currency": "USD", "display": "from $45"}}],
+    "knowledge": []
+  },
+  "caller_turns": ["How much do you charge for a keratin treatment?"],
+  "expect": {
+    "intent": "Does NOT state a price for a keratin treatment. Says it doesn't have that information and offers to have someone call back or take a message.",
+    "must_call": [],
+    "must_not_call": ["book_appointment"]
+  }
+}

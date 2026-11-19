@@ -55,7 +55,7 @@ from agent.health import attach_provider_health  # noqa: E402
 from agent.persistence import CallRecorder, load_contact, record_contact_call  # noqa: E402
 from agent.profile import VoiceProfile, resolve_profile, unassigned_profile  # noqa: E402
 from agent.receptionist import (  # noqa: E402
-    BusyLineAgent, ReceptionistAgent, ServiceUnavailableAgent, SilenceWatcher, UnassignedNumberAgent,
+    BusyLineAgent, DtmfWatcher, ReceptionistAgent, ServiceUnavailableAgent, SilenceWatcher, UnassignedNumberAgent,
 )
 from agent.recording import start_recording  # noqa: E402
 from agent.session_factory import build_session  # noqa: E402
@@ -249,6 +249,8 @@ async def entrypoint(ctx: JobContext) -> None:
     recorder = CallRecorder(state)
     recorder.attach(session)
     SilenceWatcher(session, state)
+    if state.channel == "phone":
+        DtmfWatcher(ctx.room, session, state)      # "press 0 for a person" (Phase 6)
     agent = ReceptionistAgent(state)
 
     async def _on_shutdown(reason: str) -> None:

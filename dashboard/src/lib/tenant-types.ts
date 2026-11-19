@@ -82,6 +82,8 @@ export interface Tenant {
   hours: HoursEntry[]
   transfer: { number: string; only_during_hours: boolean; hours: string; warm: boolean }
   emergency_instructions: string
+  answering_mode?: 'all_calls' | 'overflow' | 'after_hours'
+  pilot?: { active: boolean }
   notifications: {
     owner_phone: string
     owner_email: string
@@ -90,6 +92,7 @@ export interface Tenant {
     on_message: string[]
     on_urgent: string[]
     daily_digest: boolean
+    monthly_report?: boolean
   }
   scheduling: {
     min_notice_minutes: number

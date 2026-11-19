@@ -26,6 +26,7 @@ from core.integrations import webhooks
 from core.phone import mask_phone
 from core.repositories import Repos
 from core.services import availability as av
+from core.timeutils import business_now
 from core.tools.hotel import phone_variants
 from database.mongodb import get_db
 
@@ -37,6 +38,15 @@ MAX_TRANSCRIPT_ITEMS = 400
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _after_hours(state: CallState) -> Optional[bool]:
+    """Was the business closed when the call came in? Feeds "calls that would have been missed" (Phase 7)."""
+    try:
+        tenant = state.profile.tenant
+        return not tenant.is_open(business_now(tenant.timezone, state.started_at))
+    except Exception:
+        return None
 
 
 def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
@@ -68,6 +78,7 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "provider_errors": state.provider_errors,
         "fallbacks": state.fallbacks,
         "transfer": state.transfer,
+        "after_hours": _after_hours(state),
         "updated_at": now,
     }
     if final:

@@ -30,6 +30,8 @@ const PhoneNumbers = lazy(() => import('@/pages/PhoneNumbers'))
 const Team = lazy(() => import('@/pages/Team'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Billing = lazy(() => import('@/pages/Billing'))
+const Results = lazy(() => import('@/pages/Results'))
+const Privacy = lazy(() => import('@/pages/Privacy'))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -114,6 +116,8 @@ export default function App() {
           <Route path="settings" element={<Only><SettingsPage /></Only>} />
           <Route path="onboarding" element={<Only role="admin"><Onboarding /></Only>} />
           <Route path="billing" element={<Only><Billing /></Only>} />
+          <Route path="results" element={<Only><Results /></Only>} />
+          <Route path="privacy" element={<Only role="owner"><Privacy /></Only>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

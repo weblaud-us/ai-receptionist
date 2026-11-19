@@ -25,10 +25,6 @@ import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-import httpx
-
-from config import settings
-from core.integrations.s3_presign import presign
 from core.repositories.repos import PhoneNumbersStore
 from core.tenancy import invalidate
 from core.tenancy.models import TenantConfig
@@ -41,6 +37,8 @@ TENANT_COLLECTIONS = (
     "services", "resources", "schedule_exceptions", "appointments", "slot_locks", "contacts", "calls", "messages",
     "knowledge_items", "unanswered_questions", "leads", "conversations", "usage_events", "audit_log", "rooms",
     "bookings", "room_nights", "guests", "call_sessions", "invites", "number_orders",
+    # Phase 6/7. `dsr_requests` is kept on purpose: proof that requests were handled (masked, no personal data).
+    "consent_events", "owner_feedback", "call_reviews", "eval_cases",
 )
 EXPORT_KINDS = ("calls.csv", "transcripts.json", "contacts.csv", "appointments.csv", "appointments.ics",
                 "messages.csv")
@@ -163,22 +161,17 @@ async def export_zip(db: Any, tenant: TenantConfig) -> bytes:
 # ── Deletion ────────────────────────────────────────────────────────────────
 
 async def _delete_recordings(db: Any, tenant_id: str) -> int:
-    if not (settings.RECORDING_S3_BUCKET and settings.RECORDING_S3_SECRET):
+    from core.compliance.retention import delete_recording_object, storage_configured
+
+    if not storage_configured():
         return 0
     deleted = 0
     async for call in db.calls.find({"tenant_id": tenant_id, "recording.path": {"$exists": True}},
                                     {"recording": 1}):
-        rec = call.get("recording") or {}
-        try:
-            url = presign(rec["path"], method="DELETE", bucket=rec.get("bucket") or None, expires=300)
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.delete(url)
-            if resp.status_code < 300 or resp.status_code == 404:
-                deleted += 1
-            else:
-                logger.warning("Deleting a recording for %s failed: HTTP %s", tenant_id, resp.status_code)
-        except Exception:
-            logger.warning("Deleting a recording for %s errored", tenant_id, exc_info=True)
+        if await delete_recording_object(call.get("recording") or {}):
+            deleted += 1
+        else:
+            logger.warning("A recording for %s could not be deleted", tenant_id)
     return deleted
 
 

@@ -97,3 +97,161 @@ export function usePlatformMutations() {
     }),
   }
 }
+
+/* ───────────── Phase 6/7: pilots, transcript review, eval cases, margins, privacy ───────────── */
+
+export interface ValueReport {
+  calls_answered: number
+  minutes: number
+  would_have_missed: number
+  bookings: number
+  est_booking_value: number
+  currency: string
+  leads: number
+  messages: number
+  transfers: number
+  handled_without_human_pct: number | null
+  latency_p50_s: number | null
+  unanswered_questions: number
+  satisfaction: { score: number; at: string; comment: string } | null
+}
+
+export interface Pilot {
+  id: string
+  name: string
+  vertical: Vertical
+  status: string
+  answering_mode: string
+  pilot: { active: boolean; started_at: string | null; ends_at: string | null; contact_name: string; feedback_day: string; case_study_ok: boolean; notes: string }
+  last_7_days: ValueReport
+  reviews_30d: { reviewed: number; issues: number }
+}
+
+export interface QueuedCall {
+  call_id: string
+  tenant_id: string
+  business: string
+  pilot: boolean
+  started_at: string
+  duration_s: number | null
+  outcome: string | null
+  summary?: string
+  latency?: { p50_s: number | null }
+  tools_used?: string[]
+  after_hours?: boolean | null
+}
+
+export interface ReviewCall {
+  call: QueuedCall & { transcript?: { role: string; text: string; at: string }[]; caller_phone?: string }
+  review: { verdict: 'good' | 'issue'; issues: string[]; notes: string; expected: string } | null
+}
+
+export interface EvalCase {
+  id: string
+  title: string
+  vertical: string
+  status: 'draft' | 'approved' | 'rejected'
+  caller_turns: string[]
+  expect: { intent: string; must_call: string[]; must_not_call: string[] }
+  created_at: string
+  author: string
+}
+
+export interface MarginRow {
+  id: string
+  name: string
+  plan: string
+  status: string
+  pilot: boolean
+  minutes: number
+  cost_usd: number
+  revenue_usd: number | null
+  margin_usd: number | null
+  margin_pct: number | null
+  flag: string
+}
+
+export interface PrivacyRequestRow {
+  id: string
+  business: string
+  tenant_id: string
+  kind: 'access' | 'erasure'
+  phone_masked: string
+  received_at: string
+  due_at: string
+  completed_at: string
+  actor: string
+}
+
+export interface ConsentEvent {
+  kind: 'opt_out' | 'opt_in'
+  phone: string
+  channel: string
+  scope: 'tenant' | 'platform'
+  tenant_id: string | null
+  at: string
+  dnc_added?: boolean
+}
+
+export const REVIEW_ISSUES = ['prompt', 'tool', 'knowledge', 'latency', 'speech', 'transfer', 'hallucination', 'other'] as const
+
+export const usePilots = () =>
+  useQuery({ queryKey: ['p-pilots'], queryFn: () => api<{ pilots: Pilot[] }>('/platform/pilots', NO_TENANT) })
+
+export const useReviewQueue = (tenantId?: string) =>
+  useQuery({
+    queryKey: ['p-review-queue', tenantId ?? ''],
+    queryFn: () => api<{ calls: QueuedCall[] }>('/platform/reviews/queue', { params: { tenant_id: tenantId || undefined }, ...NO_TENANT }),
+  })
+
+export const useReviewCall = (tenantId: string | null, callId: string | null) =>
+  useQuery({
+    queryKey: ['p-review-call', tenantId, callId],
+    queryFn: () => api<ReviewCall>(`/platform/reviews/calls/${tenantId}/${callId}`, NO_TENANT),
+    enabled: !!tenantId && !!callId,
+  })
+
+export const useReviewStats = () =>
+  useQuery({
+    queryKey: ['p-review-stats'],
+    queryFn: () => api<{ by_tenant: Record<string, { reviewed: number; issues: number }>; issues: Record<string, number>; eval_cases: { draft: number; approved: number } }>('/platform/reviews/stats', NO_TENANT),
+  })
+
+export const useEvalCases = () =>
+  useQuery({ queryKey: ['p-eval-cases'], queryFn: () => api<{ cases: EvalCase[] }>('/platform/eval-cases', NO_TENANT) })
+
+export const useMargins = () =>
+  useQuery({
+    queryKey: ['p-margins'],
+    queryFn: () => api<{ days: number; fixed_per_business_usd: number; businesses: MarginRow[]; totals: { revenue_usd: number; cost_usd: number; margin_usd: number } }>('/platform/margins', NO_TENANT),
+  })
+
+export const usePrivacyRequests = () =>
+  useQuery({ queryKey: ['p-privacy'], queryFn: () => api<{ requests: PrivacyRequestRow[] }>('/platform/privacy/requests', NO_TENANT) })
+
+export const useConsentEvents = () =>
+  useQuery({ queryKey: ['p-consent'], queryFn: () => api<{ events: ConsentEvent[] }>('/platform/consent-events', NO_TENANT) })
+
+export function useReviewMutations() {
+  const qc = useQueryClient()
+  const refresh = () => {
+    for (const key of ['p-review-queue', 'p-review-call', 'p-review-stats', 'p-eval-cases', 'p-pilots']) void qc.invalidateQueries({ queryKey: [key] })
+  }
+  return {
+    review: useMutation({
+      mutationFn: (body: { tenant_id: string; call_id: string; verdict: 'good' | 'issue'; issues: string[]; notes: string; expected: string }) =>
+        api('/platform/reviews', { method: 'POST', body, ...NO_TENANT }),
+      onSuccess: refresh,
+    }),
+    makeCase: useMutation({
+      mutationFn: (body: { tenant_id: string; call_id: string; title: string; expected: string; must_call: string[]; must_not_call: string[] }) =>
+        api<{ case: EvalCase }>('/platform/eval-cases', { method: 'POST', body, ...NO_TENANT }),
+      onSuccess: refresh,
+    }),
+    setCaseStatus: useMutation({
+      mutationFn: ({ id, ...body }: { id: string; status: EvalCase['status'] }) =>
+        api(`/platform/eval-cases/${id}`, { method: 'PATCH', body, ...NO_TENANT }),
+      onSuccess: refresh,
+    }),
+  }
+}

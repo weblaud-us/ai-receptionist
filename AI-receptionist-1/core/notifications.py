@@ -75,8 +75,30 @@ async def notify_owner(t: TenantConfig, event: str, text: str, *, subject: Optio
     return results
 
 
-async def notify_contact(t: TenantConfig, phone: str, text: str, *, prefer: str = "whatsapp") -> bool:
-    """A confirmation or reminder to a caller. WhatsApp first when configured, else SMS."""
+async def _opted_out(t: TenantConfig, phone: str) -> bool:
+    """Phase 6: someone who replied STOP (or was marked do-not-contact) gets nothing. Fails closed."""
+    from core.compliance.optout import is_opted_out
+    from database.mongodb import get_db
+
+    try:
+        db = get_db()
+    except RuntimeError:              # no database (scripts, unit tests): nothing to check against
+        return False
+    try:
+        return await is_opted_out(db, t.id, phone)
+    except Exception:
+        logger.warning("Opt-out check failed for %s; not sending", t.id, exc_info=True)
+        return True
+
+
+async def notify_contact(t: TenantConfig, phone: str, text: str, *, prefer: str = "whatsapp",
+                         requested: bool = False) -> bool:
+    """A confirmation or reminder to a caller. WhatsApp first when configured, else SMS.
+    `requested=True`: the caller asked for this text on the call just now (e.g. "text me the link"),
+    which is their consent for that one message even after an earlier STOP."""
+    if not requested and await _opted_out(t, phone):
+        logger.info("Not texting an opted-out contact of %s", t.id)
+        return False
     pnid = t.integrations.whatsapp.phone_number_id or None
     if prefer == "whatsapp" and wa_api.configured(pnid):
         if await wa_api.send_text(phone, text, pnid):

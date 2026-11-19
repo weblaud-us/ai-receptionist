@@ -280,6 +280,23 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("tenant_id", ASCENDING), ("outcome", ASCENDING), ("started_at", DESCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("caller_phone", ASCENDING), ("started_at", DESCENDING)]),
     ])
+    # Phase 6: consent revocation evidence and data subject request log
+    await db.consent_events.create_indexes([
+        IndexModel([("phone", ASCENDING), ("at", DESCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
+    ])
+    await db.dsr_requests.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("completed_at", DESCENDING)]),
+    ])
+    await db.contacts.create_indexes([IndexModel([("phone", ASCENDING)])])   # platform-wide opt-outs
+    # Phase 7: owner feedback, transcript reviews, eval cases
+    await db.owner_feedback.create_indexes([IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)])])
+    await db.call_reviews.create_indexes([
+        IndexModel([("call_id", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
+    ])
+    await db.eval_cases.create_indexes([IndexModel([("status", ASCENDING), ("created_at", DESCENDING)])])
+    await db.tenants.create_indexes([IndexModel([("pilot.active", ASCENDING)])])
 
 
 _create_indexes = create_indexes  # backwards-compatible name (tests, migrations)

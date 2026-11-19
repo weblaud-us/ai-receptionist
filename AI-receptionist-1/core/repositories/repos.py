@@ -85,6 +85,10 @@ class PhoneNumbersRepo(TenantRepo):
     collection = "phone_numbers"
 
 
+class OwnerFeedbackRepo(TenantRepo):
+    collection = "owner_feedback"          # Phase 7: the owner's 1–10 scores
+
+
 # Hotel vertical plug-in collections (pre-Phase-2 shapes, now with tenant_id)
 class RoomsRepo(TenantRepo):
     collection = "rooms"
@@ -115,6 +119,7 @@ class Repos:
         self.usage = UsageEventsRepo(db, tenant_id)
         self.audit = AuditLogRepo(db, tenant_id)
         self.phone_numbers = PhoneNumbersRepo(db, tenant_id)
+        self.feedback = OwnerFeedbackRepo(db, tenant_id)
         self.rooms = RoomsRepo(db, tenant_id)
         self.bookings = BookingsRepo(db, tenant_id)
 

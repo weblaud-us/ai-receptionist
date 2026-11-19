@@ -222,6 +222,41 @@ class ServiceUnavailableAgent(BusyLineAgent):
         self.reason = f"billing_{reason}"
 
 
+PERSON_KEYS = frozenset({"0"})
+PERSON_KEY_INSTRUCTIONS = ("The caller pressed 0 on their keypad to reach a person. Say you'll connect them and "
+                           "call transfer_to_human now. If no one is available, offer to take a message.")
+
+
+def wants_person(digit: str) -> bool:
+    return (digit or "").strip() in PERSON_KEYS
+
+
+class DtmfWatcher:
+    """
+    ⚖ Roadmap §11.2 "don't trap callers": pressing 0 always leads to a person or a message, even if
+    the model never heard the request. Keypresses arrive from the SIP leg as DTMF events.
+    ⚠ VERIFY on the first real SIP call that the trunk passes DTMF (RFC 2833) through to LiveKit.
+    """
+
+    def __init__(self, room: rtc.Room, session: Any, state: CallState) -> None:
+        self.session = session
+        self.state = state
+        self._handled = False
+
+        @room.on("sip_dtmf_received")
+        def _on_dtmf(ev: Any) -> None:
+            self.on_digit(getattr(ev, "digit", "") or "")
+
+    def on_digit(self, digit: str) -> bool:
+        if not wants_person(digit) or self._handled or self.state.transfer == "ok":
+            return False
+        self._handled = True                  # one press is enough; repeated presses don't stack replies
+        logger.info("Call %s: caller pressed %s for a person", self.state.call_id, digit)
+        self.session.interrupt()
+        self.session.generate_reply(instructions=PERSON_KEY_INSTRUCTIONS)
+        return True
+
+
 class SilenceWatcher:
     """
     Roadmap Task 1.6.d. AgentSession marks the user "away" after VOICE_USER_AWAY_TIMEOUT seconds

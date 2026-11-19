@@ -209,9 +209,15 @@ GDPR: if personal data may have been accessed, the 72-hour notification clock st
 - **Export:** the owner clicks **Plan & billing → Export all data** (`GET /t/export`, a zip of calls,
   transcripts, contacts, appointments and messages). It works while the business is paused or
   cancelled. As platform admin you can do it for them with `X-Tenant-Id`.
-- **One caller's data** (a caller, not the business): find the contact by phone in that tenant;
-  delete their `contacts` row and unset `transcript` on their `calls`; recordings in the bucket
-  under the call ids.
+- **One caller's data** (a caller, not the business): the owner does it under **Legal & privacy →
+  A caller asks for their data** (find → download → delete; `core/compliance/subjects.py`). As platform
+  admin, open the business (it's audited) and do the same — only on the owner's written instruction,
+  since the business is the controller. Every request is logged with its due date (`dsr_requests`;
+  platform **Compliance** page shows all of them and flags late ones).
+- **"Stop texting / calling me"** reaching you outside the product (e-mail, letter):
+  `uv run python -m scripts.opt_out +15125550111 --channel email --note "e-mail of 19 Nov"` — every
+  business stops texting the number and it goes on the permanent sales DNC list (`--tenant <id>` for
+  one business only). Texts with STOP are handled automatically (`/telephony/sms/inbound`).
 - **Delete a business:** `POST /platform/tenants/{id}/cancel` (cancels the Stripe subscription,
   stops the assistant, starts the `CANCEL_RETENTION_DAYS` clock). The billing tick releases the
   numbers and deletes everything when the clock runs out (`core/services/offboarding.py`). To delete

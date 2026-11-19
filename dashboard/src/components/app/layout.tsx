@@ -13,6 +13,7 @@ import {
   ConciergeBell,
   Contact,
   CreditCard,
+  LifeBuoy,
   LayoutDashboard,
   Loader2,
   LogOut,
@@ -23,7 +24,9 @@ import {
   PhoneCall,
   Scissors,
   Settings,
+  ShieldCheck,
   Sun,
+  TrendingUp,
   Users,
   Wrench,
 } from 'lucide-react'
@@ -34,6 +37,7 @@ import { ErrorBanner } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
+import { usePublicSite } from '@/lib/compliance'
 import { useLiveCalls } from '@/lib/hooks'
 import { useTenant } from '@/lib/tenant'
 import { ROLE_LABEL } from '@/lib/tenant-format'
@@ -73,6 +77,7 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
     {
       items: [
         { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
+        ...(ctx.legacy ? [] : [{ to: '/results', label: 'Results', icon: TrendingUp }]),
         { to: '/calls', label: 'Calls & messages', icon: PhoneCall, live: true },
         ...work,
       ],
@@ -91,13 +96,28 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
         { to: '/settings', label: 'Settings', icon: Settings },
         { to: '/team', label: 'Team', icon: Users },
         ...(ctx.legacy ? [] : [{ to: '/billing', label: 'Plan & billing', icon: CreditCard, role: 'owner' as Role }]),
+        ...(ctx.legacy ? [] : [{ to: '/privacy', label: 'Legal & privacy', icon: ShieldCheck, role: 'owner' as Role }]),
       ],
     },
   ]
 }
 
-/** Pages a business without an active plan can still open (to pay, export or leave). */
-const INACTIVE_OK = ['/billing']
+/** Pages a business without an active plan can still open (to pay, export, answer a data request or leave). */
+const INACTIVE_OK = ['/billing', '/privacy']
+
+/** Help centre, support e-mail and status page (Phase 7) — shown only when configured. */
+function HelpLinks() {
+  const site = usePublicSite().data
+  if (!site || !(site.help_center_url || site.support_email || site.status_page_url)) return null
+  const link = 'flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+  return (
+    <div className="mt-4 flex flex-col gap-0.5 px-3">
+      {site.help_center_url && <a className={link} href={site.help_center_url} target="_blank" rel="noopener"><LifeBuoy className="size-3.5" /> Help centre</a>}
+      {site.support_email && <a className={link} href={`mailto:${site.support_email}`}><LifeBuoy className="size-3.5" /> Contact support</a>}
+      {site.status_page_url && <a className={link} href={site.status_page_url} target="_blank" rel="noopener"><LifeBuoy className="size-3.5" /> Service status</a>}
+    </div>
+  )
+}
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const { ctx, can } = useTenant()
@@ -213,6 +233,7 @@ export function AppLayout() {
         <BusinessSwitcher />
         <div className="flex-1 overflow-y-auto pb-4">
           <NavList />
+          <HelpLinks />
         </div>
         <div className="border-t border-sidebar-border p-3">
           <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
@@ -269,6 +290,7 @@ export function AppLayout() {
           <Brand />
           <BusinessSwitcher />
           <NavList onNavigate={() => setMenu(false)} />
+          <HelpLinks />
         </SheetContent>
       </Sheet>
     </div>

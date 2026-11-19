@@ -25,9 +25,15 @@ import type { Tenant } from '@/lib/tenant-types'
 import { useDraft } from '@/lib/use-draft'
 
 type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'address' | 'timezone' | 'currency' | 'hours' |
-  'scheduling' | 'policies' | 'notifications' | 'hotel'>
+  'scheduling' | 'policies' | 'notifications' | 'hotel' | 'answering_mode'>
 
 const CHANNELS = [{ key: 'sms', label: 'Text' }, { key: 'email', label: 'E-mail' }, { key: 'whatsapp', label: 'WhatsApp' }]
+
+const ANSWERING_MODES = [
+  { value: 'all_calls', label: 'Every call goes to the assistant' },
+  { value: 'overflow', label: 'Only calls we can’t pick up (busy / no answer)' },
+  { value: 'after_hours', label: 'Only after hours' },
+]
 
 export default function SettingsPage() {
   const { can } = useTenant()
@@ -61,6 +67,7 @@ function BusinessTab() {
   const { draft, setDraft, dirty, reset } = useDraft<Draft>({
     name: t.name, description: t.description, phone: t.phone, website: t.website, address: t.address, timezone: t.timezone,
     currency: t.currency, hours: t.hours, scheduling: t.scheduling, policies: t.policies, notifications: t.notifications, hotel: t.hotel,
+    answering_mode: t.answering_mode ?? 'all_calls',
   })
   const [newPolicy, setNewPolicy] = useState('')
   if (!draft) return null
@@ -205,6 +212,13 @@ function BusinessTab() {
               <label className="flex items-center gap-2">
                 <Switch checked={n.daily_digest} onCheckedChange={(v) => set({ notifications: { ...n, daily_digest: v } })} /> Daily summary e-mail
               </label>
+              <label className="flex items-center gap-2">
+                <Switch checked={n.monthly_report ?? true} onCheckedChange={(v) => set({ notifications: { ...n, monthly_report: v } })} /> Monthly results e-mail
+              </label>
+              <Field label="Which calls reach your assistant?" hint="Used to count the calls it caught that you would have missed (Results).">
+                <SimpleSelect value={draft.answering_mode ?? 'all_calls'} options={ANSWERING_MODES}
+                  onChange={(v) => set({ answering_mode: v as Draft['answering_mode'] })} />
+              </Field>
             </div>
           </CardContent>
         </Card>

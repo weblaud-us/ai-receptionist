@@ -10,6 +10,9 @@ import { RequirePlatformAdmin } from '@/components/require-platform-admin'
 const Businesses = lazy(() => import('@/pages/Businesses'))
 const Economics = lazy(() => import('@/pages/Economics'))
 const Dialer = lazy(() => import('@/pages/Dialer'))
+const Pilots = lazy(() => import('@/pages/Pilots'))
+const Reviews = lazy(() => import('@/pages/Reviews'))
+const Compliance = lazy(() => import('@/pages/Compliance'))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -41,6 +44,9 @@ export default function App() {
           <Route index element={<Businesses />} />
           <Route path="economics" element={<Economics />} />
           <Route path="dialer" element={<Dialer />} />
+          <Route path="pilots" element={<Pilots />} />
+          <Route path="reviews" element={<Reviews />} />
+          <Route path="compliance" element={<Compliance />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

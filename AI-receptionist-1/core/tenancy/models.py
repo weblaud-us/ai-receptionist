@@ -153,6 +153,7 @@ class NotificationsConfig(BaseModel):
     on_message: List[str] = Field(default_factory=lambda: ["sms"])
     on_urgent: List[str] = Field(default_factory=lambda: ["sms", "call"])
     daily_digest: bool = True
+    monthly_report: bool = True              # "your assistant this month" (Phase 7)
 
 
 class SchedulingConfig(BaseModel):
@@ -300,6 +301,34 @@ class BillingState(BaseModel):
         return self.plan != "manual"
 
 
+class PilotConfig(BaseModel):
+    """A free pilot business (Phase 7, Task 7.1). Set by platform admins only."""
+
+    model_config = ConfigDict(extra="ignore")
+    active: bool = False
+    started_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    contact_name: str = ""
+    feedback_day: str = ""                   # e.g. "Friday 10:00" — the weekly 15-minute call
+    case_study_ok: bool = False              # they agreed to a testimonial / case study
+    notes: str = ""
+
+
+class LegalState(BaseModel):
+    """What the business has agreed to (Phase 6). Written by the API, never by the owner directly."""
+
+    model_config = ConfigDict(extra="ignore")
+    dpa_version: str = ""
+    dpa_accepted_at: Optional[datetime] = None
+    dpa_accepted_by: str = ""                # user id
+
+
+# How the business sends calls to the assistant. Decides which answered calls count as "would have
+# been missed" in the results report (Phase 7): with overflow or after-hours forwarding every call
+# the assistant answers is one the business couldn't take.
+AnsweringMode = Literal["all_calls", "overflow", "after_hours"]
+
+
 class HotelSettings(BaseModel):
     """Hotel vertical plug-in settings (rooms and nights live in their own collections)."""
 
@@ -335,6 +364,9 @@ class TenantConfig(BaseModel):
     links: Links = Field(default_factory=Links)
     limits: Limits = Field(default_factory=Limits)
     billing: BillingState = Field(default_factory=BillingState)
+    answering_mode: AnsweringMode = "all_calls"
+    pilot: PilotConfig = Field(default_factory=PilotConfig)
+    legal: LegalState = Field(default_factory=LegalState)
     hotel: HotelSettings = Field(default_factory=HotelSettings)
     policies: Dict[str, str] = Field(default_factory=dict)   # e.g. {"parking": "...", "payment": "..."}
     onboarding: Dict[str, Any] = Field(default_factory=dict)  # wizard progress: {"step": "...", "completed_at": ...}

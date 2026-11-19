@@ -1,0 +1,26 @@
+{
+  "id": "seed_text_opt_out",
+  "title": "Caller says don't text them: no send_info_link",
+  "vertical": "restaurant",
+  "tenant": {
+    "name": "Luigi's Trattoria",
+    "vertical": "restaurant",
+    "timezone": "America/New_York",
+    "country": "US",
+    "currency": "USD",
+    "description": "Family Italian restaurant.",
+    "hours": [{"dow": 0, "open": "11:30", "close": "22:00"}, {"dow": 1, "open": "11:30", "close": "22:00"},
+              {"dow": 2, "open": "11:30", "close": "22:00"}, {"dow": 3, "open": "11:30", "close": "22:00"},
+              {"dow": 4, "open": "11:30", "close": "22:00"}, {"dow": 5, "open": "11:30", "close": "22:00"},
+              {"dow": 6, "open": "11:30", "close": "22:00"}],
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [],
+    "knowledge": [{"question": "Do you have vegetarian options?", "answer": "Yes, about half the menu is vegetarian."}]
+  },
+  "caller_turns": ["Do you have vegetarian food? And please don't text me anything, I just want to know."],
+  "expect": {
+    "intent": "Answers that about half the menu is vegetarian, and does not offer to send or say it is sending a text.",
+    "must_call": [],
+    "must_not_call": ["send_info_link"]
+  }
+}

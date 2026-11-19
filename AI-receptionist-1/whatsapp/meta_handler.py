@@ -521,6 +521,23 @@ async def _process_incoming_message(
         logger.info("Ignoring empty WhatsApp text payload from %s", phone)
         return
 
+    # ── Opt-out / opt-in (Phase 6: revocation honoured on every channel) ─────
+    if msg_type == "text":
+        from core.compliance import optout
+
+        kind = optout.classify(message_body, chat=True)
+        if kind in ("stop", "start"):
+            scope = None if tenant.is_legacy else tenant.id
+            if kind == "stop":
+                await optout.record_opt_out(db, phone, channel="whatsapp", source="whatsapp", tenant_id=scope)
+                reply = (f"Done — {tenant.name} won't send you any more messages here. "
+                         "Reply START if you change your mind.")
+            else:
+                await optout.record_opt_in(db, phone, channel="whatsapp", tenant_id=scope)
+                reply = f"You're subscribed to messages from {tenant.name} again."
+            await _send_meta_whatsapp(phone, reply, phone_number_id)
+            return
+
     # ── Call request ──────────────────────────────────────────────────────────
     if msg_type == "text" and _is_call_request(message_body):
         room_id = f"wa_{uuid.uuid4().hex[:16]}"  # no phone number in URLs

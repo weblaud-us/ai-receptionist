@@ -2,7 +2,8 @@ import { ErrorBanner, PageHeader } from '@receptionist/shared/components/blocks'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
-import { useCostModel } from '@/lib/platform'
+import { Badge } from '@receptionist/shared/components/ui/badge'
+import { useCostModel, useMargins } from '@/lib/platform'
 
 const usd = (n: number, digits = 2) => `$${n.toFixed(digits)}`
 
@@ -14,6 +15,44 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
         <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
       </CardHeader>
       {hint && <CardContent className="pt-0 text-xs text-muted-foreground">{hint}</CardContent>}
+    </Card>
+  )
+}
+
+/** Phase 7, Task 7.2: revenue vs cost per business, worst margin first. */
+function MarginTable() {
+  const q = useMargins()
+  if (q.error) return <ErrorBanner error={q.error} onRetry={() => void q.refetch()} />
+  if (!q.data) return <Skeleton className="mt-4 h-48 w-full" />
+  const m = q.data
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Margin per business</CardTitle>
+        <CardDescription>
+          Last {m.days} days: list price (prorated) plus overage, minus call cost and {usd(m.fixed_per_business_usd)} fixed.
+          Manual (invoiced) businesses show cost only. Totals: revenue {usd(m.totals.revenue_usd)}, cost {usd(m.totals.cost_usd)}, margin {usd(m.totals.margin_usd)}.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader><TableRow><TableHead>Business</TableHead><TableHead>Plan</TableHead><TableHead className="text-right">Minutes</TableHead><TableHead className="text-right">Revenue</TableHead><TableHead className="text-right">Cost</TableHead><TableHead className="text-right">Margin</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {m.businesses.map((b) => (
+              <TableRow key={b.id}>
+                <TableCell className="font-medium">
+                  {b.name} {b.pilot && <Badge variant="secondary" className="ml-1">pilot</Badge>} {b.flag === 'loss' && <Badge variant="destructive" className="ml-1">loss</Badge>}
+                </TableCell>
+                <TableCell>{b.plan} <span className="text-xs text-muted-foreground">· {b.status}</span></TableCell>
+                <TableCell className="text-right tabular-nums">{b.minutes.toLocaleString()}</TableCell>
+                <TableCell className="text-right tabular-nums">{b.revenue_usd === null ? '—' : usd(b.revenue_usd)}</TableCell>
+                <TableCell className="text-right tabular-nums">{usd(b.cost_usd)}</TableCell>
+                <TableCell className="text-right tabular-nums">{b.margin_usd === null ? '—' : `${usd(b.margin_usd)}${b.margin_pct !== null ? ` (${b.margin_pct}%)` : ''}`}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
     </Card>
   )
 }
@@ -82,6 +121,7 @@ export default function Economics() {
           </CardContent>
         </Card>
       </div>
+      <MarginTable />
       <p className="mt-4 text-xs text-muted-foreground">
         Businesses by status: {Object.entries(m.tenants_by_status).map(([k, n]) => `${k} ${n}`).join(' · ') || 'none yet'}
       </p>

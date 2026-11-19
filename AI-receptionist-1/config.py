@@ -237,6 +237,31 @@ class Settings(BaseSettings):
     TERMS_URL:               str  = Field(default="")
     PRIVACY_URL:             str  = Field(default="")
 
+    # ── Legal and compliance (Phase 6) ────────────────────
+    # Where the published documents live (marketing site). Their versions are in core/compliance/legal.py;
+    # bump a version there when the text changes and owners are asked to accept again.
+    DPA_URL:                 str  = Field(default="")
+    AUP_URL:                 str  = Field(default="")
+    SLA_URL:                 str  = Field(default="")
+    SECURITY_URL:            str  = Field(default="")
+    SUBPROCESSORS_URL:       str  = Field(default="")
+    LEGAL_ENTITY_NAME:       str  = Field(default="WEBLAUD LLC")
+    PRIVACY_CONTACT_EMAIL:   str  = Field(default="")   # where data-protection requests go (privacy policy, DPA)
+    DSR_DEADLINE_DAYS:       int  = Field(default=30)   # GDPR: one month; shown as the due date of each request
+    # Inbound SMS (Twilio "A message comes in" webhook → POST /telephony/sms/inbound). STOP/START are
+    # recorded here; set false when a Twilio Messaging Service with Advanced Opt-Out replies itself.
+    SMS_OPTOUT_REPLY:        bool = Field(default=True)
+
+    # ── Launch, pilots and support (Phase 7) ──────────────
+    DEMO_PHONE_NUMBER:       str  = Field(default="")   # the live demo line printed on the website (GET /public/site)
+    STATUS_PAGE_URL:         str  = Field(default="")   # hosted status page (separate from this server)
+    SUPPORT_EMAIL:           str  = Field(default="")
+    HELP_CENTER_URL:         str  = Field(default="")
+    MONTHLY_REPORT_ENABLED:  bool = Field(default=True)  # "your assistant this month" e-mail on the 1st
+    REPORT_HOUR:             int  = Field(default=9)     # business-local hour for the monthly and weekly pilot reports
+    PILOT_REPORT_BCC:        str  = Field(default="")   # you, on every weekly pilot report
+    REVIEW_SAMPLE_PCT:       int  = Field(default=20)   # share of non-pilot calls in the review queue (pilots: all)
+
     # ── Number provisioning (Phase 5, Task 5.4) ───────────
     # New numbers are bought on Twilio, attached to the Elastic SIP trunk and added to the LiveKit
     # inbound trunk. With TELEPHONY_PROVIDER=softphone (development) a fake +1555 number is mapped instead.
@@ -438,6 +463,10 @@ class Settings(BaseSettings):
                 problems.append("SIGNUP_ENABLED needs e-mail (RESEND_API_KEY, EMAIL_FROM) for verification")
             if not self.DASHBOARD_URL.startswith("https://"):
                 problems.append("SIGNUP_ENABLED needs DASHBOARD_URL (https) for Checkout return links")
+            # Phase 6: nobody signs up to terms they can't read (docs/COMPLIANCE.md §11.8).
+            missing_legal = [k for k in ("TERMS_URL", "PRIVACY_URL", "DPA_URL") if not getattr(self, k)]
+            if missing_legal:
+                problems.append(f"SIGNUP_ENABLED needs the published legal documents: {', '.join(missing_legal)}")
         if self.billing_enabled and not self.STRIPE_WEBHOOK_SECRET:
             problems.append("STRIPE_WEBHOOK_SECRET is required with STRIPE_SECRET_KEY")
         if self.NUMBER_PROVISIONING_ENABLED and self.telephony_provider == "twilio":

@@ -347,3 +347,67 @@ Details: [PHASE_5_TESTING.md](PHASE_5_TESTING.md). Keep `SIGNUP_ENABLED=false` a
 - [ ] Overage minutes appear correctly on the next invoice (Stripe test clock).
 - [ ] Failed payment → past due → paused → calls forwarded, never silence.
 - [ ] Cancel → export works → data deleted after the retention period.
+
+## Phase 6 — legal and compliance
+
+Details: [PHASE_6_TESTING.md](PHASE_6_TESTING.md). The market checklist (what needs a lawyer):
+[COMPLIANCE.md](COMPLIANCE.md). Production refuses `SIGNUP_ENABLED=true` until `TERMS_URL`,
+`PRIVACY_URL` and `DPA_URL` are set.
+
+**Documents**
+- [ ] Drafts in [legal/](legal/README.md) reviewed by counsel for each launch market and published.
+      `TERMS_URL`, `PRIVACY_URL`, `DPA_URL`, `AUP_URL`, `SUBPROCESSORS_URL`, `SLA_URL` and
+      `SECURITY_URL` are set.
+- [ ] Versions in `core/compliance/legal.py` match the published dates; past versions archived as PDFs.
+- [ ] `LEGAL_ENTITY_NAME` and `PRIVACY_CONTACT_EMAIL` set; the privacy inbox is monitored.
+- [ ] Sub-processor list in `legal.SUBPROCESSORS` matches the vendors you actually use (hosting,
+      Redis, storage filled in).
+
+**Opt-outs**
+- [ ] Twilio: every SMS-capable number (and `TWILIO_SMS_FROM`) has "A message comes in" →
+      `https://<api>/telephony/sms/inbound` (HTTP POST). If you use a Messaging Service with
+      Advanced Opt-Out, set `SMS_OPTOUT_REPLY=false` so people don't get two replies.
+- [ ] Text STOP to a business number, then START, from your own phone: you get one reply each, and
+      the platform **Compliance** page shows both events.
+- [ ] A2P 10DLC brand and campaign approved (US), or toll-free verification.
+
+**Retention and requests**
+- [ ] The bucket lifecycle rule (`RECORDING_RETENTION_DAYS`) is still in place as the backstop; the
+      per-business purge runs (check `recording_deleted_at` on an old call).
+- [ ] One data request run end to end on staging: find → export → erase; it appears in the log.
+- [ ] Records of processing and DPIA (COMPLIANCE.md §9–10) filled in before the first EU/UK customer.
+
+**Vendors**
+- [ ] No-training / zero-retention confirmed in writing (OpenAI, Anthropic, Deepgram, ElevenLabs,
+      Cartesia); confirmations filed.
+- [ ] DPAs signed with each sub-processor; transfer mechanism noted in SUBPROCESSORS.md.
+
+**Acceptance (ROADMAP §11)**
+- [ ] Every 🧑‍⚖️ row in COMPLIANCE.md for your launch markets signed off (name, date).
+- [ ] Press 0 and say "operator" on a production call: you're connected, or it takes a message.
+
+## Phase 7 — pilot, launch and sales
+
+Details: [PHASE_7_TESTING.md](PHASE_7_TESTING.md) · [PILOT_PLAYBOOK.md](PILOT_PLAYBOOK.md) ·
+[LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md) · [SUPPORT.md](SUPPORT.md) · [SALES_PLAYBOOK.md](SALES_PLAYBOOK.md).
+
+**Configuration**
+- [ ] `DEMO_PHONE_NUMBER` (assigned to a demo business), `STATUS_PAGE_URL`, `SUPPORT_EMAIL`,
+      `HELP_CENTER_URL` set; `GET /public/site` returns them; the dashboard sidebar shows the links.
+- [ ] `PILOT_REPORT_BCC` set to you; `REPORT_HOUR` suits your customers (default 9:00 local).
+- [ ] `MONTHLY_REPORT_ENABLED=true`; one monthly e-mail checked on staging
+      (`python -m scripts.tenant_jobs_tick --at <the 1st, 15:00Z>`), not in spam.
+- [ ] `REVIEW_SAMPLE_PCT` chosen (20 % to start; lower it as volume grows).
+
+**Status page and monitoring**
+- [ ] Status page on a separate provider with monitors on `https://<api>/readyz` and a synthetic call
+      to the demo number (`scripts/synthetic_call.py`).
+- [ ] **Unit economics → Margin per business** reviewed weekly; no paying business flagged `loss`.
+
+**Evals from real calls**
+- [ ] Approved cases exported (`python -m scripts.export_eval_cases`) and committed; CI eval job
+      passes at 100 % before each release.
+
+**Acceptance (ROADMAP §12)**
+- [ ] Pilot exit criteria met (PILOT_PLAYBOOK.md §7).
+- [ ] LAUNCH_CHECKLIST.md all ticked.
