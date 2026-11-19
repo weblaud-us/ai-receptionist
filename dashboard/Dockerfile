@@ -34,7 +34,7 @@ RUN test -n "$VITE_CLIENT_URL" || (echo "VITE_CLIENT_URL build arg is required" 
 RUN test -n "$VITE_PLATFORM_URL" || (echo "VITE_PLATFORM_URL build arg is required" >&2; exit 1)
 RUN npm run build -w dashboard
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 # Origins the dashboard may call: the API, plus the Sentry ingest host if VITE_SENTRY_DSN is set.
 ENV CSP_CONNECT_SRC=""
 COPY dashboard/nginx.conf.template /etc/nginx/templates/default.conf.template
