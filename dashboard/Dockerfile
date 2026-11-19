@@ -13,7 +13,7 @@
 # Hosting it on Cloudflare Pages / Netlify instead? `npm run build -w dashboard` and deploy
 # dashboard/dist; the same headers ship in public/_headers (edit the API origin there).
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
