@@ -14,7 +14,7 @@
 # Serve it on its own origin (e.g. admin.example.com). Put an IP allow-list or SSO proxy in front
 # too, on top of the platform-admin + two-factor checks the API already enforces.
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
