@@ -363,13 +363,15 @@ async def cost_model(admin: Principal = Depends(require_platform_admin)):
     by_plan: Dict[str, int] = {}
     mrr = 0.0
     async for row in db.tenants.aggregate([{"$match": {"status": {"$in": ["trial", "active", "past_due"]}}},
-                                           {"$group": {"_id": {"plan": "$billing.plan", "currency": "$currency"},
+                                           {"$group": {"_id": {"plan": "$billing.plan", "currency": "$currency",
+                                                               "interval": "$billing.interval"},
                                                        "n": {"$sum": 1}}}]):
         key = str(row["_id"].get("plan") or "manual")
         by_plan[key] = by_plan.get(key, 0) + row["n"]
         plan = plans.get_plan(key)
-        if plan:   # list price in the business's currency, reported in USD
-            mrr += row["n"] * plan.monthly_revenue_usd(str(row["_id"].get("currency") or ""))
+        if plan:   # list price in the business's currency (annual: 10 months over 12), reported in USD
+            mrr += row["n"] * plan.monthly_revenue_usd(str(row["_id"].get("currency") or ""),
+                                                       str(row["_id"].get("interval") or "month"))
     mrr = round(mrr, 2)
     return {**costs.model(), "last_30d": totals, "tenants_by_status": by_status, "tenants_by_plan": by_plan,
             "list_mrr_usd": mrr}

@@ -183,11 +183,16 @@ async def maybe_send_digest(t: TenantConfig, now: datetime, raw: Dict[str, Any])
 
 async def purge_transcripts(t: TenantConfig, now: datetime) -> int:
     cutoff = now - timedelta(days=t.agent.transcript_retention_days)
+    fields = ["transcript", "transcript_enc", "turns"]
+    if t.clinical_encryption:
+        # Dental: the plaintext summary carries the same health details ("swelling on the left", or the
+        # caller's own first sentence when the LLM summary failed), so it goes with the transcript.
+        fields.append("summary")
     res = await Repos(get_db(), t.id).calls.update_many(
         {"status": "completed",
-         "$and": [{"$or": [{"transcript": {"$exists": True}}, {"transcript_enc": {"$exists": True}}]},
+         "$and": [{"$or": [{f: {"$exists": True}} for f in fields if f != "turns"]},
                   {"$or": [{"ended_at": {"$lt": cutoff}}, {"ended_at": None, "started_at": {"$lt": cutoff}}]}]},
-        {"$unset": {"transcript": "", "transcript_enc": "", "turns": ""}, "$set": {"transcript_purged_at": now}})
+        {"$unset": {f: "" for f in fields}, "$set": {"transcript_purged_at": now}})
     purged = int(getattr(res, "modified_count", 0) or 0)
     if purged:
         logger.info("Purged %d transcripts older than %d days for %s", purged, t.agent.transcript_retention_days, t.id)

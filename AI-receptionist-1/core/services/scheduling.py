@@ -239,6 +239,13 @@ class SchedulingService:
         earliest = now + timedelta(minutes=self.tenant.scheduling.min_notice_minutes)
         slots = [av.Slot(resource_id=local_id[s.practitioner_id], start=_aware(s.start), end=_aware(s.end))
                  for s in raw if s.practitioner_id in local_id and _aware(s.start) >= earliest]
+        # The practice's own hours and closures still apply (split-shift lunch, public holidays).
+        window_start = datetime.combine(day_from, datetime.min.time(), tzinfo=self.zone).astimezone(UTC) - timedelta(days=1)
+        window_end = datetime.combine(day_to + timedelta(days=2), datetime.min.time(), tzinfo=self.zone).astimezone(UTC)
+        exceptions = await self.repos.exceptions.find(
+            {"start": {"$lt": window_end}, "end": {"$gt": window_start}}, limit=500)
+        slots = av.within_hours(slots, business_hours=self.tenant.hours, tz=self.tz,
+                                business_exceptions=_intervals([e for e in exceptions if not e.get("resource_id")]))
         return av.rank(slots, requested_at, limit)
 
     # ── Booking ────────────────────────────────────────────────────────────

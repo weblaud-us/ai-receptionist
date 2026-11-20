@@ -272,8 +272,11 @@ async def on_invoice_paid(db: Any, invoice: Dict[str, Any]) -> str:
     tenant = await find_tenant(db, invoice)
     if tenant is None:
         raise Ignored("unknown tenant")
-    if int(invoice.get("amount_paid") or 0) == 0 and tenant.status in ("trial", "incomplete"):
-        return tenant.status                  # the $0 invoice that opens a trial
+    if tenant.status in ("trial", "incomplete") and (
+            int(invoice.get("amount_paid") or 0) == 0 or invoice.get("billing_reason") == "subscription_create"):
+        # The invoice that opens the subscription: $0 for a trial, or just the one-time setup fee (dental
+        # plans charge it up front, trial or not). The subscription events set trial vs active.
+        return tenant.status
     billing: Dict[str, Any] = {"past_due_since": None}
     if tenant.status == "cancelled":
         # Only a payment on a *new* subscription reactivates (a late invoice of the old one doesn't).

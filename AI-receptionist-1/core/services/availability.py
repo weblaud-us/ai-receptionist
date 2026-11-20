@@ -124,18 +124,27 @@ def subtract(free: Sequence[Interval], busy: Sequence[Interval]) -> List[Interva
     return out
 
 
-def _aligned(t: datetime, step: timedelta) -> datetime:
-    """Round up to the next multiple of `step` since midnight UTC of the same day."""
-    day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
-    offset = t - day_start
-    n = -(-offset // step)  # ceil
-    return day_start + n * step
+def _aligned(t: datetime, step: timedelta, zone: Optional[ZoneInfo] = None) -> datetime:
+    """Round up to the next multiple of `step` since midnight of the same day, on the business's wall
+    clock when `zone` is given (else UTC). Aligning to UTC midnight puts slots at :30 past the hour for
+    half-hour zones (Adelaide, Darwin) with a 60-minute step, and off the hour for steps like 45."""
+    if zone is None:
+        day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
+        n = -(-(t - day_start) // step)  # ceil
+        return day_start + n * step
+    local = t.astimezone(zone)
+    wall = local.replace(tzinfo=None)
+    midnight = wall.replace(hour=0, minute=0, second=0, microsecond=0)
+    n = -(-(wall - midnight) // step)  # ceil, in wall-clock time (DST-safe)
+    return (midnight + n * step).replace(tzinfo=zone).astimezone(UTC)
 
 
-def slots_in(free: Sequence[Interval], duration: timedelta, step: timedelta, resource_id: str) -> List[Slot]:
+def slots_in(free: Sequence[Interval], duration: timedelta, step: timedelta, resource_id: str,
+             tz: Optional[str] = None) -> List[Slot]:
+    zone = _zone(tz) if tz else None
     out: List[Slot] = []
     for iv in free:
-        t = _aligned(iv.start, step)
+        t = _aligned(iv.start, step, zone)
         while t + duration <= iv.end:
             out.append(Slot(resource_id, t, t + duration))
             t += step
@@ -177,10 +186,25 @@ def free_slots(
                 if r.hours is not None:
                     window = intersect(window, opening_intervals(r.hours, day, tz))
                 window = subtract(window, [*r.exceptions, *r.busy, Interval(datetime.min.replace(tzinfo=UTC), earliest)])
-                result.extend(slots_in(window, duration, step, r.resource_id))
+                result.extend(slots_in(window, duration, step, r.resource_id, tz))
         day += timedelta(days=1)
     result.sort(key=lambda s: (s.start, s.resource_id))
     return result
+
+
+def within_hours(slots: Sequence[Slot], *, business_hours: Sequence[HoursEntry], tz: str,
+                 business_exceptions: Sequence[Interval] = ()) -> List[Slot]:
+    """Only the slots that sit wholly inside the business's opening hours, outside its closures.
+    External diaries (Cliniko, Dentally) answer for the practitioner, not the practice: a dentist with
+    no lunch block would otherwise be offered across a split-shift lunch break or a closed day."""
+    if not slots:
+        return []
+    zone = _zone(tz)
+    days = {s.start.astimezone(zone).date() for s in slots}
+    days |= {d - timedelta(days=1) for d in days}          # yesterday's overnight interval runs into today
+    open_ivs = subtract(merge(iv for d in days for iv in opening_intervals(business_hours, d, tz)),
+                        business_exceptions)
+    return [s for s in slots if any(iv.start <= s.start and s.end <= iv.end for iv in open_ivs)]
 
 
 def rank(slots: Sequence[Slot], requested: Optional[datetime], n: int = 3, *, one_per_time: bool = True) -> List[Slot]:

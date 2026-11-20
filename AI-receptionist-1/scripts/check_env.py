@@ -255,6 +255,14 @@ def dental_preflight(cfg: Settings, tenants: Sequence[TenantConfig]) -> list[tup
             add("OK", "ZDR", f"{vendor} Zero Data Retention recorded as approved")
         else:
             add("WARN", "ZDR", f"{flag}=false: don't promise {vendor} Zero Data Retention to practices")
+    # voice/twilio_handler.py answers as the single .env hotel: no tenant lookup, no en-AU / en-GB speech
+    # model, no dental keyterms, no dental greeting or recording notice, no missed-call text.
+    if cfg.LEGACY_TWILIO_VOICE:
+        add(severe if tenants else "WARN", "Voice path",
+            "LEGACY_TWILIO_VOICE=true: a number pointed at /voice/incoming bypasses the LiveKit agent "
+            "(answers as the .env hotel, US English, no dental greeting or missed-call text). Turn it off")
+    else:
+        add("OK", "Voice path", "phone calls go through the LiveKit agent only")
     if any((t.integrations.pms or {}).get("provider") == "cliniko" for t in tenants) and not cfg.CLINIKO_USER_AGENT.strip():
         add(severe, "Cliniko", "CLINIKO_USER_AGENT is empty (Cliniko requires app name + contact e-mail)")
     region = cfg.DEPLOYMENT_REGION.strip()
