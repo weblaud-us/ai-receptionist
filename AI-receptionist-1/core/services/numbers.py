@@ -45,7 +45,7 @@ from core.tenancy.models import TenantConfig
 
 logger = logging.getLogger(__name__)
 
-TWILIO_API = "https://api.twilio.com/2010-04-01/Accounts/{sid}"
+TWILIO_API = "{base}/2010-04-01/Accounts/{sid}"   # base: settings.twilio_api_base (edge / region)
 TRUNKING_API = "https://trunking.twilio.com/v1/Trunks/{trunk}/PhoneNumbers"
 TIMEOUT_S = 20.0
 STEPS = ("purchased", "trunk", "livekit", "mapped", "verified")
@@ -111,7 +111,7 @@ async def search(country: str, *, area_code: str = "", contains: str = "", limit
         params["AreaCode"] = area_code
     if contains:
         params["Contains"] = contains
-    url = f"{TWILIO_API.format(sid=settings.TWILIO_ACCOUNT_SID)}/AvailablePhoneNumbers/{country}/Local.json"
+    url = f"{TWILIO_API.format(base=settings.twilio_api_base, sid=settings.TWILIO_ACCOUNT_SID)}/AvailablePhoneNumbers/{country}/Local.json"
     try:
         resp = await _twilio("GET", url, params=params)
     except httpx.HTTPError as exc:
@@ -160,6 +160,8 @@ async def start_order(db: Any, tenant: TenantConfig, number: str, *, requested_b
     if order["provider"] == "twilio" and country not in settings.number_instant_countries:
         order["status"] = "needs_documents"
         order["documents"] = documents or {}
+        # AU (+61) and UK (+44) bundles name the registered business: ABN / Companies House number.
+        order["legal_entity"] = tenant.legal_entity.model_dump()
         order["note"] = ("Numbers in this country need a regulatory bundle (business address proof, ID) approved "
                          "by the carrier first — usually 1–3 business days. We'll e-mail you when it's live. "
                          "Use call forwarding or browser testing meanwhile.")
@@ -181,12 +183,24 @@ async def _alert_operator(tenant: TenantConfig, order: Dict[str, Any]) -> None:
         from core.integrations.email import send_email
 
         await send_email(to, f"[numbers] {tenant.name} needs a {order['country']} number",
-                         f"{tenant.name} ({tenant.id}) ordered {order['e164']} ({order['country']}).\n\n"
+                         f"{tenant.name} ({tenant.id}) ordered {order['e164']} ({order['country']}).\n"
+                         f"{_entity_lines(tenant, order['country'])}\n"
                          "1. Create or reuse their regulatory bundle (and address) in the Twilio console.\n"
                          "2. When Twilio approves it, open the platform app → Numbers, paste the bundle SID and "
                          f"approve order {order['_id']}.\n")
     except Exception:
         logger.warning("Could not e-mail the number-order alert for %s", order["_id"], exc_info=True)
+
+
+def _entity_lines(tenant: TenantConfig, country: str) -> str:
+    """The registered business, for the bundle. Says what's missing so the operator can ask for it."""
+    e = tenant.legal_entity
+    lines = [f"Registered name: {e.registered_name or '(not given)'}"]
+    if country == "AU":
+        lines.append(f"ABN: {e.abn or '(missing: ask the business, Settings → Business)'}")
+    elif country == "GB":
+        lines.append(f"Companies House number: {e.company_number or '(not given; sole traders have none)'}")
+    return "\n".join(lines) + "\n"
 
 
 def _country_of(number: str) -> str:
@@ -206,7 +220,7 @@ async def _step(db: Any, order: Dict[str, Any], name: str, value: Any) -> None:
 
 
 async def _find_owned(number: str) -> Optional[str]:
-    url = f"{TWILIO_API.format(sid=settings.TWILIO_ACCOUNT_SID)}/IncomingPhoneNumbers.json"
+    url = f"{TWILIO_API.format(base=settings.twilio_api_base, sid=settings.TWILIO_ACCOUNT_SID)}/IncomingPhoneNumbers.json"
     resp = await _twilio("GET", url, params={"PhoneNumber": number})
     if resp.status_code >= 400:
         raise ProvisioningError(f"Twilio lookup failed (HTTP {resp.status_code})", status=502)
@@ -220,7 +234,7 @@ async def _purchase(number: str, tenant_id: str, *, bundle_sid: str = "", addres
     sid = await _find_owned(number)
     if sid:
         return sid
-    url = f"{TWILIO_API.format(sid=settings.TWILIO_ACCOUNT_SID)}/IncomingPhoneNumbers.json"
+    url = f"{TWILIO_API.format(base=settings.twilio_api_base, sid=settings.TWILIO_ACCOUNT_SID)}/IncomingPhoneNumbers.json"
     data = {"PhoneNumber": number, "FriendlyName": f"receptionist {tenant_id}"[:64]}
     if bundle_sid:
         data["BundleSid"] = bundle_sid
@@ -377,7 +391,7 @@ async def release(db: Any, number: str) -> Dict[str, Any]:
                 logger.warning("Removing %s from the LiveKit trunk failed", mask_phone(number), exc_info=True)
         sid = row.get("provider_sid") or await _find_owned(number)
         if sid and sid != "fake":
-            resp = await _twilio("DELETE", f"{TWILIO_API.format(sid=settings.TWILIO_ACCOUNT_SID)}"
+            resp = await _twilio("DELETE", f"{TWILIO_API.format(base=settings.twilio_api_base, sid=settings.TWILIO_ACCOUNT_SID)}"
                                            f"/IncomingPhoneNumbers/{sid}.json")
             if resp.status_code >= 400 and resp.status_code != 404:
                 raise ProvisioningError(f"Could not release the number at Twilio (HTTP {resp.status_code})", status=502)

@@ -44,8 +44,10 @@ REVENUE_STATUSES = ["confirmed", "pending", "checked_in", "checked_out"]
 
 
 def _strip_id(doc: Dict[str, Any]) -> Dict[str, Any]:
+    from core.sensitive import drop_ciphertext
+
     doc.pop("_id", None)
-    return to_jsonable(doc)
+    return to_jsonable(drop_ciphertext(doc))
 
 
 # ─────────────────────────────────────────────
@@ -506,7 +508,9 @@ async def call_detail(call_id: str, tp: TenantPrincipal = Depends(_staff)):
     doc = await scoped_db(tp.tenant).calls.find_one({"call_id": call_id})
     if not doc:
         raise HTTPException(404, "Call not found")
-    return to_jsonable(_strip_id(doc))
+    from core.sensitive import unseal
+
+    return _strip_id(unseal(doc))
 
 
 @protected.get("/messages")

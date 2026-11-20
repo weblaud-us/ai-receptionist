@@ -23,6 +23,8 @@ from core.timeutils import business_now
 from database.mongodb import get_db
 
 UNASSIGNED_MESSAGE = "Sorry, this number isn't set up yet. Please try again later. Goodbye."
+# Deepgram Nova-3 keyterm prompting takes a bounded list (⚠ VERIFY the current limit); names first.
+MAX_KEYTERMS = 100
 
 
 def _language_base(language: str) -> str:
@@ -93,7 +95,7 @@ class VoiceProfile:
     def keyterms(self) -> tuple[str, ...]:
         """Words STT should expect: business and agent names, vertical vocabulary, service names."""
         spec = get_vertical(self.tenant.vertical)
-        words = [self.tenant.name, self.tenant.agent.name, *spec.keyterms]
+        words = [self.tenant.name, self.tenant.agent.name, *spec.keyterms, *self.tenant.agent.stt_keyterms]
         words += [s["name"] for s in self.snapshot.services[:20] if s.get("name")]
         words += [r["name"] for r in self.snapshot.resources[:20] if r.get("name")]
         seen: set[str] = set()
@@ -102,11 +104,15 @@ class VoiceProfile:
             if w and w.lower() not in seen:
                 seen.add(w.lower())
                 out.append(w)
-        return tuple(out)
+        return tuple(out[:MAX_KEYTERMS])
 
     @property
     def greeting_text(self) -> str:
         return self.tenant.greeting_text()
+
+    def greeting_for(self, now: Optional[datetime] = None) -> str:
+        """The greeting for a call starting at `now` (dental: lunch break / closed / overflow)."""
+        return self.tenant.greeting_text(business_now(self.tenant.timezone, now))
 
     def transfer_open(self, now: Optional[datetime] = None) -> bool:
         """True when transfer_to_human may ring staff right now (business-local time)."""

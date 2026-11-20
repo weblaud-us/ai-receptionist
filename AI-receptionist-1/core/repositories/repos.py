@@ -89,6 +89,10 @@ class OwnerFeedbackRepo(TenantRepo):
     collection = "owner_feedback"          # Phase 7: the owner's 1–10 scores
 
 
+class RecallsRepo(TenantRepo):
+    collection = "recalls"                 # dental patient recall: one row per patient per recall cycle
+
+
 # Hotel vertical plug-in collections (pre-Phase-2 shapes, now with tenant_id)
 class RoomsRepo(TenantRepo):
     collection = "rooms"
@@ -120,6 +124,7 @@ class Repos:
         self.audit = AuditLogRepo(db, tenant_id)
         self.phone_numbers = PhoneNumbersRepo(db, tenant_id)
         self.feedback = OwnerFeedbackRepo(db, tenant_id)
+        self.recalls = RecallsRepo(db, tenant_id)
         self.rooms = RoomsRepo(db, tenant_id)
         self.bookings = BookingsRepo(db, tenant_id)
 

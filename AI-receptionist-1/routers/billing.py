@@ -103,7 +103,7 @@ async def get_billing(tp: TenantPrincipal = Depends(_staff_any)):
         "limits": t.limits.model_dump(), "overage_usd_per_min": plans.OVERAGE_USD_PER_MIN,
         "currency": plans.billing_currency(t.currency),
         "overage_per_min": plans.OVERAGE_PER_MIN.get(plans.billing_currency(t.currency), plans.OVERAGE_USD_PER_MIN),
-        "catalogue": plans.catalogue(t.currency), "can_manage": tp.can("owner"),
+        "catalogue": plans.catalogue(t.currency, t.vertical), "can_manage": tp.can("owner"),
     }
 
 
@@ -122,8 +122,11 @@ async def checkout(body: CheckoutBody, request: Request, tp: TenantPrincipal = D
         raise HTTPException(503, "Billing isn't configured on this server")
     plan = plans.get_plan(body.plan)
     price = plans.price_id(body.plan, body.interval)
-    if plan is None or not plan.self_serve or not price:
+    if plan is None or not plan.self_serve or not price or not plans.plan_allowed(plan, t.vertical):
         raise HTTPException(422, "That plan isn't available — contact us for custom plans")
+    setup_price = plans.setup_fee_price(plan.key) if (plan.setup_fee_required or body.setup_fee) else ""
+    if plan.setup_fee_required and not setup_price:
+        raise HTTPException(422, "That plan isn't available yet — contact us to get started")
     if b.stripe_subscription_id and t.status in ("trial", "active", "past_due"):
         # A live subscription changes plan in the Portal (Stripe prorates); never a second subscription.
         raise HTTPException(409, "You already have a subscription — change plan from 'Manage billing'")
@@ -141,7 +144,7 @@ async def checkout(body: CheckoutBody, request: Request, tp: TenantPrincipal = D
             customer_id=customer_id, tenant_id=t.id, price=price, trial_days=trial_days,
             currency=plans.billing_currency(t.currency),
             overage_price=settings.STRIPE_PRICE_OVERAGE.strip(),
-            setup_fee_price=settings.STRIPE_PRICE_SETUP_FEE.strip() if body.setup_fee else "",
+            setup_fee_price=setup_price,
             success_url=lifecycle.dashboard("/onboarding?checkout=success"),
             cancel_url=lifecycle.dashboard("/billing?checkout=cancelled"),
             attempt=secrets.token_hex(4))

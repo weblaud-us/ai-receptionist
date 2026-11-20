@@ -1,0 +1,30 @@
+{
+  "id": "seed_dental_after_hours_invisalign",
+  "title": "After-hours Invisalign enquiry: qualifies it and texts the online booking link when asked",
+  "vertical": "dental",
+  "tenant": {
+    "name": "Harbour Smiles Dental",
+    "vertical": "dental",
+    "timezone": "Australia/Sydney",
+    "country": "AU",
+    "currency": "AUD",
+    "description": "Cosmetic and implant dentistry.",
+    "hours": [],
+    "links": {"booking": "https://book.example.com/harbour-smiles"},
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [
+      {"name": "Invisalign consultation", "duration_min": 30, "category": "cosmetic", "estimated_value_minor": 650000,
+       "price": {"amount": 0, "currency": "AUD", "display": "free"}}
+    ],
+    "knowledge": []
+  },
+  "caller_turns": [
+    "Hi, I know it's late, I'm interested in Invisalign. Can I book a consultation somehow?",
+    "Yes please, text me the booking link to this number."
+  ],
+  "expect": {
+    "intent": "Confirms the booking link has been texted (or, if sending failed, offers another way such as a callback). Does not claim the practice is open right now.",
+    "must_call": ["send_info_link"],
+    "must_not_call": ["book_appointment"]
+  }
+}

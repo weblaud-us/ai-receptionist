@@ -33,6 +33,22 @@ set -a
 set +a
 export TAG DEPLOY_ENV ENV_FILE
 
+# Regional stacks (deploy/regions/): the env file's DEPLOYMENT_REGION is where the data lives. The
+# .deploy file names the region the host is in; a mismatch would put AU or UK health data in the wrong
+# region, so refuse it. Environments named *-au / *-uk must say which region they are.
+env_region="$( { grep -E '^[[:space:]]*DEPLOYMENT_REGION=' "$ENV_FILE" || true; } | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
+if [ -n "${DEPLOYMENT_REGION:-}" ] && [ "$env_region" != "$DEPLOYMENT_REGION" ]; then
+  echo "DEPLOYMENT_REGION is '${env_region}' in $ENV_FILE but '${DEPLOYMENT_REGION}' in $DEPLOY_FILE" >&2
+  exit 1
+fi
+case "$DEPLOY_ENV" in
+  *-au) [ "$env_region" = "ap-southeast-2" ] || { echo "$DEPLOY_ENV must run with DEPLOYMENT_REGION=ap-southeast-2" >&2; exit 1; } ;;
+  *-uk) [ "$env_region" = "eu-west-2" ] || { echo "$DEPLOY_ENV must run with DEPLOYMENT_REGION=eu-west-2" >&2; exit 1; } ;;
+esac
+DEPLOYMENT_REGION="${env_region:-global}"
+export DEPLOYMENT_REGION
+echo "==> Region: ${DEPLOYMENT_REGION}"
+
 dc() { docker compose -p "receptionist-${DEPLOY_ENV}" -f docker-compose.prod.yml "$@"; }
 
 # The legacy Twilio Media Streams path keeps each call's state in the API process that answered
@@ -71,6 +87,7 @@ echo "==> [2/6] Database migrations (idempotent)"
 dc up -d --wait redis
 dc run --rm --no-deps jobs python -m migrations.m0002_indexes
 dc run --rm --no-deps jobs python -m migrations.m0004_encrypt_guest_ids --apply
+dc run --rm --no-deps jobs python -m migrations.m0005_encrypt_clinical_text --apply
 
 echo "==> [3/6] Jobs worker"
 dc up -d --wait --no-deps jobs

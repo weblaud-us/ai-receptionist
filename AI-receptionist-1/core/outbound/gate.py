@@ -39,6 +39,10 @@ WINDOW_SEARCH_DAYS = 8
 PERMANENT = frozenset({
     "internal_dnc", "country_not_allowed", "state_blocked", "state_unknown", "line_type_not_allowed",
     "registry_listed", "no_consent", "consent_not_written", "max_attempts", "timezone_unknown",
+    "wrong_campaign_type",
+    # patient reactivation
+    "opted_out", "not_mobile", "no_consent_basis", "consent_expired", "not_lapsed", "has_future_booking",
+    "recall_disabled", "voice_disabled", "pms_marketing_opt_out",
 })
 
 
@@ -142,6 +146,10 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
         failures.append(code)
         if retry_at is not None:
             retry.append(retry_at)
+
+    # 0. This gate is for the sales dialer only; patient recall has its own (evaluate_recall).
+    if str(campaign.get("campaign_type") or "sales_outbound") != "sales_outbound":
+        fail("campaign_type", "wrong_campaign_type", "only sales_outbound campaigns use the sales gate")
 
     # 1. Our own do-not-call list
     if facts.internal_dnc or lead.get("status") == "dnc":
@@ -258,4 +266,158 @@ async def run_gate(db: Any, lead: Dict[str, Any], campaign: Mapping[str, Any], n
                       "dnc.national": "registry_listed" in decision.failures,
                       "dnc.internal": "internal_dnc" in decision.failures},
              "$push": {"gate_log": {"$each": [doc], "$slice": -GATE_LOG_MAX}}})
+    return decision
+
+
+# ── Patient reactivation (dental recall) ─────────────────────────────────────
+#
+# Pure, like `evaluate`: the recall row, the practice's settings, what was looked up, the clock.
+# Fails closed: an unknown country, no consent basis, an unknown last visit, outside the sending
+# hours, a text in the last 30 days all block the send.
+
+@dataclass(frozen=True)
+class RecallFacts:
+    opted_out: bool = False                    # core/compliance/optout.is_opted_out (tenant + platform)
+    explicit_opt_in_at: Optional[datetime] = None   # the patient said yes to recall texts
+    pms_marketing_consent: Optional[bool] = None    # the PMS's own SMS-marketing flag; False = refused
+    last_recall_sent_at: Optional[datetime] = None  # any recall text to this number, any cycle
+    explicit_voice_consent_at: Optional[datetime] = None
+    registry_hits: tuple[str, ...] = ()
+    registry_status: Mapping[str, str] = field(default_factory=dict)
+
+
+def _months_ago(now: datetime, months: int) -> datetime:
+    return now - timedelta(days=round(months * 30.44))
+
+
+def recall_window_open(window: Mapping[str, Any], tz: str, now: datetime) -> bool:
+    """Inside the practice's sending hours (local time), which can never pass 08:00–20:00 or Sunday."""
+    try:
+        local = now.astimezone(ZoneInfo(tz))
+    except Exception:
+        return False
+    if local.isoweekday() == 7:
+        return False
+    span = window.get("saturday") if local.isoweekday() == 6 else window.get("weekday")
+    if not span:
+        return False
+    start = max(_hhmm(span[0]), _hhmm(rules.RECALL_HARD_START))
+    end = min(_hhmm(span[1]), _hhmm(rules.RECALL_HARD_END))
+    return start <= local.time() < end
+
+
+def next_recall_window(window: Mapping[str, Any], tz: str, now: datetime) -> Optional[datetime]:
+    probe = now.replace(second=0, microsecond=0)
+    probe += timedelta(minutes=5 - probe.minute % 5)
+    for _ in range(int(timedelta(days=WINDOW_SEARCH_DAYS) / WINDOW_SEARCH_STEP)):
+        if recall_window_open(window, tz, probe):
+            return probe
+        probe += WINDOW_SEARCH_STEP
+    return None
+
+
+def consent_basis(country: str, facts: RecallFacts, last_visit: Optional[datetime], now: datetime) -> Optional[str]:
+    """The lawful basis for one recall text, or None.
+    AU: express opt-in, or inferred consent from an existing patient relationship (Spam Act).
+    GB: express opt-in, or PECR soft opt-in (existing patient, similar routine care, opt-out offered)."""
+    if facts.pms_marketing_consent is False:
+        return None
+    if facts.explicit_opt_in_at is not None or facts.pms_marketing_consent is True:
+        return "explicit_opt_in"
+    if last_visit is not None and last_visit >= _months_ago(now, rules.INFERRED_MAX_MONTHS):
+        return rules.INFERRED_CONSENT_BASIS.get(country)
+    return None
+
+
+def evaluate_recall(recall: Mapping[str, Any], settings_: Mapping[str, Any], *, country: str, tz: str,
+                    facts: RecallFacts, now: datetime, channel: str = "sms") -> GateDecision:
+    checks: Dict[str, str] = {}
+    failures: List[str] = []
+    retry: List[datetime] = []
+    phone = str(recall.get("phone") or "")
+    last_visit = _aware(recall.get("last_visit_at"))
+    interval = int(settings_.get("recall_interval_months") or 6)
+    attempts = len(recall.get("attempts") or [])
+
+    def fail(check: str, code: str, detail: str, *, retry_at: Optional[datetime] = None) -> None:
+        checks[check] = f"fail: {detail}"
+        failures.append(code)
+        if retry_at is not None:
+            retry.append(retry_at)
+
+    if not settings_.get("enabled"):
+        fail("enabled", "recall_disabled", "patient recall is switched off")
+    if country not in rules.RECALL_COUNTRIES:
+        fail("market", "country_not_allowed", f"patient recall isn't set up for {country or 'an unknown country'}")
+    else:
+        checks["market"] = "pass"
+    if facts.opted_out:
+        fail("opt_out", "opted_out", "the patient opted out")
+    elif facts.pms_marketing_consent is False:
+        fail("opt_out", "pms_marketing_opt_out", "the practice system says no marketing texts")
+    else:
+        checks["opt_out"] = "pass"
+    if channel == "sms" and not rules.is_mobile(phone, country):
+        fail("mobile", "not_mobile", "no valid mobile number")
+    else:
+        checks["mobile"] = "pass" if channel == "sms" else "n/a"
+
+    # Lapsed: the last completed visit is old enough, and nothing is booked.
+    if last_visit is None:
+        fail("lapsed", "not_lapsed", "last visit unknown")
+    elif last_visit > _months_ago(now, interval):
+        fail("lapsed", "not_lapsed", f"seen within the last {interval} months")
+    elif recall.get("has_future_booking"):
+        fail("lapsed", "has_future_booking", "already has an appointment booked")
+    else:
+        checks["lapsed"] = "pass"
+
+    basis = consent_basis(country, facts, last_visit, now)
+    if basis is None or basis not in rules.RECALL_CONSENT_BASES.get(country, ()):
+        expired = last_visit is not None and last_visit < _months_ago(now, rules.INFERRED_MAX_MONTHS)
+        fail("consent", "consent_expired" if expired else "no_consent_basis",
+             f"no consent basis (last visit over {rules.INFERRED_MAX_MONTHS} months ago)" if expired
+             else "no consent basis")
+    else:
+        checks["consent"] = f"pass: {basis}"
+
+    # Voice (off by default): the practice must allow it, and the number must clear the register
+    # unless the patient gave express consent to calls.
+    if channel == "voice":
+        if not settings_.get("voice_enabled"):
+            fail("voice", "voice_disabled", "voice recall is switched off")
+        elif facts.explicit_voice_consent_at is None:
+            if facts.registry_hits:
+                fail("registry", "registry_listed", "listed on " + ", ".join(facts.registry_hits))
+            else:
+                required = rules.VOICE_RECALL_REGISTRIES.get(country, ())
+                not_ready = [n for n in required if facts.registry_status.get(n) != "fresh"]
+                if not_ready:
+                    fail("registry", "registry_not_ready", ", ".join(not_ready) + " not loaded or stale",
+                         retry_at=now + RETRY_REGISTRY)
+                else:
+                    checks["registry"] = "pass"
+        else:
+            checks["registry"] = "pass: express voice consent"
+
+    # Frequency: one text per 30 days per patient, two per cycle.
+    last_sent = _aware(facts.last_recall_sent_at)
+    if attempts >= rules.RECALL_MAX_ATTEMPTS:
+        fail("frequency", "max_attempts", f"already sent {attempts} recall texts this cycle")
+    elif last_sent is not None and last_sent > now - timedelta(days=rules.RECALL_MIN_GAP_DAYS):
+        fail("frequency", "too_soon", "a recall text went out in the last 30 days",
+             retry_at=last_sent + timedelta(days=rules.RECALL_MIN_GAP_DAYS))
+    else:
+        checks["frequency"] = "pass"
+
+    window = settings_.get("send_window") or {}
+    if not recall_window_open(window, tz, now):
+        fail("sending_hours", "outside_hours", "outside the practice's sending hours",
+             retry_at=next_recall_window(window, tz, now) or now + timedelta(days=1))
+    else:
+        checks["sending_hours"] = "pass"
+
+    decision = GateDecision(allowed=not failures, failures=failures, checks=checks, at=now,
+                            mode=f"patient_reactivation_{channel}", retry_at=max(retry) if retry and failures else None)
+    decision.checks["consent_basis"] = basis or ""
     return decision

@@ -2,7 +2,7 @@ from core.prompts.verticals import ALWAYS, SCHEDULING_TOOLS, VerticalSpec, _labe
 
 SPEC = VerticalSpec(
     key="clinic",
-    label="Clinic, dental or therapy practice",
+    label="Clinic or therapy practice",
     description="Appointments, new-patient intake, no medical advice. ⚠ US healthcare needs signed BAAs first.",
     rules="""# Clinic rules
 - You schedule and answer practical questions only. Never give medical, dental or clinical advice,

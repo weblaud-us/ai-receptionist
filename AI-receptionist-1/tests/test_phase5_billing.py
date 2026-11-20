@@ -106,8 +106,14 @@ def test_cost_model_and_margins_match_the_roadmap():
     cpm = costs.per_minute()
     assert 0.040 <= cpm["mid"] <= 0.050
     assert costs.per_minute(recording=True)["mid"] > cpm["mid"]
-    margins = {p["key"]: p["margin_pct"] for p in costs.model()["plans"]}
+    rows = costs.model()["plans"]
+    margins = {p["key"]: p["margin_pct"] for p in rows if not plans.PLANS[p["key"]].verticals}
     assert all(82 <= m <= 88 for m in margins.values()), margins
+    # Vertical plans (dental retainers) are priced as premium plans, costed on their market (AU).
+    dental = {p["key"]: p for p in rows if plans.PLANS[p["key"]].verticals}
+    assert set(dental) == {"dental_essentials", "dental_pro"}
+    assert all(p["cost_country"] == "AU" and p["margin_pct"] >= 85 for p in dental.values()), dental
+    assert costs.per_minute(country="AU")["mid"] > cpm["mid"]
     assert plans.PLANS["growth"].annual_usd == 149 * 10
     assert costs.call_cost_usd(120) == pytest.approx(2 * cpm["mid"], abs=1e-4)
 

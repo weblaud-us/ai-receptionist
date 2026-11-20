@@ -122,8 +122,14 @@ async def sms_inbound(request: Request) -> Response:
     db = get_db()
     if kind == "stop":
         await optout.record_opt_out(db, sender, channel="sms", source=f"sms:{mask_phone(to)}", tenant_id=tenant_id)
+        from core.services import reactivation
+
+        # Dental recall: nothing queued for this number may go out after a STOP.
+        await reactivation.cancel_for_phone(db, sender, tenant_id=tenant_id)
     elif kind == "start":
         await optout.record_opt_in(db, sender, channel="sms", tenant_id=tenant_id)
     if kind == "help" or settings.SMS_OPTOUT_REPLY:
+        if kind == "stop" and tenant is not None and tenant.vertical == "dental":
+            return _sms_reply(f"You've been unsubscribed from {tenant.name} reminders.")
         return _sms_reply(optout.reply_for(kind, tenant.name if tenant else ""))
     return _sms_reply("")

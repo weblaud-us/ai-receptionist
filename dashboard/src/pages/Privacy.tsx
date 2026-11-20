@@ -21,6 +21,8 @@ import {
   type LegalStatus,
   type SubjectSummary,
 } from '@/lib/compliance'
+import { useTenant } from '@/lib/tenant'
+import { useUpdateSettings } from '@/lib/tenant-hooks'
 
 const KIND_LABEL: Record<string, string> = {
   contacts: 'Contact record',
@@ -304,6 +306,52 @@ function RequestLog() {
   )
 }
 
+const PRESETS = [30, 60, 90] as const
+
+/**
+ * Dental practices: one-click retention presets (UK GDPR storage limitation, APP 11.2). Recordings and
+ * transcripts hold health details, so the defaults are short; enquiry leads are kept a year.
+ */
+function DentalRetention() {
+  const { ctx, can } = useTenant()
+  const update = useUpdateSettings()
+  if (!ctx || ctx.vertical.key !== 'dental') return null
+  const agent = ctx.tenant.agent
+  const privacy = ctx.tenant.privacy ?? { encrypt_clinical_text: true, lead_retention_days: 365 }
+  const save = (changes: Record<string, unknown>, what: string) =>
+    update.mutate(changes, { onSuccess: () => toast.success(`${what} updated`) })
+  const row = (label: string, current: number, options: readonly number[], onPick: (d: number) => void) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="w-40 text-muted-foreground">{label}</div>
+      {options.map((d) => (
+        <Button key={d} size="sm" variant={current === d ? 'default' : 'outline'} disabled={!can('owner') || update.isPending}
+          onClick={() => onPick(d)}>
+          {d} days
+        </Button>
+      ))}
+    </div>
+  )
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Health data retention</CardTitle>
+        <CardDescription>
+          Symptoms, treatment notes and call transcripts are stored encrypted. Clinical records belong in your practice
+          system; keep call data here only as long as you use it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {row('Call recordings', agent.recording.retention_days, PRESETS,
+          (d) => save({ agent: { ...agent, recording: { ...agent.recording, retention_days: d } } }, 'Recording retention'))}
+        {row('Transcripts', agent.transcript_retention_days, PRESETS,
+          (d) => save({ agent: { ...agent, transcript_retention_days: d } }, 'Transcript retention'))}
+        {row('Enquiry leads', privacy.lead_retention_days, [90, 180, 365],
+          (d) => save({ privacy: { ...privacy, lead_retention_days: d } }, 'Lead retention'))}
+      </CardContent>
+    </Card>
+  )
+}
+
 /** Phase 6: the business's legal side — DPA, documents, retention, caller data requests, sub-processors. */
 export default function Privacy() {
   const q = useLegal()
@@ -335,6 +383,7 @@ export default function Privacy() {
               <div><div className="text-muted-foreground">After you cancel</div><div className="text-lg font-medium">{legal.retention.after_cancellation_days} days, then deleted</div></div>
             </CardContent>
           </Card>
+          <DentalRetention />
           <SubjectRequests legal={legal} />
           <RequestLog />
           <Card>

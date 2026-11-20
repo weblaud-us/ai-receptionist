@@ -86,3 +86,13 @@ export const URGENCY_STYLE: Record<string, string> = {
   this_week: 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300',
   flexible: 'bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300',
 }
+
+/** Minor units (cents / pence) in the practice's own currency, e.g. 2500000 AUD → "A$25,000". */
+export function formatMinor(amountMinor: number, currency: string, locale: string): string {
+  try {
+    return new Intl.NumberFormat(locale || 'en-AU', { style: 'currency', currency, maximumFractionDigits: 0 })
+      .format(amountMinor / 100)
+  } catch {
+    return `${currency} ${Math.round(amountMinor / 100).toLocaleString()}`
+  }
+}

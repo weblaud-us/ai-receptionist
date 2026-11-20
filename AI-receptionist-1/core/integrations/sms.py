@@ -24,26 +24,35 @@ def configured() -> bool:
 
 
 async def send_sms(to: str, body: str, sender: Optional[str] = None) -> bool:
+    return bool(await send_sms_sid(to, body, sender))
+
+
+async def send_sms_sid(to: str, body: str, sender: Optional[str] = None) -> Optional[str]:
+    """Send one SMS and return Twilio's message SID (for the audit trail), or None. Never raises."""
     if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN):
         logger.info("SMS skipped (Twilio not configured) → %s", mask_phone(to))
-        return False
+        return None
     frm = (sender or settings.TWILIO_SMS_FROM or "").strip()
     if not frm:
         logger.info("SMS skipped (no TWILIO_SMS_FROM) → %s", mask_phone(to))
-        return False
+        return None
     dest = digits(to)
     if len(dest) < 7:
-        return False
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{settings.TWILIO_ACCOUNT_SID}/Messages.json"
+        return None
+    url = f"{settings.twilio_api_base}/2010-04-01/Accounts/{settings.TWILIO_ACCOUNT_SID}/Messages.json"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, data={"To": f"+{dest}", "From": frm, "Body": body[:1500]},
                                      auth=(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN))
         if resp.status_code >= 400:
             logger.error("SMS to %s failed: HTTP %s", mask_phone(to), resp.status_code)
-            return False
+            return None
         logger.info("SMS sent to %s", mask_phone(to))
-        return True
+        try:
+            sid = str(resp.json().get("sid") or "")
+        except ValueError:
+            sid = ""
+        return sid or "sent"
     except Exception:
         logger.error("SMS to %s errored", mask_phone(to), exc_info=True)
-        return False
+        return None

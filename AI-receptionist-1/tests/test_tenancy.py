@@ -183,3 +183,47 @@ def test_repo_requires_tenant_id(db):
 
     with pytest.raises(ValueError):
         R(db, "")
+
+
+# ── Dental vertical ───────────────────────────────────────
+
+def test_dental_vertical_and_old_documents_load_with_defaults():
+    t = TenantConfig.from_doc(_doc(vertical="dental"))
+    assert t.vertical == "dental"
+    assert t.dental.accepts_nhs is False and t.dental.accepts_private_health_funds is False
+    assert t.agent.stt_keyterms == [] and t.agent.recording.announce_text == ""
+    old = TenantConfig.from_doc(_doc())                       # a pre-dental document: nothing new in it
+    assert old.vertical == "clinic" and old.dental.finance_available is False
+
+
+def test_split_shift_hours_close_for_lunch():
+    hours = [HoursEntry(dow=0, open="09:00", close="13:00"), HoursEntry(dow=0, open="14:00", close="17:30")]
+    t = TenantConfig.from_doc(_doc(vertical="dental", hours=[h.model_dump() for h in hours]))
+    tz = ZoneInfo("America/Chicago")
+    monday = lambda h, m: datetime(2026, 11, 23, h, m, tzinfo=tz)   # noqa: E731
+    assert t.is_open(monday(12, 50)) and not t.is_open(monday(13, 30))
+    assert t.is_open(monday(14, 15)) and not t.is_open(monday(17, 45))
+
+
+def test_stt_keyterms_and_recording_notice_are_cleaned_and_capped():
+    t = TenantConfig.from_doc(_doc(agent={"stt_keyterms": ["  Invisalign ", "invisalign", "", "x" * 80] +
+                                                          [f"term{i}" for i in range(80)],
+                                          "recording": {"enabled": True, "announce_text": "  Calls are recorded  for training. "}}))
+    terms = t.agent.stt_keyterms
+    assert terms[0] == "Invisalign" and terms.count("Invisalign") == 1 and len(terms) == 50
+    assert all(len(w) <= 40 for w in terms)
+    assert t.agent.recording.announce_text == "Calls are recorded for training."
+    assert "Calls are recorded for training." in t.greeting_text()
+    plain = TenantConfig.from_doc(_doc(agent={"recording": {"enabled": True}}))
+    assert "This call may be recorded." in plain.greeting_text()
+
+
+async def test_dental_tenants_start_with_lunch_break_hours_and_dental_services(db):
+    from core.services.tenant_admin import create_tenant
+
+    t = await create_tenant(name="Harbour Smiles", vertical="dental", timezone="Australia/Sydney", country="AU",
+                            currency="AUD", tenant_id="ten_dent")
+    monday = [(h.open, h.close) for h in t.hours_for(0)]
+    assert monday == [("09:00", "13:00"), ("14:00", "17:30")] and not t.hours_for(5)
+    services = await Repos(db, t.id).services.find({})
+    assert {s["category"] for s in services} >= {"implant", "cosmetic", "emergency", "routine"}

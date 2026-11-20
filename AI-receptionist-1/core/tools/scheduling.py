@@ -128,13 +128,16 @@ async def check_availability(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[s
         return {"error": "party_too_large",
                 "message": f"Parties over {ctx.tenant_cfg.scheduling.max_party_size} need the manager — take a message."}
 
-    slots = await svc.find_slots(service=service, day_from=day, day_to=day_to, resource=resource,
-                                 requested_at=requested, now=ctx.now, party_size=int(party) if party else None)
+    try:
+        slots = await svc.find_slots(service=service, day_from=day, day_to=day_to, resource=resource,
+                                     requested_at=requested, now=ctx.now, party_size=int(party) if party else None)
+        later = [] if slots else await svc.find_slots(       # look ahead a week: offer something, not a dead end
+            service=service, day_from=day_to + timedelta(days=1), day_to=day_to + timedelta(days=7),
+            resource=resource, now=ctx.now, party_size=int(party) if party else None)
+    except SchedulingError as e:            # e.g. the practice's diary (PMS) isn't answering
+        return {"error": e.code, "message": e.message}
     by_id = {r["_id"]: r for r in resources}
     if not slots:
-        # Look ahead a week so the agent can offer something instead of a dead end.
-        later = await svc.find_slots(service=service, day_from=day_to + timedelta(days=1), day_to=day_to + timedelta(days=7),
-                                     resource=resource, now=ctx.now, party_size=int(party) if party else None)
         return {"available": False, "slots": [],
                 "alternatives": [{"slot_id": s.slot_id, "say": svc.describe(s, by_id, today=today)} for s in later],
                 "message": "Nothing free then. Offer the alternatives, or another day."}

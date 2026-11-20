@@ -13,6 +13,7 @@ import { duration } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { OUTCOME_LABEL, OUTCOME_STYLE, zoneDateTime } from '@/lib/tenant-format'
 import { useOverview } from '@/lib/tenant-hooks'
+import { DentalRoiCard } from '@/components/app/dental-roi'
 import { cn } from '@receptionist/shared/lib/utils'
 
 function Stat({ label, value, sub, icon, to }: { label: string; value: ReactNode; sub?: ReactNode; icon: ReactNode; to?: string }) {
@@ -72,6 +73,7 @@ export default function TenantOverview() {
       {q.isLoading && <Skeleton className="h-64" />}
       {d && (
         <div className="space-y-4">
+          {ctx.vertical.key === 'dental' && !ctx.legacy && <DentalRoiCard />}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Stat label="Calls today" value={d.calls_today} icon={<PhoneCall className="size-4" />} to="/calls"
               sub={d.handled_rate_pct != null ? `${d.handled_rate_pct}% handled in the last 30 days` : undefined} />

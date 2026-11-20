@@ -16,6 +16,18 @@ What the assistant did for a business: the pilot scorecard (Roadmap Task 7.1) an
 | latency_p50_s                | median of each call's median response time                              |
 | unanswered_questions         | questions it couldn't answer — the to-do list for the knowledge base     |
 | satisfaction                 | the owner's latest 1–10 score (POST /t/feedback)                        |
+
+Dental practices also get a `dental` block (the ROI a monthly retainer is sold on):
+
+| Metric                          | How it's counted                                                    |
+|---------------------------------|---------------------------------------------------------------------|
+| overflow_calls_answered         | answered calls in a lunch break, after hours, or forwarded because reception was busy (`answer_window` / `overflow` on the call; older calls: `after_hours`) |
+| by_window                       | the same, split into lunch_break / after_hours / busy_overflow       |
+| consultations_booked            | AI-made, not-cancelled appointments for a cosmetic or implant service |
+| emergency_triages_captured      | `dental_emergency` leads                                             |
+| cosmetic_leads                  | `cosmetic_consult` leads (qualified implant and cosmetic enquiries)  |
+| missed_call_sms_recoveries      | missed-call texts sent (`calls.recovery_sent_at`)                    |
+| estimated_pipeline_value_minor  | booked consultations × their service's estimated value, plus qualified leads' values, never counting a lead and a booking from the same call twice; minor units of `currency` |
 """
 
 from __future__ import annotations
@@ -31,6 +43,7 @@ from core.timeutils import business_now
 
 NOT_ANSWERED = frozenset({"unassigned", "busy", "unavailable"})
 MAX_CALLS = 50_000
+HIGH_VALUE_CATEGORIES = ("cosmetic", "implant")
 
 
 def utcnow() -> datetime:
@@ -56,7 +69,7 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
     calls = await repos.calls.find(
         {"started_at": q_time, "direction": {"$ne": "outbound"}}, limit=MAX_CALLS,
         projection={"outcome": 1, "after_hours": 1, "transfer": 1, "latency": 1, "duration_s": 1, "channel": 1,
-                    "started_at": 1})
+                    "started_at": 1, "answer_window": 1, "overflow": 1, "recovery_sent_at": 1})
     answered = [c for c in calls if (c.get("channel") or "phone") == "phone" and c.get("outcome") not in NOT_ANSWERED]
     if tenant.answering_mode in ("overflow", "after_hours"):
         missed = len(answered)
@@ -71,7 +84,7 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
 
     appts = await repos.appointments.find(
         {"created_at": q_time, "source": {"$nin": ["dashboard", "import"]}}, limit=MAX_CALLS,
-        projection={"price": 1, "status": 1})
+        projection={"price": 1, "status": 1, "service_id": 1, "call_id": 1})
     value_cents = 0
     for a in appts:
         price = a.get("price") or {}
@@ -91,7 +104,9 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
             by_day[day] = by_day.get(day, 0) + 1
 
     fb = await latest_feedback(db, tenant.id)
+    dental = await _dental_report(repos, tenant, q_time, calls, answered, appts) if tenant.vertical == "dental" else None
     return {
+        **({"dental": dental} if dental is not None else {}),
         "since": since, "until": until, "answering_mode": tenant.answering_mode,
         "calls_answered": len(answered), "minutes": minutes,
         "would_have_missed": missed,
@@ -104,6 +119,71 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
         "satisfaction": ({"score": fb.get("score"), "at": fb.get("at"), "comment": fb.get("comment", "")} if fb else None),
         "by_day": [{"day": d, "calls": n} for d, n in sorted(by_day.items())],
     }
+
+
+def call_window(c: Dict[str, Any]) -> Optional[str]:
+    """lunch_break | after_hours | busy_overflow for a call the business couldn't have taken, else None."""
+    if c.get("overflow") is True:
+        return "busy_overflow"
+    window = c.get("answer_window")
+    if window in ("lunch_break", "after_hours"):
+        return str(window)
+    if window is None and c.get("after_hours") is True:          # calls from before answer_window existed
+        return "after_hours"
+    return None
+
+
+async def _dental_report(repos: Repos, tenant: TenantConfig, q_time: Dict[str, Any], calls: List[Dict[str, Any]],
+                         answered: List[Dict[str, Any]], appts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_window = {"lunch_break": 0, "after_hours": 0, "busy_overflow": 0}
+    for c in answered:
+        w = call_window(c)
+        if w:
+            by_window[w] += 1
+    services = {s["_id"]: s for s in await repos.services.find(
+        {}, limit=1000, projection={"category": 1, "estimated_value_minor": 1})}
+    consult_value = 0
+    consult_calls = set()
+    consultations = 0
+    for a in appts:
+        svc = services.get(a.get("service_id")) or {}
+        if a.get("status") == "cancelled" or svc.get("category") not in HIGH_VALUE_CATEGORIES:
+            continue
+        consultations += 1
+        if a.get("call_id"):
+            consult_calls.add(a["call_id"])
+        if isinstance(svc.get("estimated_value_minor"), int):
+            consult_value += svc["estimated_value_minor"]
+    leads = await repos.leads.find({"created_at": q_time, "kind": {"$in": ["dental_emergency", "cosmetic_consult"]}},
+                                   limit=MAX_CALLS, projection={"kind": 1, "estimated_value_minor": 1, "call_id": 1})
+    cosmetic = [x for x in leads if x.get("kind") == "cosmetic_consult"]
+    lead_value = sum(int(x["estimated_value_minor"]) for x in cosmetic
+                     if isinstance(x.get("estimated_value_minor"), int)
+                     and not (x.get("call_id") and x["call_id"] in consult_calls))   # booked: counted once, above
+    return {
+        "overflow_calls_answered": sum(by_window.values()),
+        "by_window": by_window,
+        "consultations_booked": consultations,
+        "emergency_triages_captured": sum(1 for x in leads if x.get("kind") == "dental_emergency"),
+        "cosmetic_leads": len(cosmetic),
+        "missed_call_sms_recoveries": sum(1 for c in calls if c.get("recovery_sent_at")),
+        **(await _recall_stats(repos, tenant, q_time)),
+        "estimated_pipeline_value_minor": consult_value + lead_value,
+        "currency": tenant.currency,
+    }
+
+
+async def _recall_stats(repos: Repos, tenant: TenantConfig, q_time: Dict[str, Any]) -> Dict[str, int]:
+    from core.services import reactivation
+
+    return await reactivation.stats(tenant, q_time["$gte"], q_time["$lt"], db=repos.db)
+
+
+def money_minor(amount_minor: int, currency: str) -> str:
+    """12345600, AUD -> "A$123,456" (whole units; for reports, not invoices)."""
+    symbol = {"AUD": "A$", "GBP": "£", "USD": "$", "EUR": "€", "NZD": "NZ$", "CAD": "C$"}.get(currency.upper(), "")
+    units = f"{amount_minor / 100:,.0f}"
+    return f"{symbol}{units}" if symbol else f"{units} {currency}"
 
 
 def period_for(days: int, now: Optional[datetime] = None) -> tuple[datetime, datetime]:
@@ -136,6 +216,22 @@ def report_text(tenant: TenantConfig, r: Dict[str, Any], title: str, *, unanswer
             lines.append(f"• {r['handled_without_human_pct']:.0f}% handled start to finish without your team")
         if r["latency_p50_s"] is not None:
             lines.append(f"• Typical response time: {r['latency_p50_s']:.1f} seconds")
+        d = r.get("dental")
+        if d:
+            w = d["by_window"]
+            lines += ["", "For your practice:",
+                      f"• {d['overflow_calls_answered']} calls answered while reception couldn't "
+                      f"({w['lunch_break']} at lunch, {w['after_hours']} after hours, {w['busy_overflow']} while busy)",
+                      f"• {d['consultations_booked']} implant and cosmetic consultations booked",
+                      f"• {d['cosmetic_leads']} treatment enquiries qualified for your coordinator",
+                      f"• {d['emergency_triages_captured']} dental emergencies triaged",
+                      f"• {d['missed_call_sms_recoveries']} missed callers texted a booking link"]
+            if d.get("recall_texts_sent"):
+                lines.append(f"• {d['recall_texts_sent']} overdue patients sent a recall text, "
+                             f"{d['reactivation_bookings_attributed']} booked within 14 days")
+            if d["estimated_pipeline_value_minor"]:
+                lines.append("• Estimated treatment pipeline: "
+                             + money_minor(d["estimated_pipeline_value_minor"], d["currency"]))
     if unanswered:
         lines += ["", "Questions it couldn't answer — add the answers in Knowledge and it will next time:"]
         lines += [f"  – {q}" for q in unanswered[:10]]

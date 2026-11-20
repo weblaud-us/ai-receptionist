@@ -7,7 +7,15 @@ import { api } from '@receptionist/shared/lib/api'
 
 const NO_TENANT = { tenant: null } as const
 
-export type Vertical = 'home_services' | 'salon' | 'restaurant' | 'hotel' | 'clinic' | 'professional' | 'generic'
+export type Vertical =
+  | 'home_services'
+  | 'salon'
+  | 'restaurant'
+  | 'hotel'
+  | 'clinic'
+  | 'dental'
+  | 'professional'
+  | 'generic'
 
 export interface PlatformTenant {
   id: string

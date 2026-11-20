@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@receptionist/shared/c
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { dateOnly, titleCase } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
-import { zoneToday } from '@/lib/tenant-format'
+import { formatMinor, zoneToday } from '@/lib/tenant-format'
 import {
   useExceptionMutations,
   useExceptions,
@@ -25,14 +25,23 @@ import {
   useServiceMutations,
   useServices,
 } from '@/lib/tenant-hooks'
-import type { HoursEntry, Resource, Service } from '@/lib/tenant-types'
+import type { HoursEntry, Resource, Service, ServiceCategory } from '@/lib/tenant-types'
+
+const CATEGORIES: { value: ServiceCategory | ''; label: string }[] = [
+  { value: '', label: 'No category' },
+  { value: 'implant', label: 'Implants' },
+  { value: 'cosmetic', label: 'Cosmetic (aligners, veneers, bonding, whitening)' },
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'routine', label: 'Routine (exams, hygiene)' },
+  { value: 'other', label: 'Other' },
+]
 
 export default function ServicesPage() {
   const ctx = useCtx()
   const L = ctx.vertical.labels
   return (
     <>
-      <PageHeader title={`${L.services} & ${L.resources.toLowerCase()}`}
+      <PageHeader title={ctx.vertical.key === 'dental' ? 'Treatments & fees' : `${L.services} & ${L.resources.toLowerCase()}`}
         description="What callers can book, who does it, and when you're closed. Your assistant reads this on every call." />
       <Tabs defaultValue="services">
         <TabsList>
@@ -58,6 +67,7 @@ function ServicesTab() {
   const m = useServiceMutations()
   const [editing, setEditing] = useState<Partial<Service> | null>(null)
   const names = Object.fromEntries((resources.data?.resources ?? []).map((r) => [r.id, r.name]))
+  const dental = ctx.vertical.key === 'dental'
 
   return (
     <Card className="mt-3 gap-0 py-0">
@@ -76,6 +86,7 @@ function ServicesTab() {
               <TableHead>Name</TableHead>
               <TableHead>Length</TableHead>
               <TableHead>Price</TableHead>
+              {dental && <TableHead>Typical value</TableHead>}
               <TableHead>{L.resources}</TableHead>
               <TableHead>AI can book</TableHead>
               <TableHead />
@@ -87,6 +98,12 @@ function ServicesTab() {
                 <TableCell className="font-medium">{s.name}{!s.active && <Badge variant="outline" className="ml-2">Inactive</Badge>}</TableCell>
                 <TableCell>{s.duration_min} min{s.buffer_min ? ` + ${s.buffer_min} buffer` : ''}</TableCell>
                 <TableCell>{s.price?.display || '—'}</TableCell>
+                {dental && (
+                  <TableCell>
+                    {s.estimated_value_minor ? formatMinor(s.estimated_value_minor, ctx.tenant.currency, ctx.tenant.locale) : '—'}
+                    {s.category && <Badge variant="outline" className="ml-2">{s.category}</Badge>}
+                  </TableCell>
+                )}
                 <TableCell className="text-muted-foreground">{s.resource_ids.length ? s.resource_ids.map((id) => names[id] ?? '?').join(', ') : 'Anyone'}</TableCell>
                 <TableCell>{s.ai_bookable ? 'Yes' : 'No'}</TableCell>
                 <TableCell className="text-right">
@@ -117,7 +134,9 @@ function ServiceDialog({ value, resources, saving, onClose, onSave }: {
   onClose: () => void
   onSave: (body: Record<string, unknown>) => void
 }) {
-  const L = useCtx().vertical.labels
+  const ctx = useCtx()
+  const L = ctx.vertical.labels
+  const dental = ctx.vertical.key === 'dental'
   const [s, setS] = useState(value)
   const set = (patch: Partial<Service>) => setS((prev) => ({ ...prev, ...patch }))
   const ids = s.resource_ids ?? []
@@ -132,6 +151,19 @@ function ServiceDialog({ value, resources, saving, onClose, onSave }: {
           <Field label="Price as callers hear it" hint='e.g. "from $45" — leave empty to not quote' className="sm:col-span-2">
             <Input value={s.price?.display ?? ''} onChange={(e) => set({ price: { ...(s.price ?? {}), display: e.target.value } })} />
           </Field>
+          {dental && (
+            <>
+              <Field label="Category" hint="Implant and cosmetic consultations count towards your pipeline">
+                <SimpleSelect value={s.category ?? ''} options={CATEGORIES}
+                  onChange={(v) => set({ category: (v || null) as ServiceCategory | null })} />
+              </Field>
+              <Field label={`Typical treatment value (${ctx.tenant.currency})`} hint="What one patient is usually worth. Never read to callers">
+                <Input type="number" min={0} step={50}
+                  value={s.estimated_value_minor != null ? s.estimated_value_minor / 100 : ''}
+                  onChange={(e) => set({ estimated_value_minor: e.target.value === '' ? null : Math.round(Number(e.target.value) * 100) })} />
+              </Field>
+            </>
+          )}
           <Field label="Description" className="sm:col-span-2"><Textarea rows={2} value={s.description ?? ''} onChange={(e) => set({ description: e.target.value })} /></Field>
           {resources.length > 0 && (
             <Field label={`Who can do it`} hint="None ticked = anyone" className="sm:col-span-2">
@@ -153,7 +185,8 @@ function ServiceDialog({ value, resources, saving, onClose, onSave }: {
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button disabled={!s.name?.trim() || saving}
             onClick={() => onSave({ name: s.name?.trim(), duration_min: s.duration_min, buffer_min: s.buffer_min, price: s.price?.display ? s.price : null,
-              description: s.description ?? '', resource_ids: ids, ai_bookable: s.ai_bookable, active: s.active })}>
+              description: s.description ?? '', resource_ids: ids, ai_bookable: s.ai_bookable, active: s.active,
+              ...(dental ? { category: s.category ?? null, estimated_value_minor: s.estimated_value_minor ?? null } : {}) })}>
             {saving && <Loader2 className="animate-spin" />} Save
           </Button>
         </DialogFooter>

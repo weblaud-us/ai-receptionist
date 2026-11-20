@@ -2,7 +2,15 @@
 import type { BillingBrief } from './billing'
 
 export type Role = 'owner' | 'admin' | 'staff'
-export type Vertical = 'home_services' | 'salon' | 'restaurant' | 'hotel' | 'clinic' | 'professional' | 'generic'
+export type Vertical =
+  | 'home_services'
+  | 'salon'
+  | 'restaurant'
+  | 'hotel'
+  | 'clinic'
+  | 'dental'
+  | 'professional'
+  | 'generic'
 
 export interface HoursEntry {
   dow: number // 0 = Monday … 6 = Sunday
@@ -22,9 +30,18 @@ export interface AgentConfig {
   llm_model: string
   endpointing: { min_delay: number; max_delay: number }
   ambience: boolean
-  recording: { enabled: boolean; retention_days: number; announce: boolean }
+  recording: { enabled: boolean; retention_days: number; announce: boolean; announce_text?: string }
   max_call_minutes: number
   transcript_retention_days: number
+  stt_keyterms?: string[]
+}
+
+/** Dental vertical settings (AU private health funds, UK NHS / private mix). */
+export interface DentalSettings {
+  accepts_nhs: boolean
+  accepts_new_nhs_patients: boolean
+  accepts_private_health_funds: boolean
+  finance_available: boolean
 }
 
 /** Pages the assistant may text to a caller with send_info_link. */
@@ -104,6 +121,13 @@ export interface Tenant {
   }
   limits: { included_minutes: number; max_concurrent_calls: number }
   hotel: { checkin_time: string; checkout_time: string }
+  dental?: DentalSettings
+  /** One text to callers who hang up without booking (template placeholders: {business} {link} {phone}). */
+  missed_call_recovery?: { enabled: boolean; template: string; channel: 'sms' | 'whatsapp' }
+  /** Registered business, for AU / UK phone-number regulatory bundles. */
+  legal_entity?: { registered_name: string; abn: string; company_number: string }
+  /** Health-data handling. Dental practices always encrypt clinical text. */
+  privacy?: { encrypt_clinical_text: boolean; lead_retention_days: number }
   policies: Record<string, string>
   onboarding: { step?: string; completed_at?: string }
   links: Links
@@ -140,12 +164,17 @@ export interface VerticalInfo {
   default_faqs: { question: string; answer: string }[]
 }
 
+export type ServiceCategory = 'cosmetic' | 'implant' | 'emergency' | 'routine' | 'other'
+
 export interface Service {
   id: string
   name: string
   duration_min: number
   buffer_min: number
   price?: { amount?: number | null; currency?: string | null; display: string } | null
+  /** Typical value of one of these to the business, in minor units of the tenant's currency. */
+  estimated_value_minor?: number | null
+  category?: ServiceCategory | null
   resource_ids: string[]
   ai_bookable: boolean
   description: string
@@ -245,6 +274,12 @@ export interface Lead {
   status: 'new' | 'contacted' | 'won' | 'lost'
   created_at: string
   call_id?: string | null
+  /** Dental leads: 'dental_emergency' | 'cosmetic_consult'. Home-services job requests have none. */
+  kind?: string | null
+  treatment_category?: string | null
+  estimated_value_minor?: number | null
+  currency?: string | null
+  priority?: 'high' | 'normal' | null
 }
 
 export interface KnowledgeItem {

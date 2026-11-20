@@ -21,7 +21,8 @@ from database.mongodb import get_db
 EDITABLE_FIELDS = frozenset({
     "name", "phone", "website", "address", "description", "timezone", "locale", "currency", "country",
     "agent", "hours", "transfer", "emergency_instructions", "notifications", "scheduling", "policies", "hotel",
-    "vertical", "onboarding", "links", "answering_mode",
+    "vertical", "onboarding", "links", "answering_mode", "dental",
+    "missed_call_recovery", "legal_entity", "privacy", "reactivation",
 })
 PLATFORM_FIELDS = frozenset({"status", "limits", "region", "billing", "integrations", "slug", "pilot"})
 
@@ -41,6 +42,23 @@ async def unique_slug(name: str) -> str:
     return slug
 
 
+# Regional English for speech-to-text and the voice (⚠ VERIFY Deepgram Nova-3 still lists these codes).
+# Only applied when a business is created; existing businesses keep what they have.
+LOCALE_FOR_COUNTRY = {"AU": "en-AU", "GB": "en-GB"}
+
+
+def _apply_locale_defaults(doc: Dict[str, Any]) -> None:
+    """AU / UK businesses start with Australian / British English unless the caller chose otherwise."""
+    loc = LOCALE_FOR_COUNTRY.get(str(doc.get("country") or "").upper())
+    if not loc:
+        return
+    doc.setdefault("locale", loc)
+    agent = dict(doc.get("agent") or {})
+    agent.setdefault("language", loc)
+    agent.setdefault("stt_language", loc)
+    doc["agent"] = agent
+
+
 def default_hours_for(vertical: str) -> List[HoursEntry]:
     if vertical == "hotel":
         return [HoursEntry(dow=d, open="00:00", close="24:00") for d in range(7)]
@@ -50,6 +68,10 @@ def default_hours_for(vertical: str) -> List[HoursEntry]:
         # Tuesday–Friday 9–6, Saturday 9–4 (dow 0 = Monday).
         return [HoursEntry(dow=d, open="09:00", close="18:00") for d in range(1, 5)] + \
                [HoursEntry(dow=5, open="09:00", close="16:00")]
+    if vertical == "dental":
+        # Mon–Fri with the reception team's lunch break: the assistant covers 13:00–14:00.
+        return [HoursEntry(dow=d, open=o, close=c)
+                for d in range(5) for o, c in (("09:00", "13:00"), ("14:00", "17:30"))]
     return [HoursEntry(dow=d, open="08:00", close="17:00") for d in range(5)]
 
 
@@ -85,7 +107,11 @@ async def create_tenant(*, name: str, vertical: str = "generic", timezone: str =
         "currency": currency, "phone": phone,
         "hours": [h.model_dump() for h in default_hours_for(vertical)],
     }
+    if vertical == "dental":
+        # Enquiry leads are not clinical records (those live in the practice's own system): keep a year.
+        doc["privacy"] = {"encrypt_clinical_text": True, "lead_retention_days": 365}
     doc.update(extra or {})
+    _apply_locale_defaults(doc)
     tenant = TenantConfig.from_doc(doc)                     # validate before writing
     await TenantsStore(get_db()).insert(tenant.to_doc())
     invalidate()

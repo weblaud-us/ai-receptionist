@@ -73,6 +73,21 @@ export interface Insights {
   unanswered_questions: number
   satisfaction: { score: number; at: string; comment: string } | null
   by_day: { day: string; calls: number }[]
+  /** Dental practices only. */
+  dental?: DentalInsights
+}
+
+export interface DentalInsights {
+  overflow_calls_answered: number
+  by_window: { lunch_break: number; after_hours: number; busy_overflow: number }
+  consultations_booked: number
+  emergency_triages_captured: number
+  cosmetic_leads: number
+  missed_call_sms_recoveries: number
+  estimated_pipeline_value_minor: number
+  currency: string
+  recall_texts_sent?: number
+  reactivation_bookings_attributed?: number
 }
 
 export interface PublicSite {

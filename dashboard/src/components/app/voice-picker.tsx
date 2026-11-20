@@ -10,6 +10,13 @@ interface Props {
   provider: string
   value: string
   onChange: (voiceId: string) => void
+  /** Country of the business: AU puts Australian voices first, GB British ones. */
+  country?: string
+}
+
+const REGIONAL_ACCENT: Record<string, { match: RegExp; label: string }> = {
+  AU: { match: /austral/i, label: 'Australian' },
+  GB: { match: /brit|english|uk\b|scottish|irish|welsh/i, label: 'British' },
 }
 
 function describe(v: Voice): string {
@@ -21,13 +28,20 @@ function describe(v: Voice): string {
  * Voice picker with audio previews (Roadmap Task 2.10). ElevenLabs voices come from the server's
  * catalogue; any other provider, or a server without an ElevenLabs key, falls back to a plain ID.
  */
-export function VoicePicker({ provider, value, onChange }: Props) {
+export function VoicePicker({ provider, value, onChange, country }: Props) {
   const q = useVoices(provider)
   const [custom, setCustom] = useState(false)
   const audio = useRef<HTMLAudioElement | null>(null)
   const [playing, setPlaying] = useState<string | null>(null)
 
-  const voices = useMemo(() => q.data?.voices ?? [], [q.data])
+  const regional = country ? REGIONAL_ACCENT[country] : undefined
+  // Local accents first: callers trust a voice that sounds like their own reception desk.
+  const voices = useMemo(() => {
+    const all = q.data?.voices ?? []
+    if (!regional) return all
+    const local = (v: Voice) => regional.match.test(v.accent ?? '')
+    return [...all.filter(local), ...all.filter((v) => !local(v))]
+  }, [q.data, regional])
   const known = voices.some((v) => v.voice_id === value)
   const selected = voices.find((v) => v.voice_id === value) ?? voices.find((v) => v.voice_id === q.data?.default_voice_id)
 
@@ -70,7 +84,10 @@ export function VoicePicker({ provider, value, onChange }: Props) {
 
   const options = [
     { value: '', label: q.data?.default_voice_id ? 'Default voice' : 'Default voice (provider default)' },
-    ...voices.map((v) => ({ value: v.voice_id, label: describe(v) })),
+    ...voices.map((v) => ({
+      value: v.voice_id,
+      label: regional && regional.match.test(v.accent ?? '') ? `★ ${describe(v)} (${regional.label})` : describe(v),
+    })),
     ...(value && !known ? [{ value, label: `Custom voice ID: ${value}` }] : []),
   ]
   return (

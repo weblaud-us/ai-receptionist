@@ -6,6 +6,13 @@ resource per 5-minute block, under a unique (tenant_id, resource_id, block) inde
 pick the same slot, the database refuses the second claim and that caller is offered the next
 slot. Reads happen in ≤ 3 round trips (services+resources, appointments, exceptions); nothing
 waits on an external calendar inside a call (Task 2.8 caches busy times in `resources.busy_cache`).
+
+Dental practice-management systems (core/services/scheduling_provider.py): when a business has
+connected Cliniko or Dentally, the PMS diary is the system of record. Slots come from the PMS, a
+booking is written there first (after the local slot lock, so two of our calls can't race), then
+mirrored here with `external: {provider, id, patient_id}`. Cancel and reschedule go to the PMS
+too. A slow or failing PMS raises SchedulingError("pms_unavailable"), which tells the assistant
+to take a callback instead.
 """
 
 from __future__ import annotations
@@ -21,6 +28,7 @@ from core.integrations import webhooks
 from core.repositories import Repos
 from core.repositories.base import utcnow
 from core.services import availability as av
+from core.services import scheduling_provider as sp
 from core.tenancy.ids import new_id
 from core.tenancy.models import HoursEntry, TenantConfig
 
@@ -28,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 ACTIVE_STATUSES = ["pending", "confirmed"]
+
+PMS_DOWN = ("The practice diary isn't answering right now. Don't try again: take their name, number and preferred "
+            "time with take_message and say the team will call back to confirm the booking.")
+PMS_UNMAPPED = ("That appointment type can't be booked automatically. Take their details with take_message so the "
+                "team can book it.")
+PMS_NOT_SYNCED = ("No dentists are set up for online booking yet. Take their details with take_message so the team "
+                  "can book it.")
 
 
 class SchedulingError(Exception):
@@ -72,6 +87,7 @@ class SchedulingService:
         self.tenant = tenant
         self.tz = tenant.timezone
         self.zone = ZoneInfo(tenant.timezone) if tenant.timezone else ZoneInfo("UTC")
+        self.pms = sp.provider_for(tenant)          # None = built-in scheduling
 
     # ── Lookups ────────────────────────────────────────────────────────────
 
@@ -139,6 +155,9 @@ class SchedulingService:
             day_to = last_allowed
         if day_from > day_to:
             return []
+        if self.pms is not None:
+            return await self._pms_slots(service=service, day_from=day_from, day_to=day_to, resource=resource,
+                                         requested_at=requested_at, now=now, limit=limit)
 
         duration = timedelta(minutes=int((service or {}).get("duration_min") or sched.default_duration_minutes))
         buffer = timedelta(minutes=int((service or {}).get("buffer_min") or 0))
@@ -187,6 +206,39 @@ class SchedulingService:
             min_notice=timedelta(minutes=sched.min_notice_minutes),
             step=timedelta(minutes=sched.slot_step_minutes), business_exceptions=business_exc,
         )
+        return av.rank(slots, requested_at, limit)
+
+    def _pms_service(self, service: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        out = dict(service or {})
+        out.setdefault("duration_min", self.tenant.scheduling.default_duration_minutes)
+        return out
+
+    async def _pms_slots(self, *, service: Optional[Dict[str, Any]], day_from: date, day_to: date,
+                         resource: Optional[Dict[str, Any]], requested_at: Optional[datetime], now: datetime,
+                         limit: int) -> List[av.Slot]:
+        """Free times from the practice diary, for the dentists mirrored from it (pms_sync)."""
+        assert self.pms is not None
+        if self.pms.requires_type_mapping and not (service or {}).get("pms_id"):
+            raise SchedulingError("pms_unmapped", PMS_UNMAPPED)
+        mirrored = [r for r in await self.resources() if r.get("source") == self.pms.name and r.get("pms_id")]
+        wanted_ids = set((service or {}).get("resource_ids") or [])
+        candidates = [r for r in mirrored if not wanted_ids or r["_id"] in wanted_ids]
+        if resource is not None:
+            candidates = [r for r in candidates if r["_id"] == resource["_id"]]
+            if not candidates:
+                return []
+        if not candidates:
+            raise SchedulingError("pms_not_synced", PMS_NOT_SYNCED)
+        try:
+            raw = await self.pms.get_available_slots(self._pms_service(service), day_from, day_to,
+                                                     [str(r["pms_id"]) for r in candidates])
+        except sp.PMSError as e:
+            logger.warning("PMS availability failed for %s: %s", self.tenant.id, e)
+            raise SchedulingError("pms_unavailable", PMS_DOWN)
+        local_id = {str(r["pms_id"]): r["_id"] for r in candidates}
+        earliest = now + timedelta(minutes=self.tenant.scheduling.min_notice_minutes)
+        slots = [av.Slot(resource_id=local_id[s.practitioner_id], start=_aware(s.start), end=_aware(s.end))
+                 for s in raw if s.practitioner_id in local_id and _aware(s.start) >= earliest]
         return av.rank(slots, requested_at, limit)
 
     # ── Booking ────────────────────────────────────────────────────────────
@@ -239,6 +291,21 @@ class SchedulingService:
             await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
             raise SchedulingError("taken", "That time was just booked by someone else. Offer the next slot.")
 
+        external: Dict[str, Any] = {}
+        if self.pms is not None:
+            try:
+                created = await self.pms.create_appointment(
+                    sp.Patient(name=name, phone=phone, email=email), self._pms_service(service), start, end,
+                    str((resource_doc or {}).get("pms_id") or ""), notes)
+            except sp.PMSError as e:
+                await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
+                logger.warning("PMS booking failed for %s: %s", self.tenant.id, e)
+                if e.transient:
+                    raise SchedulingError("pms_unavailable", PMS_DOWN)
+                raise SchedulingError("pms_rejected", "The diary wouldn't take that booking. Offer another time, "
+                                                      "or take a message so the team books it.")
+            external = {"provider": self.pms.name, "id": created.id, "patient_id": created.patient_id}
+
         doc = {
             "_id": appointment_id,
             "appointment_id": appointment_id,
@@ -257,7 +324,7 @@ class SchedulingService:
             "notes": (notes or "")[:1000],
             "party_size": party_size,
             "price": (service or {}).get("price"),
-            "external": {},
+            "external": external,
             "reminders": {"day_before": {"sent_at": None}, "hour_before": {"sent_at": None}},
             "cancelled_at": None, "cancel_reason": None,
         }
@@ -268,6 +335,11 @@ class SchedulingService:
             raise
         await self.repos.contacts.update_one({"_id": contact.get("_id")}, {"$inc": {"stats.appointments": 1}})
         logger.info("Appointment %s booked (%s, %s)", appointment_id, doc["service_name"], start.isoformat())
+        if self.tenant.vertical == "dental":
+            from core.services import reactivation
+
+            # A recalled patient booked: stop the follow-up now, and credit the recall text.
+            await reactivation.on_booking(self.tenant, phone, appointment_id, db=self.repos.db)
         self._calendar("push", doc)
         webhooks.emit(self.tenant, "appointment.created", self._public(doc))
         return doc
@@ -284,8 +356,8 @@ class SchedulingService:
         """Mirror to the owner's Google Calendar in the background (Task 2.8). Never blocks a booking."""
         from core.services import calendar_sync
 
-        if not calendar_sync.connected(self.tenant):
-            return
+        if self.pms is not None or not calendar_sync.connected(self.tenant):
+            return                                  # with a PMS, the PMS diary is the calendar
         from core.notifications import fire
 
         fn = calendar_sync.push_booking if action == "push" else calendar_sync.remove_booking
@@ -297,6 +369,9 @@ class SchedulingService:
             raise SchedulingError("not_found", "No such appointment.")
         if appt.get("status") in ("cancelled", "completed", "no_show"):
             raise SchedulingError("already_closed", f"That appointment is already {appt.get('status')}.")
+        if not await self._pms_cancel(appt, reason or "Cancelled by phone"):
+            raise SchedulingError("pms_unavailable", "The diary isn't answering, so the appointment is NOT cancelled "
+                                                     "yet. Take a message so the team can cancel it.")
         await self.repos.appointments.update_one(
             {"appointment_id": appointment_id},
             {"$set": {"status": "cancelled", "cancelled_at": utcnow(), "cancel_reason": (reason or "")[:300],
@@ -324,6 +399,13 @@ class SchedulingService:
             {"$set": {"status": "cancelled", "cancelled_at": utcnow(), "cancel_reason": "rescheduled",
                       "rescheduled_to": new["appointment_id"], "updated_at": utcnow()}})
         await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
+        if not await self._pms_cancel(appt, "Rescheduled by phone"):
+            from core.notifications import fire, notify_owner
+
+            # The new time is booked; the old one is still in the diary. Ask the team to remove it.
+            fire(notify_owner(self.tenant, "on_new_booking",
+                              f"Please cancel the old appointment in your practice diary: {appt.get('name')} - "
+                              f"{appt.get('phone')}, moved to a new time by phone.", subject="Diary needs a tidy-up"))
         self._calendar("remove", appt)
         webhooks.emit(self.tenant, "appointment.cancelled",
                       self._public({**appt, "status": "cancelled", "cancel_reason": "rescheduled",
@@ -333,6 +415,22 @@ class SchedulingService:
         await self.repos.contacts.update_one({"_id": new.get("contact_id")}, {"$inc": {"stats.appointments": -1}})
         new["rescheduled_from"] = appointment_id
         return new
+
+    async def _pms_cancel(self, appt: Dict[str, Any], reason: str) -> bool:
+        """Cancel the PMS copy of an appointment. True when done (or there is none to cancel)."""
+        ext = appt.get("external") or {}
+        if not ext.get("provider") or not ext.get("id"):
+            return True
+        if self.pms is None or self.pms.name != ext["provider"]:
+            logger.info("Appointment %s came from %s, which is no longer connected", appt.get("appointment_id"),
+                        ext["provider"])
+            return True
+        try:
+            await self.pms.cancel_appointment(str(ext["id"]), reason)
+            return True
+        except sp.PMSError as e:
+            logger.warning("PMS cancel failed for %s: %s", self.tenant.id, e)
+            return False
 
     async def upcoming_for_phone(self, phone_variants: List[str], *, now: Optional[datetime] = None,
                                  limit: int = 5) -> List[Dict[str, Any]]:

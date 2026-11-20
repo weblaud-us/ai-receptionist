@@ -21,6 +21,8 @@ from tests.conftest import livekit_agents_importable
 
 CASES_DIR = Path(__file__).resolve().parent / "cases"
 CASES = sorted(CASES_DIR.glob("*.json"))
+# Optional tenant settings a case may carry, copied onto the eval business as-is.
+TENANT_EXTRAS = ("dental", "links", "answering_mode", "policies", "emergency_instructions")
 
 
 def _real_openai_key() -> str:
@@ -49,8 +51,11 @@ def test_case_files_are_valid():
     for path in CASES:
         case = load_case(path)
         t = case["tenant"]
-        TenantConfig.from_doc({"_id": "ten_eval", "name": t["name"], "slug": "eval", "vertical": t.get("vertical", "generic"),
-                               "timezone": t.get("timezone", "UTC"), "hours": t.get("hours", [])})
+        tenant = TenantConfig.from_doc({
+            "_id": "ten_eval", "name": t["name"], "slug": "eval", "vertical": t.get("vertical", "generic"),
+            "timezone": t.get("timezone", "UTC"), "country": t.get("country", "US"), "currency": t.get("currency", "USD"),
+            "hours": t.get("hours", []), **{k: t[k] for k in TENANT_EXTRAS if k in t}})
+        assert tenant.vertical == t.get("vertical", "generic"), f"{path.name}: unknown vertical"
 
 
 RUN = os.environ.get("RUN_EVALS") == "1"
@@ -72,7 +77,8 @@ async def _profile_for(case: dict):
         name=t["name"], vertical=t.get("vertical", "generic"), timezone=t.get("timezone", "UTC"),
         country=t.get("country", "US"), currency=t.get("currency", "USD"), tenant_id="ten_eval", status="active",
         extra={"description": t.get("description", ""), "agent": t.get("agent") or {},
-               **({"hours": t["hours"]} if "hours" in t else {})},     # [] = closed all week
+               **({"hours": t["hours"]} if "hours" in t else {}),     # [] = closed all week
+               **{k: t[k] for k in TENANT_EXTRAS if k in t}},
         seed_template=False)
     repos = Repos(get_db(), tenant.id)
     for i, svc in enumerate(t.get("services") or []):

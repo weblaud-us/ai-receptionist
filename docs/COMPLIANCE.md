@@ -108,6 +108,28 @@ before the first Australian customer.
 | **GST**: register once AU sales pass A$75,000 a year (non-resident suppliers of digital services) | ✅ Stripe Tax can collect it | 📋 accountant; Stripe Tax registration for AU |
 | Australian numbers need a regulatory bundle (AU business address) | ✅ operator-assisted ordering (platform app → Numbers) | 📋 a bundle per business in the Twilio console |
 
+## 7b. Dental practices: health data in the UK and Australia
+
+Dental is a regulated-data vertical (`vertical == "dental"`). Callers describe symptoms and
+treatment interests, which is **health data**. Have the UK and Australian privacy lawyers confirm
+each row before the first dental customer in that country. **No HIPAA claims**: the product is not
+offered to US healthcare.
+
+| Area | Product | Still to do |
+|---|---|---|
+| **UK GDPR Art. 9** special category data; DPA 2018 Sch. 1 Part 1 para 2 (health care). The practice is the controller and needs the Art. 9 condition; we are the processor | ✅ DPA §8 and Annex 1; application-layer encryption of symptoms, notes and transcripts (`core/sensitive.seal`, migration m0005); short default retention (recordings 30 d, transcripts 90 d, leads 365 d) with presets in Legal & privacy | 🧑‍⚖️ confirm the DPA §8 wording; a DPIA template for practices (high-risk processing of health data, Art. 35) |
+| **APP 3.3 / APP 5 / APP 6 / APP 11** (sensitive information: consent, collection notice, use, security) | ✅ AI disclosure and recording notice first in the dental greeting; encryption; retention; DSR tool | 🧑‍⚖️ APP 5 collection-notice wording for practices to put on their website and in the greeting |
+| **APP 8** cross-border disclosure (US speech and language vendors) | ✅ sub-processor list with locations; `ap-southeast-2` hosting planned | 🧑‍⚖️ whether reasonable-steps contracts are enough or callers must be told about overseas processing |
+| **Notifiable Data Breaches** (AU) and **ICO 72-hour** reporting (UK) | ✅ breach procedure; DPA §8.5 | 📋 add the OAIC and ICO steps for dental customers to [RUNBOOK.md](RUNBOOK.md#incident-response) |
+| **Clinical safety**: the assistant must not diagnose or advise | ✅ dental rules: no diagnosis, medication or price estimates; red flags mean 000 or 999 first (`core/prompts/verticals/dental.py`), with the number coming from code (`triage_dental_emergency`); eval cases `seed_dental_*` | 🧑‍⚖️ have a dentist review the red-flag list and the triage wording |
+| **Advertising and price claims**: AHPRA advertising guidelines (AU), GDC standards and the ASA CAP Code (UK). No misleading "from" prices or guarantees | ✅ the assistant quotes only prices the practice entered, as "from" prices or consultation fees, and never estimates treatment costs | 🧑‍⚖️ confirm that "from" pricing on calls meets AHPRA and GDC guidance |
+| **NHS / private** (UK): tell patients clearly whether NHS treatment is available | ✅ per-practice NHS settings drive the facts line (`dental.accepts_nhs`, `accepts_new_nhs_patients`) | — |
+| **Identifiers**: NHS numbers, Medicare numbers, dates of birth | ✅ never asked for by the assistant; masked in logs and error reports (`core/log.redact`); Sentry runs without frame variables | — |
+| **Missed-call recovery SMS** (AU Spam Act 2003; UK PECR reg. 22 / a service message following the caller's own call) | ✅ off by default; names the practice; "Reply STOP"; one per caller per day; respects opt-outs (`core/services/recovery.py`) | 🧑‍⚖️ confirm it is a service message (not marketing) in both countries |
+| **Call recording consent** (AU state surveillance-devices laws; UK) | ✅ recording off by default; the disclosure comes first in the dental greeting | 🧑‍⚖️ as §7a |
+| **Processor data use**: no training on call data | ✅ `DEEPGRAM_MIP_OPT_OUT=true`, `OPENAI_STORE=false` (the production guard refuses anything else); `OPENAI_ZDR_ENABLED` / `DEEPGRAM_ZDR_ENABLED` record whether each vendor approved ZDR | 📋 apply for OpenAI ZDR; until it is approved, don't claim ZDR |
+| **Practice-management systems** (Cliniko, Dentally): the practice's own processors | ✅ credentials encrypted, never returned by the API; connected only on the practice's instruction; erasure results say the PMS isn't changed | 📋 Dentally partner application before enabling `PMS_DENTALLY_ENABLED` |
+
 ## 7. Middle East
 
 | Area | Product | Still to do |

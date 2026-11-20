@@ -40,10 +40,12 @@ def _labels(appointment="Appointment", contact="Customer", resource="Staff membe
             "service": service, "services": service + "s"}
 
 
-from core.prompts.verticals import clinic, generic, home_services, hotel, professional, restaurant, salon  # noqa: E402
+from core.prompts.verticals import (  # noqa: E402
+    clinic, dental, generic, home_services, hotel, professional, restaurant, salon,
+)
 
 VERTICALS: Dict[str, VerticalSpec] = {
-    v.SPEC.key: v.SPEC for v in (generic, salon, home_services, restaurant, hotel, clinic, professional)
+    v.SPEC.key: v.SPEC for v in (generic, salon, home_services, restaurant, hotel, clinic, dental, professional)
 }
 
 

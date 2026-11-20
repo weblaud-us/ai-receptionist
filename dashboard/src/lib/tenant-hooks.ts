@@ -268,6 +268,35 @@ export interface IntegrationsStatus {
     connected_at: string | null
   }
   whatsapp: { phone_number_id: string | null }
+  /** Dental practice-management system (Cliniko AU, Dentally UK). */
+  pms?: {
+    available: { cliniko: boolean; dentally: boolean }
+    provider: 'builtin' | 'cliniko' | 'dentally'
+    connected: boolean
+    account: Record<string, string | number | null>
+    last_sync_at: string | null
+    last_error: string | null
+    connected_at: string | null
+  }
+}
+
+export type PmsProvider = 'cliniko' | 'dentally'
+
+export function usePms() {
+  const done = useInvalidate('t-integrations', 't-slots', 't-services', 't-resources')
+  return {
+    connect: useMutation({
+      mutationFn: (body: { provider: PmsProvider; api_key: string }) =>
+        api<{ success: boolean; sync: { practitioners: number; types: number } }>('/t/integrations/pms', {
+          method: 'PUT',
+          body,
+        }),
+      onSuccess: done,
+    }),
+    test: useMutation({ mutationFn: () => api('/t/integrations/pms/test', { method: 'POST' }) }),
+    sync: useMutation({ mutationFn: () => api('/t/integrations/pms/sync', { method: 'POST' }), onSuccess: done }),
+    disconnect: useMutation({ mutationFn: () => api('/t/integrations/pms', { method: 'DELETE' }), onSuccess: done }),
+  }
 }
 
 export const useIntegrations = () =>

@@ -60,3 +60,22 @@ def verify_permanent(tenant_ref: str, key: Optional[str]) -> bool:
 
 def build_permanent_link(base_url: str, tenant_ref: str = "default") -> str:
     return f"{base_url.rstrip('/')}/talk/{tenant_ref}?k={permanent_key(tenant_ref)}"
+
+
+# ── Signed references on outgoing links (patient recall) ─────────────────────────────────────
+# A recall text links to the practice's booking page with ?ref=<recall id>&sig=…, so a booking made
+# from it can be credited to the recall. The signature stops anyone forging attributions.
+
+def sign_ref(kind: str, value: str) -> str:
+    key = settings.SECRET_KEY.encode("utf-8")
+    return hmac.new(key, f"ref:{kind}:{value}".encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+
+def verify_ref(kind: str, value: str, sig: Optional[str]) -> bool:
+    return bool(value and sig) and hmac.compare_digest(sig or "", sign_ref(kind, value))
+
+
+def with_signed_ref(url: str, kind: str, value: str) -> str:
+    """https://book.example/x → https://book.example/x?ref=<value>&sig=<sig> (keeps an existing query)."""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}ref={value}&sig={sign_ref(kind, value)}"

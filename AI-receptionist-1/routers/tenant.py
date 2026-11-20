@@ -50,12 +50,13 @@ from core.prompts.verticals import get_vertical, vertical_catalog
 from core.repositories.base import utcnow
 from core.repositories.repos import PhoneNumbersStore, UsersStore
 from core.repositories.scoped import scoped_db
+from core.sensitive import drop_ciphertext, unseal
 from core.services import availability as av
 from core.services.scheduling import SchedulingError, SchedulingService
 from core.services.tenant_admin import EDITABLE_FIELDS, apply_template, update_tenant
 from core.signed_links import build_call_link
 from core.tenancy.ids import new_id
-from core.tenancy.models import HoursEntry
+from core.tenancy.models import HoursEntry, TenantConfig
 from database.mongodb import get_db
 from utils.serialize import to_jsonable
 
@@ -74,7 +75,7 @@ _HIDDEN_TENANT_FIELDS = ("billing",)
 def _clean(doc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not doc:
         return {}
-    doc = dict(doc)
+    doc = drop_ciphertext(dict(doc))                 # encrypted fields never leave the server
     _id = doc.pop("_id", None)
     doc.pop("tenant_id", None)
     if _id is not None and "id" not in doc:
@@ -115,6 +116,7 @@ def _tenant_view(tp: TenantPrincipal) -> Dict[str, Any]:
         doc.pop(k, None)
     google = (doc.get("integrations") or {}).get("google_calendar") or {}
     google.pop("refresh_token_enc", None)            # encrypted, but never leaves the server
+    ((doc.get("integrations") or {}).get("pms") or {}).pop("api_key_enc", None)    # the PMS key, likewise
     for hook in (doc.get("integrations") or {}).get("webhooks") or []:
         hook.pop("secret", None)                     # shown once, at creation
     doc["id"] = doc.pop("_id")
@@ -275,11 +277,18 @@ class Price(BaseModel):
     display: str = Field(default="", max_length=40)
 
 
+ServiceCategory = Literal["cosmetic", "implant", "emergency", "routine", "other"]
+
+
 class ServiceBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     duration_min: int = Field(default=30, ge=5, le=600)
     buffer_min: int = Field(default=0, ge=0, le=240)
     price: Optional[Price] = None
+    # What one of these is typically worth to the business (minor units, the tenant's currency):
+    # the pipeline value of a booked consultation or a qualified lead (dental ROI).
+    estimated_value_minor: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+    category: Optional[ServiceCategory] = None
     resource_ids: List[str] = Field(default_factory=list)
     ai_bookable: bool = True
     description: str = Field(default="", max_length=500)
@@ -292,6 +301,8 @@ class ServicePatch(BaseModel):
     duration_min: Optional[int] = Field(default=None, ge=5, le=600)
     buffer_min: Optional[int] = Field(default=None, ge=0, le=240)
     price: Optional[Price] = None
+    estimated_value_minor: Optional[int] = Field(default=None, ge=0, le=100_000_000)
+    category: Optional[ServiceCategory] = None
     resource_ids: Optional[List[str]] = None
     ai_bookable: Optional[bool] = None
     description: Optional[str] = Field(default=None, max_length=500)
@@ -813,7 +824,7 @@ async def call_detail(call_id: str, tp: TenantPrincipal = Depends(_staff)):
     doc = await scoped_db(tp.tenant).calls.find_one({"call_id": call_id})
     if not doc:
         raise _not_found("Call not found")
-    return _clean(doc)
+    return _clean(unseal(doc))
 
 
 class StatusBody(BaseModel):
@@ -846,7 +857,7 @@ async def update_message(message_id: str, body: StatusBody, tp: TenantPrincipal 
 async def list_leads(status: Optional[str] = None, tp: TenantPrincipal = Depends(_staff)):
     q = {"status": status} if status else {}
     rows = await tp.repos().leads.find(q, sort=[("created_at", -1)], limit=200)
-    return {"leads": [_clean(r) for r in rows], "new": await tp.repos().leads.count({"status": "new"})}
+    return {"leads": [_clean(unseal(r)) for r in rows], "new": await tp.repos().leads.count({"status": "new"})}
 
 
 @tenant_router.patch("/leads/{lead_id}")
@@ -1018,7 +1029,109 @@ async def integrations(tp: TenantPrincipal = Depends(_staff)):
         "available": gcal.configured(), "connected": calendar_sync.connected(tp.tenant),
         "calendar_id": g.get("calendar_id"), "last_sync_at": to_jsonable(g.get("last_sync_at")),
         "last_error": g.get("last_error"), "connected_at": to_jsonable(g.get("connected_at")),
-    }, "whatsapp": {"phone_number_id": tp.tenant.integrations.whatsapp.phone_number_id or None}}
+    }, "whatsapp": {"phone_number_id": tp.tenant.integrations.whatsapp.phone_number_id or None},
+       "pms": _pms_status(tp.tenant)}
+
+
+def _pms_status(t: TenantConfig) -> Dict[str, Any]:
+    from core.services import pms_sync
+    from core.services import scheduling_provider as sp
+
+    s = sp.pms_settings(t)
+    return {"available": pms_sync.available_providers(), "provider": sp.provider_name(t),
+            "connected": sp.connected(t), "account": s.get("account") or {},
+            "last_sync_at": to_jsonable(s.get("last_sync_at")), "last_error": s.get("last_error"),
+            "connected_at": to_jsonable(s.get("connected_at"))}
+
+
+class PMSBody(BaseModel):
+    provider: Literal["cliniko", "dentally"]
+    api_key: str = Field(min_length=10, max_length=500)
+
+
+def _pms_http_error(e: Exception) -> HTTPException:
+    return HTTPException(422 if not getattr(e, "transient", False) else 502, f"The practice system said: {e}")
+
+
+@tenant_router.get("/reactivation")
+async def reactivation_status(tp: TenantPrincipal = Depends(_staff)):
+    """Dental patient recall: settings, whether it can run, and the last 30 days."""
+    from core.services import reactivation
+
+    t = tp.tenant
+    since = utcnow() - timedelta(days=30)
+    open_rows = await tp.repos().recalls.count({"status": {"$in": list(reactivation.OPEN_STATUSES)}})
+    return {"available": reactivation.available(t), "settings": t.reactivation.model_dump(),
+            "default_template": t.reactivation.effective_template if not t.reactivation.template else None,
+            "queued": open_rows, "last_30_days": await reactivation.stats(t, since, utcnow())}
+
+
+@tenant_router.post("/reactivation/preview")
+async def reactivation_preview(tp: TenantPrincipal = Depends(_admin)):
+    """How many patients would get a recall text now (asks the practice's system; nothing is sent)."""
+    from core.services import reactivation
+    from core.services.scheduling_provider import PMSError
+
+    if not reactivation.available(tp.tenant):
+        raise HTTPException(409, "Patient recall needs a dental practice in Australia or the UK with Cliniko or "
+                                 "Dentally connected")
+    try:
+        return await reactivation.preview(tp.tenant)
+    except PMSError as e:
+        raise _pms_http_error(e)
+
+
+@tenant_router.put("/integrations/pms")
+async def pms_connect(body: PMSBody, request: Request, tp: TenantPrincipal = Depends(_admin)):
+    """Connect Cliniko (AU) or Dentally (UK): the key is checked against the PMS, stored encrypted, and
+    the dentists and appointment types are copied in."""
+    from core.services import pms_sync
+    from core.services.scheduling_provider import PMSError
+
+    if tp.tenant.is_legacy:
+        raise HTTPException(409, "Run migration m0003 first")
+    try:
+        result = await pms_sync.connect(tp.tenant, body.provider, body.api_key, user_id=tp.user.user_id)
+    except PMSError as e:
+        raise _pms_http_error(e)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    await _audit(tp, request, "integration.connect", body.provider, tp.tenant.id, {})
+    return {"success": True, **to_jsonable(result)}
+
+
+@tenant_router.post("/integrations/pms/test")
+async def pms_test(tp: TenantPrincipal = Depends(_admin)):
+    from core.services import pms_sync
+    from core.services.scheduling_provider import PMSError
+
+    try:
+        return {"success": True, "account": to_jsonable(await pms_sync.test(tp.tenant))}
+    except PMSError as e:
+        raise _pms_http_error(e)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@tenant_router.post("/integrations/pms/sync")
+async def pms_sync_now(tp: TenantPrincipal = Depends(_admin)):
+    from core.services import pms_sync
+    from core.services import scheduling_provider as sp
+
+    if not sp.connected(tp.tenant):
+        raise HTTPException(409, "Connect a practice-management system first")
+    return {"success": True, **(await pms_sync.sync(tp.tenant))}
+
+
+@tenant_router.delete("/integrations/pms")
+async def pms_disconnect(request: Request, tp: TenantPrincipal = Depends(_admin)):
+    from core.services import pms_sync
+    from core.services import scheduling_provider as sp
+
+    name = sp.provider_name(tp.tenant)
+    await pms_sync.disconnect(tp.tenant)
+    await _audit(tp, request, "integration.disconnect", name, tp.tenant.id, {})
+    return {"success": True}
 
 
 @tenant_router.post("/integrations/google/connect")

@@ -55,8 +55,9 @@ SOURCES: Dict[str, tuple[str, tuple[str, ...]]] = {
     "conversations": ("conversations", ("phone",)),
     "bookings": ("bookings", ("guest_phone",)),
     "guests": ("guests", ("phone",)),
+    "recalls": ("recalls", ("phone",)),
 }
-DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests")
+DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls")
 FUTURE_STATUSES = ("confirmed", "pending")
 
 RequestKind = Literal["access", "erasure"]
@@ -107,7 +108,10 @@ async def find(db: Any, tenant: TenantConfig, phone: str, *, now: Optional[datet
 
 
 def _strip(doc: Dict[str, Any]) -> Dict[str, Any]:
-    out = {k: v for k, v in doc.items() if k not in ("tenant_id", "turns", "id_number_enc")}
+    from core.sensitive import drop_ciphertext, unseal
+
+    doc = drop_ciphertext(unseal(doc))               # an access request gets the readable text
+    out = {k: v for k, v in doc.items() if k not in ("tenant_id", "turns")}
     if "_id" in out:
         out["id"] = str(out.pop("_id"))
     return out
@@ -158,7 +162,7 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
             recordings += 1
     res = await db.calls.update_many(calls_q, {  # scoped: calls_q has tenant_id
         "$set": {"caller_phone": hashed, "erased_at": now},
-        "$unset": {"transcript": "", "turns": "", "summary": "", "recording": ""}})
+        "$unset": {"transcript": "", "transcript_enc": "", "turns": "", "summary": "", "recording": ""}})
     counts["calls"] = int(getattr(res, "modified_count", 0) or 0)
     counts["recordings"] = recordings
 
@@ -183,7 +187,15 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
                                                        "tags": [], "stats": {}}},
                                      upsert=True)
     logger.info("Erased data for %s in %s: %s", mask_phone(number), tenant.id, counts)
-    return {"phone": mask_phone(number), "counts": counts, "suppressed": suppress}
+    out: Dict[str, Any] = {"phone": mask_phone(number), "counts": counts, "suppressed": suppress}
+    from core.services import scheduling_provider
+
+    if scheduling_provider.connected(tenant):
+        # We hold only mirrors of the practice's diary; its records are the practice's to erase.
+        name = scheduling_provider.provider_name(tenant).capitalize()
+        out["practice_system"] = (f"Appointments and the patient record in {name} are not changed by this request; "
+                                  f"erase or anonymise them in {name} if the request covers them.")
+    return out
 
 
 async def log_request(db: Any, tenant: TenantConfig, phone: str, kind: RequestKind, *, actor: str,

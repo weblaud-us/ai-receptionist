@@ -43,12 +43,61 @@ def _mask_phone_match(m: re.Match) -> str:
     return f"{plus}{head}{'•' * (len(d) - len(head) - 4)}{d[-4:]}"
 
 
+# ⚖ Health identifiers and dates of birth (UK GDPR Art. 9, Australian Privacy Principles).
+# Dates of birth: day/month/year as people say them in AU and the UK (14/03/1987), or any date
+# labelled as one ("DOB 1987-03-14"). Plain ISO dates (booking dates in our own logs) stay readable.
+_DOB_DMY_RE = re.compile(r"(?<!\d)(0?[1-9]|[12]\d|3[01])[/.-](0?[1-9]|1[0-2])[/.-](19\d{2}|20[0-2]\d)(?!\d)")
+_DOB_LABELLED_RE = re.compile(
+    r"(?i)\b(dob|d\.o\.b\.?|date of birth|born( on)?|birthday)\b[\s:=]*"
+    r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{1,2}(st|nd|rd|th)? \w+ \d{4})")
+# NHS number: 10 digits, often written 3-3-4. Medicare: 10 digits written 4-5-1, plus an optional
+# 1-digit IRN. Both have check digits, so ordinary numbers are left alone.
+_NHS_RE = re.compile(r"(?<![\d+])(\d{3})[ -]?(\d{3})[ -]?(\d{4})(?!\d)")
+_MEDICARE_RE = re.compile(r"(?<![\d+])(\d{4})[ -]?(\d{5})[ -]?(\d)(?:[ /-]?(\d))?(?!\d)")
+
+
+def nhs_number_valid(digits: str) -> bool:
+    if len(digits) != 10 or not digits.isdigit():
+        return False
+    check = 11 - sum(int(d) * w for d, w in zip(digits[:9], range(10, 1, -1))) % 11
+    check = 0 if check == 11 else check
+    return check != 10 and check == int(digits[9])
+
+
+def medicare_number_valid(digits: str) -> bool:
+    if len(digits) not in (10, 11) or not digits.isdigit() or digits[0] not in "23456":
+        return False
+    return sum(int(d) * w for d, w in zip(digits[:8], (1, 3, 7, 9, 1, 3, 7, 9))) % 10 == int(digits[8])
+
+
+def _mask_health_ids(text: str) -> str:
+    def nhs(m: re.Match) -> str:
+        return "[NHS number]" if nhs_number_valid("".join(m.group(1, 2, 3))) else m.group(0)
+
+    def medicare(m: re.Match) -> str:
+        digits = "".join(g for g in m.groups() if g)
+        return "[Medicare number]" if medicare_number_valid(digits) else m.group(0)
+
+    text = _MEDICARE_RE.sub(medicare, text)
+    return _NHS_RE.sub(nhs, text)
+
+
 def redact(text: Any) -> Any:
-    """Mask phone numbers and e-mails inside a string. Non-strings are returned unchanged."""
+    """Mask phone numbers, e-mails, health identifiers and dates of birth inside a string.
+    Non-strings are returned unchanged."""
     if not isinstance(text, str) or not text:
         return text
+    text = _DOB_LABELLED_RE.sub(lambda m: f"{m.group(1)} [date of birth]", text)
+    text = _DOB_DMY_RE.sub("[date]", text)
+    text = _mask_health_ids(text)
     text = _PHONE_RE.sub(_mask_phone_match, text)
     return _EMAIL_RE.sub(lambda m: f"{m.group(1)}•••@{m.group(2)}", text)
+
+
+# Keys whose values are a caller's own words or health details: blanked whole in Sentry events,
+# whatever they contain (free text can't be pattern-matched reliably).
+SENSITIVE_KEYS = frozenset({"symptom_summary", "problem", "notes", "transcript", "summary", "dob", "date_of_birth",
+                            "medical_history", "unanswered_question", "special_requests"})
 
 
 def redact_obj(obj: Any) -> Any:
@@ -56,7 +105,8 @@ def redact_obj(obj: Any) -> Any:
     if isinstance(obj, str):
         return redact(obj)
     if isinstance(obj, dict):
-        return {k: redact_obj(v) for k, v in obj.items()}
+        return {k: ("[redacted]" if isinstance(k, str) and k.lower() in SENSITIVE_KEYS and v else redact_obj(v))
+                for k, v in obj.items()}
     if isinstance(obj, list):
         return [redact_obj(v) for v in obj]
     if isinstance(obj, tuple):

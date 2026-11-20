@@ -11,6 +11,7 @@ import { timeAgo } from '@receptionist/shared/lib/format'
 import { useTenant } from '@/lib/tenant'
 import { useGoogleCalendar, useIntegrations } from '@/lib/tenant-hooks'
 import { WebhooksCard } from '@/components/app/webhooks-card'
+import { PmsCard } from '@/components/app/pms-card'
 
 const CALLBACK_MESSAGES: Record<string, [string, 'success' | 'error']> = {
   connected: ['Google Calendar connected — your busy times now block bookings', 'success'],
@@ -20,8 +21,10 @@ const CALLBACK_MESSAGES: Record<string, [string, 'success' | 'error']> = {
 }
 
 export function IntegrationsPanel() {
-  const { can } = useTenant()
+  const { can, ctx } = useTenant()
   const q = useIntegrations()
+  const dental = ctx?.vertical.key === 'dental'
+  const pmsConnected = Boolean(q.data?.pms?.connected)
   const g = useGoogleCalendar()
   const [params, setParams] = useSearchParams()
   const status = q.data?.google_calendar
@@ -40,6 +43,8 @@ export function IntegrationsPanel() {
 
   return (
     <div className="mt-3 grid gap-4 lg:grid-cols-2">
+      {dental && <PmsCard status={q.data?.pms} country={ctx?.tenant.country ?? ''} />}
+      {!(dental && pmsConnected) && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -89,6 +94,7 @@ export function IntegrationsPanel() {
           )}
         </CardContent>
       </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>WhatsApp</CardTitle>

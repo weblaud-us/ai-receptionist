@@ -70,7 +70,7 @@ async def review_queue(db: Any, *, tenant_id: Optional[str] = None, days: int = 
     now = now or utcnow()
     tenants = {t["_id"]: t for t in await db.tenants.find({}, {"name": 1, "pilot": 1}).to_list(10_000)}
     q: Dict[str, Any] = {"status": "completed", "direction": {"$ne": "outbound"}, "started_at": {"$gte": now - timedelta(days=days)},
-                         "transcript.0": {"$exists": True}}
+                         "$or": [{"transcript.0": {"$exists": True}}, {"transcript_enc": {"$exists": True}}]}
     if tenant_id:
         q["tenant_id"] = tenant_id
     reviewed = {r["call_id"] for r in await db[REVIEWS].find({}, {"call_id": 1}).to_list(100_000)}
@@ -120,6 +120,10 @@ def _tenant_facts(t: TenantConfig, services: List[Dict[str, Any]], knowledge: Li
 async def case_from_call(db: Any, tenant: TenantConfig, call_id: str, *, title: str, expected: str,
                          must_call: Sequence[str] = (), must_not_call: Sequence[str] = (), author: str = "") -> Dict[str, Any]:
     call = await db.calls.find_one({"tenant_id": tenant.id, "call_id": call_id})  # scoped: tenant_id
+    if call is not None:
+        from core.sensitive import unseal
+
+        call = unseal(call)
     if call is None or not call.get("transcript"):
         raise LookupError("call not found or its transcript has been purged")
     repos = Repos(db, tenant.id)

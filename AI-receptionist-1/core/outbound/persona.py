@@ -19,7 +19,7 @@ from config import settings
 
 VERTICAL_LABELS: Mapping[str, str] = {
     "home_services": "home-service", "salon": "salon and spa", "restaurant": "restaurant", "clinic": "clinic",
-    "professional": "professional-services", "hotel": "hotel",
+    "dental": "dental practice", "professional": "professional-services", "hotel": "hotel",
 }
 
 _OPT_OUT_LINE = "If you'd rather not get calls like this, just say so and I'll take you off our list."

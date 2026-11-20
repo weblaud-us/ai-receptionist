@@ -101,6 +101,38 @@ REQUIRED_REGISTRIES: Mapping[str, tuple[str, ...]] = {
 AI_COLD_LINE_TYPES = frozenset({"landline", "fixed_voip", "toll_free"})
 
 
+# ── Patient reactivation (dental recall, SMS-first) ──────────────────────────
+# ⚖ Counsel must confirm. AU: Spam Act 2003 (consent, sender identification, functional unsubscribe)
+# and the DNCR Act 2006 for voice. UK: PECR reg. 22 soft opt-in (existing patient, similar service,
+# opt-out offered every time) and TPS/CTPS for voice.
+RECALL_COUNTRIES = frozenset({"AU", "GB"})
+RECALL_CONSENT_BASES: Mapping[str, tuple[str, ...]] = {
+    "AU": ("explicit_opt_in", "au_inferred_existing_patient"),
+    "GB": ("explicit_opt_in", "uk_pecr_soft_opt_in"),
+}
+INFERRED_CONSENT_BASIS: Mapping[str, str] = {"AU": "au_inferred_existing_patient", "GB": "uk_pecr_soft_opt_in"}
+# Inferred / soft-opt-in consent only lasts while the patient relationship is recent.
+INFERRED_MAX_MONTHS = 24
+RECALL_MIN_GAP_DAYS = 30               # at most one recall text per patient per 30 days
+RECALL_MAX_ATTEMPTS = 2                # per recall cycle (the first text and one follow-up)
+RECALL_FOLLOW_UP_DAYS = 14
+RECALL_ATTRIBUTION_DAYS = 14           # a booking this soon after a recall text is credited to it
+# Sending hours in the practice's local time: the default, and the hard limits no setting can pass.
+RECALL_HARD_START, RECALL_HARD_END = "08:00", "20:00"
+RECALL_DEFAULT_WINDOW = _weekly(("09:00", "18:00"), ("10:00", "16:00"), None,
+                                "recall default: weekdays 9–6, Saturday 10–4, never Sunday")
+# Voice recall (off by default) must clear the national do-not-call register unless the patient gave
+# express consent to calls.
+VOICE_RECALL_REGISTRIES: Mapping[str, tuple[str, ...]] = {"AU": ("au_dncr",), "GB": ("uk_tps", "uk_ctps")}
+# Mobile numbers only (an SMS to a landline goes nowhere and may be read aloud to the household).
+MOBILE_PREFIXES: Mapping[str, tuple[str, ...]] = {"AU": ("+614",), "GB": ("+447",)}
+
+
+def is_mobile(phone: str, country: str) -> bool:
+    prefixes = MOBILE_PREFIXES.get(country, ())
+    return any((phone or "").startswith(p) for p in prefixes) and 11 <= len(phone or "") <= 13
+
+
 def allowed_countries(mode: str) -> frozenset[str]:
     """Where a campaign mode may dial. Empty for an unknown mode: fail closed."""
     if mode == "ai_cold_b2b_us":
@@ -123,8 +155,9 @@ def legal_windows(country: str, region_code: str = "") -> list[LegalWindow]:
 def required_registries(mode: str, country: str) -> tuple[str, ...]:
     """Lists to scrub against. A consent record is an exemption from the registry (not from the
     internal list: asking not to be called revokes consent)."""
-    if mode == "ai_consented":
+    if mode == "ai_consented" and country != "GB":
         return ()
+    # UK: every voice call is screened against TPS/CTPS, even with a consent record (fail closed).
     lists = REQUIRED_REGISTRIES.get(country, ())
     return lists
 

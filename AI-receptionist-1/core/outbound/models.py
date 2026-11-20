@@ -18,6 +18,14 @@ REGISTRY_META = "dnc_registry_meta"    # when each list was last loaded, and for
 
 OWNER_PLATFORM = "platform"            # later: a tenant id, when customers get the dialer (Task 4.7)
 
+# Two kinds of outbound, kept apart. `sales_outbound`: the platform selling to businesses (this
+# dialer, platform-level collections). `patient_reactivation`: a dental practice recalling its own
+# lapsed patients by SMS (core/services/reactivation.py, tenant-scoped `recalls`). They never share a
+# queue, a gate or a consent basis.
+CampaignType = Literal["sales_outbound", "patient_reactivation"]
+CAMPAIGN_TYPES: tuple[str, ...] = ("sales_outbound", "patient_reactivation")
+RECALLS = "recalls"                    # tenant collection: one row per patient per recall cycle
+
 CampaignMode = Literal["ai_cold_b2b_us", "ai_consented", "human_assisted"]
 MODES: tuple[str, ...] = ("ai_cold_b2b_us", "ai_consented", "human_assisted")
 CampaignStatus = Literal["draft", "running", "paused", "completed"]
@@ -101,6 +109,7 @@ class CampaignSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     name: str = Field(min_length=2, max_length=120)
+    campaign_type: CampaignType = "sales_outbound"
     mode: CampaignMode = "ai_cold_b2b_us"
     persona_ids: List[str] = Field(default_factory=lambda: ["sales_v1"], min_length=1, max_length=2)
     from_numbers: List[str] = Field(default_factory=list, max_length=20)
@@ -138,6 +147,14 @@ class CampaignSettings(BaseModel):
         if unknown:
             raise ValueError(f"unknown persona {unknown}; use {', '.join(PERSONAS)}")
         return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def _sales_only(self) -> "CampaignSettings":
+        # Patient recall is per practice, SMS-first, and has its own consent rules: never this dialer.
+        if self.campaign_type != "sales_outbound":
+            raise ValueError("patient reactivation runs per practice (Settings → Patient recall), not in the "
+                             "sales dialer")
+        return self
 
     @model_validator(mode="after")
     def _voicemail(self) -> "CampaignSettings":

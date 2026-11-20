@@ -18,8 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from config import settings
 from core.tenancy.ids import new_id
 
-Vertical = Literal["home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic"]
-VERTICALS: tuple[str, ...] = ("home_services", "salon", "restaurant", "hotel", "clinic", "professional", "generic")
+Vertical = Literal["home_services", "salon", "restaurant", "hotel", "clinic", "dental", "professional", "generic"]
+VERTICALS: tuple[str, ...] = ("home_services", "salon", "restaurant", "hotel", "clinic", "dental", "professional",
+                               "generic")
 # incomplete = signed up, Checkout not finished yet (Phase 5); it answers no calls.
 TenantStatus = Literal["incomplete", "trial", "active", "past_due", "suspended", "cancelled"]
 
@@ -28,6 +29,9 @@ _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 LEGACY_TENANT_ID = "default"
 MAX_CUSTOM_INSTRUCTIONS = 1500
+MAX_ANNOUNCE_TEXT = 200
+MAX_STT_KEYTERMS = 50
+MAX_STT_KEYTERM_LEN = 40
 
 
 def parse_hhmm(value: str) -> time:
@@ -86,6 +90,12 @@ class RecordingConfig(BaseModel):
     enabled: bool = False
     retention_days: int = Field(default=30, ge=1, le=3650)
     announce: bool = True
+    announce_text: str = ""                  # owner's own recording notice; empty → "This call may be recorded."
+
+    @field_validator("announce_text")
+    @classmethod
+    def _cap(cls, v: str) -> str:
+        return " ".join((v or "").split())[:MAX_ANNOUNCE_TEXT]
 
 
 class AgentConfig(BaseModel):
@@ -105,11 +115,24 @@ class AgentConfig(BaseModel):
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
     max_call_minutes: int = Field(default=15, ge=1, le=120)
     transcript_retention_days: int = Field(default=90, ge=1, le=3650)   # transcripts purged after this
+    stt_keyterms: List[str] = Field(default_factory=list)   # owner's extra words STT should expect
 
     @field_validator("custom_instructions")
     @classmethod
     def _cap(cls, v: str) -> str:
         return (v or "")[:MAX_CUSTOM_INSTRUCTIONS]
+
+    @field_validator("stt_keyterms", mode="before")
+    @classmethod
+    def _keyterms(cls, v: Any) -> List[str]:
+        out: List[str] = []
+        seen: set = set()
+        for raw in v or []:
+            term = " ".join(str(raw or "").split())[:MAX_STT_KEYTERM_LEN]
+            if term and term.lower() not in seen:
+                seen.add(term.lower())
+                out.append(term)
+        return out[:MAX_STT_KEYTERMS]
 
 
 class TransferConfig(BaseModel):
@@ -249,6 +272,9 @@ class Integrations(BaseModel):
     model_config = ConfigDict(extra="ignore")
     whatsapp: WhatsAppIntegration = Field(default_factory=WhatsAppIntegration)
     google_calendar: Dict[str, Any] = Field(default_factory=dict)   # Task 2.8 (connected, calendar_id, token_ref)
+    # Dental PMS (Cliniko / Dentally): provider, connected, api_key_enc, business_id / site_id, last_sync_at…
+    # Written only by core/services/pms_sync.py; the encrypted key never leaves the server.
+    pms: Dict[str, Any] = Field(default_factory=dict)
     webhooks: List[WebhookEndpoint] = Field(default_factory=list)
 
     @field_validator("webhooks", mode="before")
@@ -353,6 +379,13 @@ class LegalState(BaseModel):
 # the assistant answers is one the business couldn't take.
 AnsweringMode = Literal["all_calls", "overflow", "after_hours"]
 
+# Where in the business day a call lands (business-local time). A gap of up to this long between two
+# of today's opening intervals is a break (lunch), not "closed for the day".
+AnswerWindow = Literal["open", "lunch_break", "after_hours"]
+MAX_BREAK_MINUTES = 180
+DEFAULT_RECORDING_NOTICE = "This call may be recorded."
+DENTAL_RECORDING_NOTICE = "Just so you know, this call may be recorded."
+
 
 class HotelSettings(BaseModel):
     """Hotel vertical plug-in settings (rooms and nights live in their own collections)."""
@@ -360,6 +393,179 @@ class HotelSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
     checkin_time: str = "14:00"
     checkout_time: str = "12:00"
+
+
+class DentalSettings(BaseModel):
+    """Dental vertical plug-in settings (AU private health funds, UK NHS / private mix)."""
+
+    model_config = ConfigDict(extra="ignore")
+    accepts_nhs: bool = False                   # UK: any NHS dentistry at all
+    accepts_new_nhs_patients: bool = False      # UK: taking on new NHS patients (most mixed practices don't)
+    accepts_private_health_funds: bool = False  # AU: HICAPS on-the-spot claiming
+    finance_available: bool = False             # payment plans / treatment finance
+
+
+MAX_RECOVERY_TEMPLATE = 320
+
+
+class MissedCallRecovery(BaseModel):
+    """One text to a caller who hung up before booking or leaving a message (core/services/recovery.py).
+    `template` may use {business}, {link} and {phone}; empty = the standard wording."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    template: str = ""
+    # ⚠ WhatsApp free text only reaches someone who messaged the business in the last 24 h; outside it
+    # Meta needs an approved template. "whatsapp" falls back to SMS when WhatsApp can't deliver.
+    channel: Literal["sms", "whatsapp"] = "sms"
+
+    @field_validator("template")
+    @classmethod
+    def _cap(cls, v: str) -> str:
+        return " ".join((v or "").split())[:MAX_RECOVERY_TEMPLATE]
+
+
+def abn_valid(value: str) -> bool:
+    """Australian Business Number: 11 digits, weighted checksum (ATO algorithm)."""
+    d = [int(c) for c in re.sub(r"\s", "", value or "") if c.isdigit()]
+    if len(d) != 11 or len(re.sub(r"[\s\d]", "", value or "")):
+        return False
+    d[0] -= 1
+    weights = (10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19)
+    return sum(w * x for w, x in zip(weights, d)) % 89 == 0
+
+
+_COMPANY_NUMBER = re.compile(r"^(\d{8}|(SC|NI|OC|SO|NC|R0|FC)\d{6})$")
+
+
+class LegalEntity(BaseModel):
+    """Who the business legally is: needed for AU (+61) and UK (+44) number regulatory bundles."""
+
+    model_config = ConfigDict(extra="ignore")
+    registered_name: str = ""
+    abn: str = ""                            # Australia: Australian Business Number
+    company_number: str = ""                 # UK: Companies House registration number
+
+    @field_validator("registered_name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return " ".join((v or "").split())[:200]
+
+    @field_validator("abn")
+    @classmethod
+    def _abn(cls, v: str) -> str:
+        v = re.sub(r"\s", "", v or "")
+        if v and not abn_valid(v):
+            raise ValueError("ABN must be a valid 11-digit Australian Business Number")
+        return v
+
+    @field_validator("company_number")
+    @classmethod
+    def _company(cls, v: str) -> str:
+        v = re.sub(r"\s", "", v or "").upper()
+        if v and not _COMPANY_NUMBER.match(v):
+            raise ValueError("Companies House number must be 8 characters, e.g. 01234567 or SC123456")
+        return v
+
+
+# ── Patient recall (dental reactivation, SMS-first) ──────────────────────────
+
+DEFAULT_RECALL_TEMPLATE = ("Hi {first_name}, it's been a while since your last visit to {clinic_name}. You can book "
+                           "your next check-up online here: {booking_link}. Reply STOP to opt out.")
+RECALL_PLACEHOLDERS = ("first_name", "clinic_name", "booking_link")
+MAX_RECALL_TEMPLATE = 320
+# ⚖ No health information in a text (it is read on lock screens and shared phones): no conditions,
+# diagnoses or sensitive procedures. A neutral "check-up" recall is the only purpose allowed, which is
+# also what keeps UK PECR soft opt-in to "similar services".
+_RECALL_PHI_RE = re.compile(
+    r"\b(root[\s-]?canals?|gum disease|gingivitis|periodont\w*|extractions?|extracted|abscess\w*|infections?|"
+    r"decay|cavit(y|ies)|dentures?|implants?|cancer|biops(y|ies)|wisdom teeth|wisdom tooth|surgery|surgical|"
+    r"sedation|anxiety|pain|bleeding|swelling|swollen|diagnos\w*|treatment plan|x-?rays?|crowns?|fillings?|"
+    r"veneers?|braces|invisalign|aligners?|whitening|bonding|hygiene problems?|bad breath|halitosis|pregnan\w*|"
+    r"diabet\w*|hiv|medication|antibiotics?)\b",
+    re.IGNORECASE)
+_PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
+
+
+def recall_template_problems(template: str) -> List[str]:
+    """Why a recall text template can't be used ([] = fine)."""
+    problems: List[str] = []
+    text = " ".join((template or "").split())
+    unknown = sorted({p for p in _PLACEHOLDER_RE.findall(text) if p not in RECALL_PLACEHOLDERS})
+    if unknown:
+        problems.append("Unknown placeholder(s): " + ", ".join("{" + u + "}" for u in unknown)
+                        + ". Use {first_name}, {clinic_name} and {booking_link}.")
+    if "{clinic_name}" not in text:
+        problems.append("Keep {clinic_name} in the text so patients know who it is from.")
+    if "stop" not in text.lower():
+        problems.append("Keep the opt-out instruction, e.g. \"Reply STOP to opt out.\"")
+    phi = sorted({m.group(0).lower() for m in _RECALL_PHI_RE.finditer(text)})
+    if phi:
+        problems.append("Recall texts can't mention treatments or health details (" + ", ".join(phi)
+                        + "). Keep it to a general check-up.")
+    if len(text) > MAX_RECALL_TEMPLATE:
+        problems.append(f"Keep it under {MAX_RECALL_TEMPLATE} characters.")
+    return problems
+
+
+def _clamp_hhmm(v: str, lo: str = "08:00", hi: str = "20:00") -> str:
+    parse_hhmm(v)
+    return min(max(v, lo), hi)
+
+
+class RecallSendWindow(BaseModel):
+    """When recall texts may go out, practice-local. Never Sundays; never outside 08:00–20:00."""
+
+    model_config = ConfigDict(extra="ignore")
+    weekday: List[str] = Field(default_factory=lambda: ["09:00", "18:00"])
+    saturday: Optional[List[str]] = Field(default_factory=lambda: ["10:00", "16:00"])   # None = no Saturdays
+
+    @field_validator("weekday", "saturday")
+    @classmethod
+    def _span(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if len(v) != 2:
+            raise ValueError("a sending window is [start, end], e.g. [\"09:00\", \"18:00\"]")
+        start, end = _clamp_hhmm(v[0]), _clamp_hhmm(v[1])
+        if start >= end:
+            raise ValueError("the sending window must end after it starts")
+        return [start, end]
+
+
+class ReactivationSettings(BaseModel):
+    """Dental patient recall: SMS to lapsed patients from the practice's own PMS (core/services/reactivation)."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    recall_interval_months: int = Field(default=6, ge=3, le=24)
+    template: str = ""                      # empty = DEFAULT_RECALL_TEMPLATE
+    send_window: RecallSendWindow = Field(default_factory=RecallSendWindow)
+    # Voice recall stays off: it needs express voice consent or a clean DNCR / TPS check per number.
+    voice_enabled: bool = False
+
+    @field_validator("template")
+    @classmethod
+    def _template(cls, v: str) -> str:
+        v = " ".join((v or "").split())
+        if v:
+            problems = recall_template_problems(v)
+            if problems:
+                raise ValueError(" ".join(problems))
+        return v
+
+    @property
+    def effective_template(self) -> str:
+        return self.template or DEFAULT_RECALL_TEMPLATE
+
+
+class PrivacySettings(BaseModel):
+    """Health-data handling (UK GDPR Art. 9, Australian Privacy Principles). Dental practices always
+    encrypt clinical free text; other businesses can opt in."""
+
+    model_config = ConfigDict(extra="ignore")
+    encrypt_clinical_text: bool = False
+    lead_retention_days: int = Field(default=0, ge=0, le=3650)   # 0 = keep leads until deleted
 
 
 class TenantConfig(BaseModel):
@@ -393,6 +599,11 @@ class TenantConfig(BaseModel):
     pilot: PilotConfig = Field(default_factory=PilotConfig)
     legal: LegalState = Field(default_factory=LegalState)
     hotel: HotelSettings = Field(default_factory=HotelSettings)
+    dental: DentalSettings = Field(default_factory=DentalSettings)
+    missed_call_recovery: MissedCallRecovery = Field(default_factory=MissedCallRecovery)
+    legal_entity: LegalEntity = Field(default_factory=LegalEntity)
+    privacy: PrivacySettings = Field(default_factory=PrivacySettings)
+    reactivation: ReactivationSettings = Field(default_factory=ReactivationSettings)
     policies: Dict[str, str] = Field(default_factory=dict)   # e.g. {"parking": "...", "payment": "..."}
     onboarding: Dict[str, Any] = Field(default_factory=dict)  # wizard progress: {"step": "...", "completed_at": ...}
     created_at: Optional[datetime] = None
@@ -425,6 +636,11 @@ class TenantConfig(BaseModel):
         return self.status in ("trial", "active", "past_due")
 
     @property
+    def clinical_encryption(self) -> bool:
+        """Store symptoms, treatment notes and call transcripts encrypted (core/sensitive.seal)."""
+        return self.vertical == "dental" or self.privacy.encrypt_clinical_text
+
+    @property
     def llm_model(self) -> str:
         return self.agent.llm_model or settings.VOICE_LLM_MODEL
 
@@ -439,20 +655,64 @@ class TenantConfig(BaseModel):
     def disclosure_sentence(self) -> str:
         return f"This is {self.agent.name}, {self.name}'s virtual assistant."
 
-    def greeting_text(self) -> str:
+    def greeting_text(self, local_now: Optional[datetime] = None) -> str:
         """⚖ AI disclosure in the first sentence (EU AI Act, US state bot laws, UAE TDRA). ≤ 4 s.
-        An owner's custom greeting that doesn't say it is an AI gets the disclosure added."""
+        An owner's custom greeting that doesn't say it is an AI gets the disclosure added.
+        Dental practices without a custom greeting get one for the moment of the call
+        (`local_now`, business-local): lunch break, closed, or reception busy (overflow)."""
         custom = self.agent.greeting.strip()
+        state = self.greeting_state(local_now) if (self.vertical == "dental" and not custom) else None
         if custom:
             text = custom if has_ai_disclosure(custom) else add_disclosure(custom, self.disclosure_sentence())
+        elif state == "lunch_break":
+            text = (f"Thanks for calling {self.name}. Our reception team is currently on a short lunch break, "
+                    "so I'm their AI assistant and can book your appointment right now.")
+        elif state == "after_hours":
+            text = (f"Thanks for calling {self.name}. We're currently closed, but I'm the practice's AI assistant "
+                    "and can book your consultation or take an urgent message for the team.")
+        elif state == "busy_overflow":
+            text = (f"Thanks for calling {self.name}. Our receptionists are helping other patients right now. "
+                    "I'm the practice's AI assistant and can help get you booked in straight away.")
         else:
             text = (f"Thanks for calling {self.name}, this is {self.agent.name}, "
                     f"{self.name}'s virtual assistant.")
-        if self.agent.recording.enabled and self.agent.recording.announce and "record" not in text.lower():
-            text += " This call may be recorded."
+        rec = self.agent.recording
+        if rec.enabled and rec.announce and "record" not in text.lower():
+            if self.vertical == "dental":           # dental: the recording notice comes first
+                text = (rec.announce_text or DENTAL_RECORDING_NOTICE) + " " + text
+            else:
+                text += " " + (rec.announce_text or DEFAULT_RECORDING_NOTICE)
         if "?" not in text:
             text += " How can I help?"
         return text
+
+    def greeting_state(self, local_now: Optional[datetime]) -> Optional[str]:
+        """lunch_break | after_hours | busy_overflow (open, calls forwarded when reception is busy) | None."""
+        if local_now is None:
+            return None
+        window = self.answer_window(local_now)
+        if window != "open":
+            return window
+        return "busy_overflow" if self.answering_mode == "overflow" else None
+
+    def answer_window(self, local_now: datetime) -> AnswerWindow:
+        """open, a short break between two of today's opening intervals, or closed."""
+        if self.is_open(local_now):
+            return "open"
+        t = local_now.time()
+        minutes = t.hour * 60 + t.minute
+        today = [h for h in self.hours_for(local_now.weekday()) if not h.overnight]
+        closed_since = [minutes - (h.close_time.hour * 60 + h.close_time.minute) for h in today if h.close_time <= t]
+        opens_in = [(h.open_time.hour * 60 + h.open_time.minute) - minutes for h in today if h.open_time > t]
+        if closed_since and opens_in and min(closed_since) + min(opens_in) <= MAX_BREAK_MINUTES:
+            return "lunch_break"
+        return "after_hours"
+
+    def reopens_today(self, local_now: datetime) -> Optional[str]:
+        """The next opening time today (HH:MM), if the business opens again later today."""
+        t = local_now.time()
+        later = sorted(h.open for h in self.hours_for(local_now.weekday()) if h.open_time > t)
+        return later[0] if later else None
 
     def hours_for(self, dow: int) -> List[HoursEntry]:
         return [h for h in self.hours if h.dow == dow]

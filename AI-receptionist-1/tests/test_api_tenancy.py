@@ -407,3 +407,25 @@ def test_call_forwarding_guide_follows_the_business_country():
     assert "+442071234567" in gb[0]["no_answer"]
     assert len(forwarding_guide_for("ZZ", "")) > 3                       # unknown country: the full list
     assert any("Verizon" in r["carrier"] for r in forwarding_guide_for("US", "+15125550100"))
+
+
+# ── Dental vertical fields ───────────────────────────────
+
+async def test_service_value_and_category_round_trip_and_dental_settings(world, client):
+    h = _h(world["owner_a"])
+    r = client.post("/t/services", headers=h, json={"name": "Implant consultation", "category": "implant",
+                                                    "estimated_value_minor": 450000})
+    assert r.status_code == 200, r.text
+    sid = r.json()["id"]
+    assert client.patch(f"/t/services/{sid}", headers=h, json={"estimated_value_minor": 500000}).status_code == 200
+    row = next(s for s in client.get("/t/services", headers=h).json()["services"] if s["id"] == sid)
+    assert row["category"] == "implant" and row["estimated_value_minor"] == 500000
+    assert client.post("/t/services", headers=h, json={"name": "X", "category": "spaceship"}).status_code == 422
+    assert client.post("/t/services", headers=h, json={"name": "X", "estimated_value_minor": -1}).status_code == 422
+
+    r = client.patch("/t/settings", headers=h, json={"vertical": "dental", "country": "GB",
+                                                     "dental": {"accepts_nhs": True}})
+    assert r.status_code == 200, r.text
+    ctx = client.get("/t/context", headers=h).json()
+    assert ctx["vertical"]["key"] == "dental" and ctx["tenant"]["dental"]["accepts_nhs"] is True
+    assert ctx["tenant"]["dental"]["accepts_new_nhs_patients"] is False

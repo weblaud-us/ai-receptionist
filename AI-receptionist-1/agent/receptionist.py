@@ -61,7 +61,7 @@ class ReceptionistAgent(Agent):
     # ── Greeting ────────────────────────────────────────────────────────
 
     async def on_enter(self) -> None:
-        text = self.state.profile.greeting_text
+        text = self.state.profile.greeting_for(self.state.started_at)
         tts = self.session.tts
         if tts is None:
             if isinstance(self.session.llm, lk_llm.RealtimeModel):  # speech-to-speech: model speaks it

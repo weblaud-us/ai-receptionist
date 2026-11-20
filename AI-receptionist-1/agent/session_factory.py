@@ -73,6 +73,7 @@ def build_stt(p: VoiceProfile, vad: Any = None) -> Any:
                 "api_key": settings.DEEPGRAM_API_KEY,
                 "interim_results": True,
                 "filler_words": True,       # helps the turn detector
+                "mip_opt_out": settings.DEEPGRAM_MIP_OPT_OUT,   # no training on callers' audio
             }
             if settings.VOICE_STT_MODEL.startswith("nova-3") and p.keyterms:
                 kwargs["keyterm"] = list(p.keyterms)  # business/agent names STT should expect
@@ -150,6 +151,7 @@ def build_llm(p: VoiceProfile) -> Any:
         temperature=settings.VOICE_LLM_TEMPERATURE,
         parallel_tool_calls=True,
         prompt_cache_key=f"voice-{p.business_id}",   # same static prefix → cache hits across calls
+        store=settings.OPENAI_STORE,                  # health data: never kept for OpenAI evals/distillation
     )
     fallback = _fallback_llm()
     if fallback is None:

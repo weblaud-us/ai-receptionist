@@ -82,10 +82,12 @@ class VerifyBody(BaseModel):
 
 
 @public_plans_router.get("/public/plans")
-async def public_plans(country: str = "", currency: str = ""):
-    """Prices in the visitor's currency: `?country=GB` (what the signup form sends) or `?currency=AUD`."""
+async def public_plans(country: str = "", currency: str = "", vertical: str = ""):
+    """Prices in the visitor's currency: `?country=GB` (what the signup form sends) or `?currency=AUD`.
+    `?vertical=dental` shows the plans for that kind of business (dental practices have their own)."""
     cur = currency or (currency_for(country) if len(country) == 2 else "")
-    return {**plans.catalogue(cur), "signup_enabled": settings.SIGNUP_ENABLED, "billing_enabled": settings.billing_enabled}
+    return {**plans.catalogue(cur, vertical if vertical in VERTICALS else None),
+            "signup_enabled": settings.SIGNUP_ENABLED, "billing_enabled": settings.billing_enabled}
 
 
 async def _send_verification(user_id: str, email: str) -> bool:
@@ -109,6 +111,11 @@ async def signup(body: SignupBody, request: Request, response: Response):
         raise HTTPException(422, "That plan isn't available for that billing period")
     if body.vertical not in VERTICALS:
         raise HTTPException(422, f"vertical must be one of {', '.join(VERTICALS)}")
+    if not plans.plan_allowed(plan, body.vertical):
+        options = ", ".join(p.key for p in plans.plans_for(body.vertical) if p.self_serve)
+        raise HTTPException(422, f"Choose one of these plans for your business: {options}")
+    if settings.billing_enabled and not plan.checkout_ready():
+        raise HTTPException(422, "That plan isn't available yet")
     ip = ratelimit.client_ip(request)
     if settings.SIGNUP_RATE_PER_IP_HOUR > 0 and not await ratelimit.allow_fixed(
             f"signup:ip:{ip}", settings.SIGNUP_RATE_PER_IP_HOUR, 3600):

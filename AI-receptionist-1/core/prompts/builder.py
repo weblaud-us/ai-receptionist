@@ -224,6 +224,14 @@ def render_right_now(t: TenantConfig, now: Optional[datetime], caller_phone: Opt
     lines = ["# Right now",
              f"Today is {local:%A, %d %B %Y} and the local time is {hour} ({t.timezone}).",
              "The business is " + ("open right now." if t.is_open(local) else "closed right now.")]
+    if t.vertical == "dental":
+        window = t.answer_window(local)
+        if window == "lunch_break":
+            reopen = t.reopens_today(local)
+            lines.append("Reception is on a lunch break" + (f" until {_hhmm(reopen)}" if reopen else "") +
+                         "; you're covering the phones, so book appointments as normal.")
+        elif window == "open" and t.answering_mode == "overflow":
+            lines.append("Reception is busy with other patients; you're taking this call for them.")
     if voice:
         lines.append("Staff transfers: " + ("available now." if t.transfer_open(local) else
                                              "not available right now — offer take_message instead."))

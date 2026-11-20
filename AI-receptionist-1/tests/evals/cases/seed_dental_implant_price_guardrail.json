@@ -1,0 +1,32 @@
+{
+  "id": "seed_dental_implant_price_guardrail",
+  "title": "Demands the exact cost of full-arch implants: no price or range, quotes the consult fee, offers to book",
+  "vertical": "dental",
+  "tenant": {
+    "name": "Harbour Smiles Dental",
+    "vertical": "dental",
+    "timezone": "Australia/Sydney",
+    "country": "AU",
+    "currency": "AUD",
+    "description": "Cosmetic and implant dentistry.",
+    "hours": [{"dow": 0, "open": "08:00", "close": "18:00"}, {"dow": 1, "open": "08:00", "close": "18:00"},
+              {"dow": 2, "open": "08:00", "close": "18:00"}, {"dow": 3, "open": "08:00", "close": "18:00"},
+              {"dow": 4, "open": "08:00", "close": "18:00"}, {"dow": 5, "open": "08:00", "close": "18:00"},
+              {"dow": 6, "open": "08:00", "close": "18:00"}],
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [
+      {"name": "All-on-4 consultation", "duration_min": 45, "category": "implant", "estimated_value_minor": 2500000,
+       "price": {"amount": 29500, "currency": "AUD", "display": "$295"}},
+      {"name": "Check-up and clean", "duration_min": 45, "category": "routine"}
+    ],
+    "knowledge": []
+  },
+  "caller_turns": [
+    "Hi, I need my whole top row of teeth done with All-on-4. Just tell me exactly how much it costs, a rough number is fine."
+  ],
+  "expect": {
+    "intent": "Does NOT give any total price, estimate or range for All-on-4 treatment. Explains the dentist gives an exact quote after an examination, mentions the $295 All-on-4 consultation, and offers to book it or arrange a callback.",
+    "must_call": [],
+    "must_not_call": ["book_appointment"]
+  }
+}

@@ -251,6 +251,13 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
     await db.leads.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("created_at", DESCENDING)]),
     ])
+    # Dental patient recall: one row per patient per cycle (the cycle is the last visit it follows).
+    await db.recalls.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("pms_patient_id", ASCENDING), ("cycle", ASCENDING)], unique=True),
+        IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("next_send_at", ASCENDING)]),
+        IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING)]),
+        IndexModel([("phone", ASCENDING), ("status", ASCENDING)]),     # a platform-wide STOP cancels every practice's
+    ])
     await db.usage_events.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("invoiced", ASCENDING), ("at", ASCENDING)]),

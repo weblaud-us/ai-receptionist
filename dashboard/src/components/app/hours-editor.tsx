@@ -14,18 +14,41 @@ export function HoursEditor({
   value,
   onChange,
   disabled,
+  lunchBreak,
 }: {
   value: HoursEntry[]
   onChange: (next: HoursEntry[]) => void
   disabled?: boolean
+  /** Offer a one-click 1–2 pm lunch closure (dental practices: the assistant covers it). */
+  lunchBreak?: boolean
 }) {
   const byDay = DAYS.map((_, dow) => value.filter((h) => h.dow === dow))
+  // Days open across 13:00–14:00 in a single interval can take the standard lunch break.
+  const splittable = byDay.filter((rows) => rows.length === 1 && rows[0].open < '13:00' && rows[0].close > '14:00')
+  const addLunch = () =>
+    onChange(
+      value
+        .flatMap((h) =>
+          splittable.some((rows) => rows[0] === h)
+            ? [{ ...h, close: '13:00' }, { ...h, open: '14:00' }]
+            : [h],
+        )
+        .sort((a, b) => a.dow - b.dow || a.open.localeCompare(b.open)),
+    )
 
   const setDay = (dow: number, rows: HoursEntry[]) =>
     onChange([...value.filter((h) => h.dow !== dow), ...rows].sort((a, b) => a.dow - b.dow || a.open.localeCompare(b.open)))
 
   return (
     <div className="divide-y rounded-lg border">
+      {lunchBreak && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Closed for lunch? Your assistant answers while reception is out.</span>
+          <Button size="xs" variant="outline" disabled={disabled || splittable.length === 0} onClick={addLunch}>
+            Add a 1–2 pm lunch break
+          </Button>
+        </div>
+      )}
       {DAYS.map((day, dow) => {
         const rows = byDay[dow]
         const open = rows.length > 0

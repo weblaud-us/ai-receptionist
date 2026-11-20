@@ -173,6 +173,14 @@ async def provision_number(ctx: Dict[str, Any], order_id: str) -> str:
     return str(order.get("status"))
 
 
+@job("missed_call_recovery", max_tries=3)
+async def missed_call_recovery(ctx: Dict[str, Any], tenant_id: str, call_id: str) -> str:
+    from core.services import recovery
+
+    result = await recovery.send(tenant_id, call_id)
+    return str(result.get("reason"))
+
+
 # ── Worker ───────────────────────────────────────────────────────────────────
 
 async def startup(ctx: Dict[str, Any]) -> None:
@@ -202,7 +210,8 @@ def every_minutes(step: float) -> Set[int]:
 class WorkerSettings:
     # keep_result=0: arq stores a job's arguments with its result; a WhatsApp payload must not linger in Redis.
     functions = [func(whatsapp_inbound, name="whatsapp_inbound", max_tries=1, timeout=180, keep_result=0),
-                 func(provision_number, name="provision_number", max_tries=5, timeout=120)]
+                 func(provision_number, name="provision_number", max_tries=5, timeout=120),
+                 func(missed_call_recovery, name="missed_call_recovery", max_tries=3, timeout=60, keep_result=0)]
     cron_jobs = [
         cron(tenant_jobs_tick, name="tenant_jobs_tick", minute=every_minutes(settings.TENANT_JOBS_POLL_SECONDS / 60),
              run_at_startup=True, timeout=280),

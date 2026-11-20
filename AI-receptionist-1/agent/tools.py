@@ -26,6 +26,7 @@ _OUTCOMES = {
     "reschedule_appointment": "rescheduled",
     "cancel_booking": "cancelled", "cancel_appointment": "cancelled",
     "take_message": "message", "capture_lead": "message",
+    "triage_dental_emergency": "message", "qualify_cosmetic_lead": "message",
 }
 
 

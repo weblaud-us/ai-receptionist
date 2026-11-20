@@ -44,6 +44,17 @@ COST_ITEMS: List[CostItem] = [
     CostItem("carrier_outbound", "Outbound carrier (termination)", 0.01, 0.01, "Termination costs more", applies="outbound"),
 ]
 
+# Inbound carrier rates outside the US (USD per minute). AU and UK local numbers cost more to receive on
+# than US ones. ⚠ VERIFY against Twilio's current AU and UK voice pricing before publishing dental prices.
+COUNTRY_CARRIER_INBOUND: Dict[str, Dict[str, object]] = {
+    "AU": {"low": 0.010, "high": 0.015, "basis": "Twilio Elastic SIP, Australia inbound (⚠ VERIFY)"},
+    "GB": {"low": 0.008, "high": 0.012, "basis": "Twilio Elastic SIP, UK inbound (⚠ VERIFY)"},
+}
+# Per outgoing text (confirmations, missed-call recovery). ⚠ VERIFY: AU and UK SMS cost several times US.
+SMS_USD_PER_MESSAGE: Dict[str, float] = {"US": 0.0083, "AU": 0.0515, "GB": 0.0463}
+# Which market a vertical-specific plan's margin is worked out for (its most expensive launch market).
+PLAN_COST_COUNTRY: Dict[str, str] = {"dental": "AU"}
+
 FIXED_MONTHLY: List[Dict[str, object]] = [
     {"label": "LiveKit Cloud plan (Ship)", "low": 50, "high": 50},
     {"label": "MongoDB Atlas M10 + staging", "low": 60, "high": 90},
@@ -54,10 +65,15 @@ FIXED_MONTHLY: List[Dict[str, object]] = [
 ]
 
 
-def per_minute(*, recording: bool = False, outbound: bool = False) -> Dict[str, float]:
-    """Variable cost of one call-minute: low, mid and high estimates."""
+def per_minute(*, recording: bool = False, outbound: bool = False, country: str = "") -> Dict[str, float]:
+    """Variable cost of one call-minute: low, mid and high estimates. `country`: the carrier rate for
+    numbers in that country (AU, GB), instead of the US one."""
     items = [i for i in COST_ITEMS if i.applies == "always"
              or (i.applies == "recording" and recording) or (i.applies == "outbound" and outbound)]
+    local = COUNTRY_CARRIER_INBOUND.get((country or "").upper())
+    if local:
+        items = [CostItem(i.key, i.label, float(local["low"]), float(local["high"]),  # type: ignore[arg-type]
+                          str(local["basis"])) if i.key == "carrier_inbound" else i for i in items]
     return {"low": round(sum(i.low for i in items), 4), "mid": round(sum(i.mid for i in items), 4),
             "high": round(sum(i.high for i in items), 4)}
 
@@ -74,6 +90,15 @@ def plan_margin(plan: Plan, cost_per_min: float) -> float:
     return round((plan.monthly_usd - cost) / plan.monthly_usd * 100, 1)
 
 
+def _plan_country(plan: Plan) -> str:
+    return next((PLAN_COST_COUNTRY[v] for v in plan.verticals if v in PLAN_COST_COUNTRY), "")
+
+
+def _plan_cpm(plan: Plan, default: float) -> float:
+    country = _plan_country(plan)
+    return per_minute(recording=plan.recording, country=country)["mid"] if country else default
+
+
 def model() -> Dict[str, object]:
     """Everything the platform 'unit economics' card shows."""
     base = per_minute()
@@ -88,7 +113,10 @@ def model() -> Dict[str, object]:
                                 "high": sum(int(f["high"]) for f in FIXED_MONTHLY)},    # type: ignore[call-overload]
         "fixed_per_tenant_month": FIXED_PER_TENANT_MONTH_USD,
         "plans": [{"key": p.key, "name": p.name, "monthly_usd": p.monthly_usd, "included_minutes": p.included_minutes,
-                   "margin_pct": plan_margin(p, cpm)} for p in PLANS.values() if p.monthly_usd > 0],
+                   "margin_pct": plan_margin(p, _plan_cpm(p, cpm)), "cost_country": _plan_country(p) or "US"}
+                  for p in PLANS.values() if p.monthly_usd > 0],
+        "per_minute_by_country": {c: per_minute(country=c) for c in COUNTRY_CARRIER_INBOUND},
+        "sms_usd_per_message": SMS_USD_PER_MESSAGE,
         "overage": {"usd_per_min": OVERAGE_USD_PER_MIN,
                     "margin_pct": round((OVERAGE_USD_PER_MIN - cpm) / OVERAGE_USD_PER_MIN * 100, 1)},
         "note": "List-price estimates (late 2026). Verify every rate before publishing prices; recompute quarterly.",

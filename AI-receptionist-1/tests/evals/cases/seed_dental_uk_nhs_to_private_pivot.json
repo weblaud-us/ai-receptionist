@@ -1,0 +1,30 @@
+{
+  "id": "seed_dental_uk_nhs_to_private_pivot",
+  "title": "Asks for an NHS appointment at a private-only UK practice: declines politely, offers the private exam",
+  "vertical": "dental",
+  "tenant": {
+    "name": "Kensington Dental Studio",
+    "vertical": "dental",
+    "timezone": "Europe/London",
+    "country": "GB",
+    "currency": "GBP",
+    "description": "Private general and cosmetic dentistry.",
+    "dental": {"accepts_nhs": false},
+    "hours": [{"dow": 0, "open": "08:00", "close": "18:00"}, {"dow": 1, "open": "08:00", "close": "18:00"},
+              {"dow": 2, "open": "08:00", "close": "18:00"}, {"dow": 3, "open": "08:00", "close": "18:00"},
+              {"dow": 4, "open": "08:00", "close": "18:00"}, {"dow": 5, "open": "08:00", "close": "18:00"},
+              {"dow": 6, "open": "08:00", "close": "18:00"}],
+    "agent": {"name": "Aria", "tone": "warm"},
+    "services": [
+      {"name": "Private new patient examination", "duration_min": 45, "category": "routine",
+       "price": {"amount": 7500, "currency": "GBP", "display": "£75"}}
+    ],
+    "knowledge": []
+  },
+  "caller_turns": ["Hello, I'd like to register as a new NHS patient please."],
+  "expect": {
+    "intent": "Politely explains the practice is private and does not offer NHS treatment, then offers a private new patient examination and mentions its £75 fee. Does not claim NHS appointments are available.",
+    "must_call": [],
+    "must_not_call": ["book_appointment"]
+  }
+}

@@ -17,6 +17,15 @@ _DEFAULT_SECRETS = {"", "change-in-production"}
 TTS_PROVIDERS = ("elevenlabs", "cartesia", "deepgram", "kokoro", "openai")
 
 
+# Regional stacks (deploy/README.md → "Regional stacks").
+REGION_COUNTRIES = {"ap-southeast-2": "AU", "eu-west-2": "GB"}
+KNOWN_DEPLOYMENT_REGIONS = frozenset({"us-east-1", "us-west-2", "eu-west-1", "eu-central-1", *REGION_COUNTRIES})
+# Twilio edge locations and the data region they front by default (⚠ VERIFY against Twilio's list).
+TWILIO_EDGE_REGIONS = {"sydney": "au1", "dublin": "ie1", "ashburn": "us1", "umatilla": "us1", "frankfurt": "ie1",
+                       "tokyo": "jp1", "singapore": "us1", "sao-paulo": "us1"}
+TWILIO_REGION_EDGES = {"au1": "sydney", "ie1": "dublin", "jp1": "tokyo"}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parent / ".env"),
@@ -66,6 +75,36 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY:  str = Field(default="")
     ELEVENLABS_VOICE_ID: str = Field(default="21m00Tcm4TlvDq8ikWAM")
     DEEPGRAM_API_KEY:    str = Field(default="")   # Phase 1 streaming STT
+
+    # ── Processor data use (UK GDPR Art. 9 / Australian Privacy Principles) ──
+    # Deepgram: opt every request out of its Model Improvement Program (no training on our audio).
+    DEEPGRAM_MIP_OPT_OUT: bool = Field(default=True)
+    # OpenAI: never store completions for evals/distillation (the `store` request flag).
+    OPENAI_STORE: bool = Field(default=False)
+    # Set true only once the vendor has approved Zero Data Retention for this account. The code can't
+    # switch ZDR on; these flags record that it is, for the DPA, the sub-processor list and
+    # scripts/check_env.py. Never claim ZDR to a customer while one is false.
+    OPENAI_ZDR_ENABLED: bool = Field(default=False)
+    DEEPGRAM_ZDR_ENABLED: bool = Field(default=False)
+
+    # ── Regional deployment (AU / UK dental stacks) ────────────────────────
+    # The AWS region this stack's data lives in: ap-southeast-2 (Sydney) for AU practices, eu-west-2
+    # (London) for UK practices. One stack per region; see deploy/README.md → "Regional stacks".
+    DEPLOYMENT_REGION: str = Field(default="")
+    # Twilio edge (where our API traffic enters Twilio) and Twilio region (where Twilio keeps the
+    # data). sydney → au1, dublin → ie1. A non-US region needs that region's own API credentials.
+    TWILIO_EDGE: str = Field(default="")
+    TWILIO_REGION: str = Field(default="")
+
+    # ── Dental practice-management systems (core/integrations/cliniko.py, dentally.py) ──
+    # Cliniko requires a User-Agent naming the app and a contact address, e.g. "AI Receptionist (ops@yourco.com)".
+    CLINIKO_USER_AGENT: str = Field(default="")
+    # The shard used when a practice's API key carries none (keys normally end in -au1, -au2, -uk1).
+    CLINIKO_SHARD: str = Field(default="au1")
+    # Dentally access needs an approved partner application; leave off until it is and the adapter has
+    # been checked against the Dentally sandbox.
+    PMS_DENTALLY_ENABLED: bool = Field(default=False)
+    DENTALLY_API_BASE_URL: str = Field(default="https://api.dentally.co/v1")
 
     # ── Twilio Voice ──────────────────────────────────────
     TWILIO_ACCOUNT_SID:         str  = Field(default="")
@@ -229,6 +268,14 @@ class Settings(BaseSettings):
     STRIPE_PRICE_OVERAGE:    str  = Field(default="")   # metered price on the Billing Meter below
     STRIPE_METER_EVENT_NAME: str  = Field(default="overage_minutes")
     STRIPE_PRICE_SETUP_FEE:  str  = Field(default="")   # optional one-off "done-for-you setup" price
+    # Dental plans (AU/UK practices): retainer Prices with AUD/GBP currency_options, and their own
+    # mandatory one-time onboarding-fee Prices (core/billing/plans.DENTAL_SETUP_FEES).
+    STRIPE_PRICE_DENTAL_ESSENTIALS_MONTHLY: str = Field(default="")
+    STRIPE_PRICE_DENTAL_ESSENTIALS_ANNUAL:  str = Field(default="")
+    STRIPE_PRICE_DENTAL_PRO_MONTHLY:        str = Field(default="")
+    STRIPE_PRICE_DENTAL_PRO_ANNUAL:         str = Field(default="")
+    STRIPE_PRICE_DENTAL_SETUP_ESSENTIALS:   str = Field(default="")
+    STRIPE_PRICE_DENTAL_SETUP_PRO:          str = Field(default="")
     STRIPE_AUTOMATIC_TAX:    bool = Field(default=True)  # Stripe Tax: US sales tax, EU/UK VAT, UAE VAT
     SIGNUP_ENABLED:          bool = Field(default=False)  # public POST /signup
     SIGNUP_RATE_PER_IP_HOUR: int  = Field(default=5)
@@ -405,6 +452,23 @@ class Settings(BaseSettings):
                 order.append(name)
         return order
 
+    @property
+    def twilio_api_base(self) -> str:
+        """https://api.twilio.com, or the edge/region host (https://api.sydney.au1.twilio.com)."""
+        edge, region = self.TWILIO_EDGE.strip().lower(), self.TWILIO_REGION.strip().lower()
+        if edge in TWILIO_REGION_EDGES:                 # "ie1" / "au1" given as the edge: use the region's edge
+            region, edge = edge, TWILIO_REGION_EDGES[edge]
+        if not edge and not region:
+            return "https://api.twilio.com"
+        edge = edge or TWILIO_REGION_EDGES.get(region, "ashburn")
+        region = region or TWILIO_EDGE_REGIONS.get(edge, "us1")
+        return f"https://api.{edge}.{region}.twilio.com"
+
+    @property
+    def deployment_country(self) -> str:
+        """The country whose practices this stack is for ("" = not a regional stack)."""
+        return REGION_COUNTRIES.get(self.DEPLOYMENT_REGION.strip(), "")
+
     @model_validator(mode="after")
     def _known_tts_fallbacks(self) -> "Settings":
         unknown = [n for n in self.tts_fallbacks if n not in TTS_PROVIDERS]
@@ -438,6 +502,14 @@ class Settings(BaseSettings):
             problems.append("TOKEN_ENCRYPTION_KEY (a Fernet key) is required with Google Calendar")
         if not self.REQUIRE_ADMIN_MFA:
             problems.append("REQUIRE_ADMIN_MFA must be true")
+        if not self.DEEPGRAM_MIP_OPT_OUT:
+            problems.append("DEEPGRAM_MIP_OPT_OUT must be true (callers' health details must not train Deepgram models)")
+        if self.OPENAI_STORE:
+            problems.append("OPENAI_STORE must be false (calls must not be stored by OpenAI)")
+        if self.TWILIO_EDGE.strip() and self.TWILIO_EDGE.strip().lower() not in {*TWILIO_EDGE_REGIONS, *TWILIO_REGION_EDGES}:
+            problems.append(f"TWILIO_EDGE {self.TWILIO_EDGE!r} is not a Twilio edge (sydney, dublin, …)")
+        if self.DEPLOYMENT_REGION.strip() and self.DEPLOYMENT_REGION.strip() not in KNOWN_DEPLOYMENT_REGIONS:
+            problems.append(f"DEPLOYMENT_REGION {self.DEPLOYMENT_REGION!r} is not a supported region")
         if not self.COOKIE_SECURE:
             problems.append("COOKIE_SECURE must be true")
         if self.telephony_provider == "softphone":

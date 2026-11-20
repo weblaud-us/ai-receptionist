@@ -91,3 +91,22 @@ def test_chat_prompt_is_for_whatsapp():
     p = build_chat_prompt(_tenant(), SNAP, now=NOW, customer_phone="+15125550100")
     assert p.startswith(builder.BASE_CHAT_RULES) and "WhatsApp" in p
     assert "browser call" not in p and "Staff transfers" not in p and "# Salon rules" in p
+
+
+
+def test_dental_prompt_tracks_guardrails_and_country_facts():
+    gb = build_voice_prompt(_tenant(vertical="dental", country="GB", timezone="Europe/London"), now=NOW)
+    assert "# Dental practice rules" in gb and "a dental practice." in gb
+    assert "Never estimate what a treatment costs" in gb and "Never diagnose" in gb
+    assert "does not offer NHS treatment" in gb and "NHS 111" in gb and "Emergency number here: 999" in gb
+    assert "HICAPS" not in gb
+    mixed = build_voice_prompt(_tenant(vertical="dental", country="GB", dental={"accepts_nhs": True}), now=NOW)
+    assert "existing NHS patients only" in mixed
+    au = build_voice_prompt(_tenant(vertical="dental", country="AU", timezone="Australia/Sydney",
+                                    dental={"accepts_private_health_funds": True, "finance_available": True}), now=NOW)
+    assert "HICAPS on-the-spot claiming is available" in au and "Emergency number here: 000" in au
+    assert "treatment finance are available" in au and "- NHS:" not in au
+    # Other verticals don't get any of it.
+    salon = build_voice_prompt(_tenant(), now=NOW)
+    assert "Dental practice rules" not in salon and "NHS" not in salon and "HICAPS" not in salon
+    assert get_vertical("dental").keyterms[0] == "Invisalign"

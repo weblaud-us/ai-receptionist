@@ -3,6 +3,10 @@ Check that the settings needed for test calls are filled in and that each key ac
 
     uv run python -m scripts.check_env
 
+With dental practices on the platform (or on a regional stack, DEPLOYMENT_REGION), it also runs the
+dental production preflight (`dental_preflight`): encryption key, Twilio signature checks, no-training
+flags, ZDR status, Cliniko User-Agent, and each practice's time zone, currency, language and region.
+
 Read-only: it lists or pings, never creates anything, and never prints a key or password (only
 OK / WARN / FAIL and a hint). Run it after editing .env, before starting the worker.
 See docs/TELEPHONY_TESTING.md → "Environment variables".
@@ -12,11 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 import httpx
 
-from config import settings
+from config import Settings, settings
+from core.tenancy.models import TenantConfig
 
 _PLACEHOLDER = re.compile(r"REPLACE|your-|example\.com|xxxx|change-in-production|<.*>", re.I)
 Result = tuple[str, str]   # (OK|WARN|FAIL, message)
@@ -186,7 +191,7 @@ async def check_twilio(c: httpx.AsyncClient) -> Result:
     for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER", "TWILIO_TERMINATION_URI"):
         if (m := _missing(name)):
             return m[0], f"{name} {m[1]}"
-    r = await c.get(f"https://api.twilio.com/2010-04-01/Accounts/{settings.TWILIO_ACCOUNT_SID}.json",
+    r = await c.get(f"{settings.twilio_api_base}/2010-04-01/Accounts/{settings.TWILIO_ACCOUNT_SID}.json",
                     auth=(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN))
     return _http_result(r.status_code, "Twilio")
 
@@ -197,6 +202,110 @@ def check_secret_key() -> Result:
     if len(settings.SECRET_KEY) < 32:
         return "WARN", "shorter than 32 characters (production refuses to boot)"
     return "OK", "set"
+
+
+# ── Dental production preflight ──────────────────────────────────────────────
+
+EXPECTED_BY_COUNTRY = {
+    "AU": {"tz_prefix": "Australia/", "currency": "AUD", "locale": "en-AU", "region": "ap-southeast-2", "edge": "sydney"},
+    "GB": {"tz_prefix": "Europe/London", "currency": "GBP", "locale": "en-GB", "region": "eu-west-2", "edge": "dublin"},
+}
+
+
+def _fernet_ok(keys: str) -> bool:
+    from cryptography.fernet import Fernet
+
+    parts = [k.strip() for k in (keys or "").split(",") if k.strip()]
+    if not parts:
+        return False
+    try:
+        for k in parts:
+            Fernet(k.encode())
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def dental_preflight(cfg: Settings, tenants: Sequence[TenantConfig]) -> list[tuple[str, str, str]]:
+    """(level, check, message) rows for dental production readiness. `cfg` is a Settings, `tenants` the
+    dental TenantConfigs. FAIL = must fix before taking a dental call in production; WARN = review."""
+    prod = cfg.is_production
+    severe = "FAIL" if prod else "WARN"
+    out: list[tuple[str, str, str]] = []
+
+    def add(level: str, check: str, message: str) -> None:
+        out.append((level, check, message))
+
+    # Encryption at rest (core/crypto.py): health text and PMS keys are sealed with this key.
+    if _fernet_ok(cfg.TOKEN_ENCRYPTION_KEY):
+        add("OK", "Encryption", "TOKEN_ENCRYPTION_KEY is a valid Fernet key")
+    else:
+        add(severe, "Encryption", "TOKEN_ENCRYPTION_KEY missing or not a Fernet key: clinical text and PMS keys "
+                                  "would be encrypted with a key derived from SECRET_KEY")
+    if cfg.VERIFY_TWILIO_SIGNATURE:
+        add("OK", "Twilio sigs", "webhook signatures are verified")
+    else:
+        add(severe, "Twilio sigs", "VERIFY_TWILIO_SIGNATURE is false: anyone could post fake STOP / call webhooks")
+    if not cfg.DEEPGRAM_MIP_OPT_OUT or cfg.OPENAI_STORE:
+        add("FAIL", "No training", "set DEEPGRAM_MIP_OPT_OUT=true and OPENAI_STORE=false")
+    else:
+        add("OK", "No training", "Deepgram model-improvement opt-out on, OpenAI storage off")
+    for flag, vendor in (("OPENAI_ZDR_ENABLED", "OpenAI"), ("DEEPGRAM_ZDR_ENABLED", "Deepgram")):
+        if getattr(cfg, flag):
+            add("OK", "ZDR", f"{vendor} Zero Data Retention recorded as approved")
+        else:
+            add("WARN", "ZDR", f"{flag}=false: don't promise {vendor} Zero Data Retention to practices")
+    if any((t.integrations.pms or {}).get("provider") == "cliniko" for t in tenants) and not cfg.CLINIKO_USER_AGENT.strip():
+        add(severe, "Cliniko", "CLINIKO_USER_AGENT is empty (Cliniko requires app name + contact e-mail)")
+    region = cfg.DEPLOYMENT_REGION.strip()
+    stack_country = cfg.deployment_country
+    if not region:
+        add("WARN" if tenants else "OK", "Region", "DEPLOYMENT_REGION not set" + (
+            ": AU practices belong on ap-southeast-2, UK practices on eu-west-2" if tenants else ""))
+    for t in tenants:
+        exp = EXPECTED_BY_COUNTRY.get((t.country or "").upper())
+        name = f"{t.name} ({t.id})"
+        if exp is None:
+            add("WARN", "Practice", f"{name}: country {t.country or '?'} has no dental defaults (AU or GB expected)")
+            continue
+        problems = []
+        if not (t.timezone or "").startswith(exp["tz_prefix"]):
+            problems.append(f"timezone {t.timezone} (expected {exp['tz_prefix']}…)")
+        if t.currency != exp["currency"]:
+            problems.append(f"currency {t.currency} (expected {exp['currency']})")
+        if t.agent.stt_language not in (exp["locale"], "multi"):
+            problems.append(f"speech language {t.agent.stt_language} (expected {exp['locale']})")
+        if stack_country and stack_country != t.country.upper():
+            problems.append(f"hosted on {region}, but {exp['region']} is this country's region")
+        add("WARN" if problems else "OK", "Practice", f"{name}: " + ("; ".join(problems) if problems else "defaults look right"))
+    if stack_country:
+        exp = EXPECTED_BY_COUNTRY.get(stack_country, {})
+        edge = cfg.TWILIO_EDGE.strip().lower()
+        if exp and edge not in (exp.get("edge"), {"sydney": "au1", "dublin": "ie1"}.get(exp.get("edge", ""))):
+            add("WARN", "Twilio edge", f"TWILIO_EDGE={edge or '(empty)'}: {exp.get('edge')} is the edge for {region}")
+    return out
+
+
+async def check_dental() -> list[tuple[str, str, str]]:
+    """Load the dental practices (if the database answers) and run the preflight."""
+    tenants: list[TenantConfig] = []
+    if settings.MONGODB_URI and not _PLACEHOLDER.search(settings.MONGODB_URI):
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URI, serverSelectionTimeoutMS=6000)
+        try:
+            async for doc in client[settings.MONGODB_DB_NAME].tenants.find({"vertical": "dental"}):
+                try:
+                    tenants.append(TenantConfig.from_doc(doc))
+                except ValueError:
+                    continue
+        except Exception:
+            pass
+        finally:
+            client.close()
+    if not tenants and not settings.DEPLOYMENT_REGION.strip():
+        return []
+    return dental_preflight(settings, tenants)
 
 
 async def main() -> None:
@@ -230,6 +339,13 @@ async def main() -> None:
             results.append(res)
             icon = {"OK": "✅", "WARN": "⚠️ ", "FAIL": "❌"}[res[0]]
             print(f"{icon} {name:<11} {res[1]}")
+    dental = await check_dental()
+    if dental:
+        print("\nDental production preflight:")
+        for level, name, message in dental:
+            results.append((level, message))
+            icon = {"OK": "✅", "WARN": "⚠️ ", "FAIL": "❌"}[level]
+            print(f"{icon} {name:<11} {message}")
     fails = sum(r[0] == "FAIL" for r in results)
     print(f"\n{fails} problem(s)." if fails else "\nAll required settings work.")
     raise SystemExit(1 if fails else 0)

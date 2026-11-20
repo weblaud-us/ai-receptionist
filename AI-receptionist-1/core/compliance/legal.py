@@ -20,10 +20,10 @@ from config import settings
 # key → (title, version, settings attribute holding the public URL)
 DOCUMENTS: Dict[str, Dict[str, str]] = {
     "terms":         {"title": "Terms of Service",          "version": "2026-11-19", "url_setting": "TERMS_URL"},
-    "privacy":       {"title": "Privacy Policy",            "version": "2026-11-19", "url_setting": "PRIVACY_URL"},
+    "privacy":       {"title": "Privacy Policy",            "version": "2026-11-20", "url_setting": "PRIVACY_URL"},
     "aup":           {"title": "Acceptable Use Policy",     "version": "2026-11-19", "url_setting": "AUP_URL"},
-    "dpa":           {"title": "Data Processing Agreement", "version": "2026-11-19", "url_setting": "DPA_URL"},
-    "subprocessors": {"title": "Sub-processors",            "version": "2026-11-19", "url_setting": "SUBPROCESSORS_URL"},
+    "dpa":           {"title": "Data Processing Agreement", "version": "2026-11-20", "url_setting": "DPA_URL"},
+    "subprocessors": {"title": "Sub-processors",            "version": "2026-11-20", "url_setting": "SUBPROCESSORS_URL"},
     "sla":           {"title": "Service Level Agreement",   "version": "2026-11-19", "url_setting": "SLA_URL"},
     "security":      {"title": "Security overview",         "version": "2026-11-19", "url_setting": "SECURITY_URL"},
 }
@@ -37,9 +37,9 @@ SUBPROCESSORS: List[Dict[str, str]] = [
      "location": "United States", "when": "always"},
     {"name": "LiveKit, Inc.", "purpose": "Real-time call media and SIP bridging", "data": "Call audio in transit, call metadata",
      "location": "United States / EU (by region)", "when": "always"},
-    {"name": "Deepgram, Inc.", "purpose": "Speech-to-text", "data": "Caller audio",
+    {"name": "Deepgram, Inc.", "purpose": "Speech-to-text (opted out of model improvement)", "data": "Caller audio",
      "location": "United States", "when": "always"},
-    {"name": "OpenAI, L.L.C.", "purpose": "Language model; call summaries", "data": "Transcripts, business information",
+    {"name": "OpenAI, L.L.C.", "purpose": "Language model; call summaries (storage off)", "data": "Transcripts, business information",
      "location": "United States", "when": "always"},
     {"name": "Anthropic, PBC", "purpose": "Fallback language model", "data": "Transcripts, business information",
      "location": "United States", "when": "if the primary language model fails"},
@@ -65,6 +65,12 @@ SUBPROCESSORS: List[Dict[str, str]] = [
      "location": "United States", "when": "only if the business connects Google Calendar"},
     {"name": "Meta Platforms, Inc. (WhatsApp)", "purpose": "WhatsApp messaging", "data": "Phone numbers, message content",
      "location": "United States", "when": "only if the business connects WhatsApp"},
+    {"name": "Red Guava Pty Ltd (Cliniko)", "purpose": "The dental practice's own diary (bookings)",
+     "data": "Patient name and phone number, appointment times and notes",
+     "location": "The practice's Cliniko region (e.g. Australia)", "when": "only if the practice connects Cliniko"},
+    {"name": "Dentally (Henry Schein One)", "purpose": "The dental practice's own diary (bookings)",
+     "data": "Patient name and phone number, appointment times and notes",
+     "location": "United Kingdom", "when": "only if the practice connects Dentally"},
 ]
 
 

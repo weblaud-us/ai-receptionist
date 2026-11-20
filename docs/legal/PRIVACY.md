@@ -1,6 +1,6 @@
 # Privacy Policy
 
-> **DRAFT for counsel review — not legal advice.** Version `2026-11-19`. Fill in every `[bracket]`.
+> **DRAFT for counsel review — not legal advice.** Version `2026-11-20`. Fill in every `[bracket]`.
 
 **Last updated:** [date]
 
@@ -38,6 +38,16 @@ are in our [Data Processing Agreement](DPA.md); the companies that help us are l
 Transcription counts as processing even when a call is not recorded. Recording happens only when a
 business switches it on, and the assistant then announces it at the start of the call.
 
+### Calls to dental practices
+
+When you call a dental practice that uses our assistant, you may tell it about symptoms, pain or the
+treatment you want. That is health information (special category data under UK GDPR Article 9;
+sensitive information under the Australian Privacy Act 1988). The practice is responsible for it.
+We process it only to answer your call, book your appointment and pass your message to the practice.
+We store it encrypted, keep it only for the practice's retention period, and never use it for
+advertising or to train AI models. The assistant is not a clinician and gives no medical advice. In
+an emergency it will tell you to call 000 (Australia) or 999 (UK).
+
 ## 3. Who we share data with
 
 Service providers acting for us ([sub-processors](SUBPROCESSORS.md)), our professional advisers,
@@ -59,6 +69,7 @@ processed in our EU region. [Confirm availability at publication.]
 | Account data | While the account is open, then [30] days, then deleted |
 | Invoices and tax records | As tax law requires (typically 6–10 years) |
 | Callers' transcripts and recordings | As set by each business (defaults: transcripts 90 days, recordings 30 days); deleted 30 days after the business cancels |
+| Enquiries taken for dental practices (callback requests, emergency triage, treatment enquiries) | As set by each practice (default 365 days) |
 | Sales leads | [24 months after last contact] |
 | Do-not-contact records | Permanently — this is how we keep the promise not to contact you |
 | Backups | Overwritten within [35] days |
@@ -69,8 +80,8 @@ Depending on where you live, you can ask to access, correct, delete or port your
 or restrict processing, and withdraw consent. Californians and residents of other US states with
 privacy laws have similar rights, and we do not sell or "share" personal data for cross-context
 advertising. Write to [PRIVACY_CONTACT_EMAIL]; we answer within one month (GDPR) or the deadline your
-law sets. You can complain to your data protection authority (for example the ICO in the UK, or the
-authority in your EU country).
+law sets. You can complain to your data protection authority (for example the ICO in the UK, the
+Office of the Australian Information Commissioner in Australia, or the authority in your EU country).
 
 **Stop texts or calls from us:** reply STOP to any text, say "stop calling" on a call, or e-mail us.
 

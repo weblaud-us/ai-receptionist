@@ -119,12 +119,21 @@ export default function Assistant() {
                   options={[{ value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'cartesia', label: 'Cartesia' }, { value: 'openai', label: 'OpenAI' }]} />
               </Field>
               <Field label="Voice" className="sm:col-span-2">
-                <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })} />
+                <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })}
+                  country={ctx.tenant.country} />
               </Field>
             </div>
             <Field label="Greeting" hint="Leave empty for the standard greeting. Callers must hear that they're talking to a virtual assistant — that's the law in many places.">
               <Textarea rows={2} value={a.greeting} placeholder={ctx.greeting} onChange={(e) => setAgent({ greeting: e.target.value })} />
             </Field>
+            {ctx.vertical.key === 'dental' && (
+              <Field label="Words to listen for"
+                hint="Comma-separated: your dentists' names, brands and treatments callers say (e.g. Invisalign, Bupa, zirconia). Common dental terms are already included.">
+                <Input value={(a.stt_keyterms ?? []).join(', ')}
+                  onChange={(e) => setAgent({ stt_keyterms: e.target.value.split(',').map((w) => w.trimStart()).slice(0, 50) })}
+                  onBlur={() => setAgent({ stt_keyterms: (a.stt_keyterms ?? []).map((w) => w.trim()).filter(Boolean) })} />
+              </Field>
+            )}
             {a.greeting && !/\b(virtual|digital|automated|artificial|AI|bot|robot)\b/i.test(a.greeting) && (
               <p className="text-xs text-amber-700 dark:text-amber-400">⚠ Your greeting doesn't say it's an AI, so we'll add "This is {a.name || 'your assistant'}, a virtual assistant" after the first sentence. Save to hear the result below.</p>
             )}

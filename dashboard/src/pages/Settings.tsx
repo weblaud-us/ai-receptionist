@@ -5,6 +5,7 @@ import { CheckCircle2, Copy, Loader2, Plus, Save, Trash2, XCircle } from 'lucide
 import { ErrorBanner, Field, KeyValue, PageHeader } from '@receptionist/shared/components/blocks'
 import { HoursEditor } from '@/components/app/hours-editor'
 import { IntegrationsPanel } from '@/components/app/integrations-card'
+import { RecallCard } from '@/components/app/recall-card'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Badge } from '@receptionist/shared/components/ui/badge'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -25,7 +26,12 @@ import type { Tenant } from '@/lib/tenant-types'
 import { useDraft } from '@/lib/use-draft'
 
 type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'address' | 'timezone' | 'currency' | 'hours' |
-  'scheduling' | 'policies' | 'notifications' | 'hotel' | 'answering_mode'>
+  'scheduling' | 'policies' | 'notifications' | 'hotel' | 'answering_mode' | 'dental' | 'missed_call_recovery' |
+  'legal_entity'>
+
+const DENTAL_DEFAULTS = { accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false }
+const RECOVERY_DEFAULTS = { enabled: false, template: '', channel: 'sms' as const }
+const ENTITY_DEFAULTS = { registered_name: '', abn: '', company_number: '' }
 
 const CHANNELS = [{ key: 'sms', label: 'Text' }, { key: 'email', label: 'E-mail' }, { key: 'whatsapp', label: 'WhatsApp' }]
 
@@ -58,6 +64,73 @@ export default function SettingsPage() {
   )
 }
 
+function DentalCard({ draft, set, country }: { draft: Draft; set: (p: Partial<Draft>) => void; country: string }) {
+  const d = draft.dental ?? DENTAL_DEFAULTS
+  const r = draft.missed_call_recovery ?? RECOVERY_DEFAULTS
+  const e = draft.legal_entity ?? ENTITY_DEFAULTS
+  const toggle = (label: string, checked: boolean, onChange: (v: boolean) => void) => (
+    <label className="flex items-center gap-2 text-sm"><Switch checked={checked} onCheckedChange={onChange} /> {label}</label>
+  )
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle>Your practice</CardTitle>
+        <CardDescription>How your assistant covers reception, what it tells patients, and how missed callers are won back.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Reception cover</div>
+          {toggle('Overflow mode: answer when reception is busy', draft.answering_mode === 'overflow',
+            (v) => set({ answering_mode: v ? 'overflow' : 'all_calls' }))}
+          <p className="text-xs text-muted-foreground">
+            Forward calls to your assistant after a few rings. Lunch breaks and after-hours calls follow your opening hours.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Payments and funding</div>
+          {country === 'GB' && (
+            <>
+              {toggle('We offer NHS treatment', d.accepts_nhs,
+                (v) => set({ dental: { ...d, accepts_nhs: v, accepts_new_nhs_patients: v && d.accepts_new_nhs_patients } }))}
+              {d.accepts_nhs && toggle('We are taking new NHS patients', d.accepts_new_nhs_patients,
+                (v) => set({ dental: { ...d, accepts_new_nhs_patients: v } }))}
+            </>
+          )}
+          {country === 'AU' && toggle('HICAPS on-the-spot health fund claims', d.accepts_private_health_funds,
+            (v) => set({ dental: { ...d, accepts_private_health_funds: v } }))}
+          {toggle('Payment plans or treatment finance', d.finance_available, (v) => set({ dental: { ...d, finance_available: v } }))}
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <div className="text-sm font-medium">Missed-call text</div>
+          {toggle('Text callers who hang up before booking (at most once a day, never after a STOP)', r.enabled,
+            (v) => set({ missed_call_recovery: { ...r, enabled: v } }))}
+          {r.enabled && (
+            <Field label="Message"
+              hint="Leave empty for the standard text. You can use {business}, {link} (your booking link) and {phone}. The opt-out line is added for you.">
+              <Textarea rows={2} maxLength={320} value={r.template}
+                onChange={(ev) => set({ missed_call_recovery: { ...r, template: ev.target.value } })} />
+            </Field>
+          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 md:col-span-2">
+          <Field label="Registered business name" hint="For your phone number's regulatory registration">
+            <Input value={e.registered_name} onChange={(ev) => set({ legal_entity: { ...e, registered_name: ev.target.value } })} />
+          </Field>
+          {country === 'GB' ? (
+            <Field label="Companies House number" hint="8 characters, e.g. 01234567 (empty if you're a sole trader)">
+              <Input value={e.company_number} onChange={(ev) => set({ legal_entity: { ...e, company_number: ev.target.value } })} />
+            </Field>
+          ) : (
+            <Field label="ABN" hint="Your 11-digit Australian Business Number">
+              <Input value={e.abn} onChange={(ev) => set({ legal_entity: { ...e, abn: ev.target.value } })} />
+            </Field>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function BusinessTab() {
   const ctx = useCtx()
   const { can } = useTenant()
@@ -68,6 +141,11 @@ function BusinessTab() {
     name: t.name, description: t.description, phone: t.phone, website: t.website, address: t.address, timezone: t.timezone,
     currency: t.currency, hours: t.hours, scheduling: t.scheduling, policies: t.policies, notifications: t.notifications, hotel: t.hotel,
     answering_mode: t.answering_mode ?? 'all_calls',
+    ...(ctx.vertical.key === 'dental' ? {
+      dental: t.dental ?? DENTAL_DEFAULTS,
+      missed_call_recovery: t.missed_call_recovery ?? RECOVERY_DEFAULTS,
+      legal_entity: t.legal_entity ?? ENTITY_DEFAULTS,
+    } : {}),
   })
   const [newPolicy, setNewPolicy] = useState('')
   if (!draft) return null
@@ -119,8 +197,13 @@ function BusinessTab() {
             <CardTitle>Opening hours</CardTitle>
             <CardDescription>Bookings are only offered inside these hours.</CardDescription>
           </CardHeader>
-          <CardContent><HoursEditor value={draft.hours} onChange={(hours) => set({ hours })} disabled={!editable} /></CardContent>
+          <CardContent><HoursEditor value={draft.hours} onChange={(hours) => set({ hours })} disabled={!editable}
+            lunchBreak={ctx.vertical.key === 'dental'} /></CardContent>
         </Card>
+
+        {ctx.vertical.key === 'dental' && (
+          <DentalCard draft={draft} set={set} country={t.country} />
+        )}
 
         {ctx.vertical.uses_scheduling ? (
           <Card>
@@ -223,6 +306,7 @@ function BusinessTab() {
           </CardContent>
         </Card>
       </fieldset>
+      {ctx.vertical.key === 'dental' && !ctx.legacy && <div className="grid gap-4 lg:grid-cols-2"><RecallCard /></div>}
     </div>
   )
 }

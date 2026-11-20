@@ -49,3 +49,50 @@ def public_guest(doc: Dict[str, Any]) -> Dict[str, Any]:
     out.pop("id_number_last4", None)
     out["id_number_masked"] = masked(last4)
     return out
+
+
+# ── Clinical free text (dental: UK GDPR Art. 9 / APP 11) ─────────────────────
+#
+# Health details a caller describes (symptoms, treatment notes) and the call transcript are stored
+# as ciphertext for tenants with clinical encryption (TenantConfig.clinical_encryption: every
+# dental practice). `seal` replaces a field with `<field>_enc`; `unseal` restores it for the
+# screens and exports that show it. JSON inside, so lists (transcripts) round-trip.
+
+SEALABLE = ("problem", "notes", "transcript")
+LEAD_TEXT_FIELDS = ("problem", "notes")
+
+
+def seal(doc: Dict[str, Any], fields: tuple = SEALABLE) -> Dict[str, Any]:
+    """A copy of `doc` with each non-empty field in `fields` replaced by `<field>_enc`."""
+    import json
+
+    out = dict(doc)
+    for f in fields:
+        if f not in out:
+            continue
+        value = out.pop(f)
+        if value in (None, "", [], {}):
+            continue
+        out[f"{f}_enc"] = crypto.encrypt(json.dumps(value, default=str, ensure_ascii=False))
+    return out
+
+
+def unseal(doc: Optional[Dict[str, Any]], fields: tuple = SEALABLE) -> Dict[str, Any]:
+    """A copy of `doc` with sealed fields readable again. An unreadable value (wrong key) becomes None."""
+    import json
+
+    out = dict(doc or {})
+    for f in fields:
+        token = out.pop(f"{f}_enc", None)
+        if not token:
+            continue
+        try:
+            out[f] = json.loads(crypto.decrypt(token))
+        except (crypto.DecryptionError, ValueError):
+            out[f] = None
+    return out
+
+
+def drop_ciphertext(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Never send ciphertext to a browser: remove every `*_enc` field."""
+    return {k: v for k, v in doc.items() if not (isinstance(k, str) and k.endswith("_enc"))}

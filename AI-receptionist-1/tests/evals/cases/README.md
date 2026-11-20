@@ -14,7 +14,9 @@ the platform app (Transcript review → Make eval case → Approve), or by hand.
     "currency": "USD", "description": "", "hours": [{"dow": 0, "open": "09:00", "close": "17:00"}],
     "agent": {"name": "Aria", "tone": "warm"},
     "services": [{"name": "Haircut", "duration_min": 45, "price": {"amount": 4500, "currency": "USD", "display": "from $45"}}],
-    "knowledge": [{"question": "…", "answer": "…"}]
+    "knowledge": [{"question": "…", "answer": "…"}],
+    "dental": {"accepts_nhs": false},  // optional: dental, links, answering_mode, policies,
+    "links": {"booking": "https://…"}  //   emergency_instructions are copied onto the business
   },
   "caller_turns": ["what the caller said, turn 1", "turn 2"],
   "expect": {
@@ -29,4 +31,5 @@ Rules:
 - **No personal data.** Cases are redacted when created (numbers, e-mails, the caller's name), but
   read every file before committing it.
 - One behaviour per case. A failing case should tell you exactly what broke.
-- The four `seed_*` cases are hand-written examples of the failures the pilot review looks for.
+- The `seed_*` cases are hand-written examples of the failures the pilot review looks for
+  (`seed_dental_*`: the dental vertical's price, NHS, emergency and after-hours guardrails).

@@ -78,6 +78,23 @@ async def maybe_sync_calendar(t: TenantConfig, now: datetime) -> bool:
     return True
 
 
+async def run_reactivation(t: TenantConfig, now: datetime) -> int:
+    """Dental patient recall: refresh from the PMS daily, send what's due (core/services/reactivation)."""
+    from core.services import reactivation
+
+    return await reactivation.run(t, now)
+
+
+async def maybe_sync_pms(t: TenantConfig, now: datetime) -> bool:
+    """Dental PMS (Cliniko / Dentally): refresh the mirrored dentists and appointment types."""
+    from core.services import pms_sync
+
+    if not pms_sync.due(t, now):
+        return False
+    await pms_sync.sync(t)
+    return True
+
+
 # ── reminders ────────────────────────────────────────────────────────────────
 
 async def send_reminders(t: TenantConfig, now: datetime) -> int:
@@ -167,13 +184,26 @@ async def maybe_send_digest(t: TenantConfig, now: datetime, raw: Dict[str, Any])
 async def purge_transcripts(t: TenantConfig, now: datetime) -> int:
     cutoff = now - timedelta(days=t.agent.transcript_retention_days)
     res = await Repos(get_db(), t.id).calls.update_many(
-        {"status": "completed", "transcript": {"$exists": True},
-         "$or": [{"ended_at": {"$lt": cutoff}}, {"ended_at": None, "started_at": {"$lt": cutoff}}]},
-        {"$unset": {"transcript": "", "turns": ""}, "$set": {"transcript_purged_at": now}})
+        {"status": "completed",
+         "$and": [{"$or": [{"transcript": {"$exists": True}}, {"transcript_enc": {"$exists": True}}]},
+                  {"$or": [{"ended_at": {"$lt": cutoff}}, {"ended_at": None, "started_at": {"$lt": cutoff}}]}]},
+        {"$unset": {"transcript": "", "transcript_enc": "", "turns": ""}, "$set": {"transcript_purged_at": now}})
     purged = int(getattr(res, "modified_count", 0) or 0)
     if purged:
         logger.info("Purged %d transcripts older than %d days for %s", purged, t.agent.transcript_retention_days, t.id)
     return purged
+
+
+async def purge_leads(t: TenantConfig, now: datetime) -> int:
+    """Leads older than privacy.lead_retention_days are deleted (0 = keep). Dental default: one year."""
+    days = t.privacy.lead_retention_days
+    if not days:
+        return 0
+    res = await Repos(get_db(), t.id).leads.delete_many({"created_at": {"$lt": now - timedelta(days=days)}})
+    deleted = int(getattr(res, "deleted_count", 0) or 0)
+    if deleted:
+        logger.info("Deleted %d leads older than %d days for %s", deleted, days, t.id)
+    return deleted
 
 
 # ── recording retention (Phase 6) ────────────────────────────────────────────
@@ -247,14 +277,17 @@ async def maybe_send_pilot_report(t: TenantConfig, now: datetime) -> bool:
 async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
     stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
-             "monthly_reports": 0, "pilot_reports": 0}
+             "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0,
+             "recall_texts": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
         set_tenant(t.id)
-        for name, job in (("synced", maybe_sync_calendar(t, now)), ("reminders", send_reminders(t, now)),
+        for name, job in (("synced", maybe_sync_calendar(t, now)), ("pms_synced", maybe_sync_pms(t, now)),
+                          ("recall_texts", run_reactivation(t, now)),
+                          ("reminders", send_reminders(t, now)),
                           ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {}))),
-                          ("purged", purge_transcripts(t, now)),
+                          ("purged", purge_transcripts(t, now)), ("leads_purged", purge_leads(t, now)),
                           ("recordings_deleted", purge_recordings(t, now)),
                           ("monthly_reports", maybe_send_monthly_report(t, now)),
                           ("pilot_reports", maybe_send_pilot_report(t, now))):

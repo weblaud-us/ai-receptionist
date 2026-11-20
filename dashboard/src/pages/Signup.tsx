@@ -17,7 +17,8 @@ import { AuthCard } from '@receptionist/shared/auth/login-pages'
 const BUSINESS_TYPES = [
   { value: 'home_services', label: 'Home services (plumbing, HVAC, electrical…)' },
   { value: 'salon', label: 'Salon, barber or spa' },
-  { value: 'clinic', label: 'Clinic, dental or physio' },
+  { value: 'dental', label: 'Dental practice' },
+  { value: 'clinic', label: 'Clinic, physio or therapy' },
   { value: 'restaurant', label: 'Restaurant or café' },
   { value: 'professional', label: 'Professional services (law, accounting…)' },
   { value: 'hotel', label: 'Hotel or guesthouse' },
@@ -73,10 +74,12 @@ export default function Signup() {
   const [plan, setPlan] = useState(params.get('plan') ?? 'growth')
   const [annual, setAnnual] = useState(params.get('interval') === 'year')
   const [form, setForm] = useState(() => ({
-    name: '', email: '', password: '', business_name: '', vertical: 'home_services',
+    name: '', email: '', password: '', business_name: '',
+    vertical: BUSINESS_TYPES.some((b) => b.value === params.get('vertical')) ? String(params.get('vertical')) : 'home_services',
     country: (params.get('country') ?? '').toUpperCase() || guessCountry(guessTimezone()),
   }))
-  const plans = usePlans(form.country)
+  // Dental practices have their own plans (retainer + onboarding fee); the list follows the business type.
+  const plans = usePlans(form.country, form.vertical)
   const [accept, setAccept] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -92,6 +95,10 @@ export default function Signup() {
     )
   }
   const selfServe = cat?.plans.filter((p) => p.self_serve) ?? []
+  // A plan picked for another business type isn't offered for this one: fall back to its recommended plan.
+  const chosen = selfServe.some((p) => p.key === plan)
+    ? plan
+    : (selfServe.find((p) => p.recommended) ?? selfServe[0])?.key ?? plan
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -100,12 +107,12 @@ export default function Signup() {
     try {
       const res = await api<SignupResponse>('/signup', {
         method: 'POST', auth: false,
-        body: { ...form, email: form.email.trim(), plan, interval: annual ? 'year' : 'month', timezone: guessTimezone(), accept_terms: accept },
+        body: { ...form, email: form.email.trim(), plan: chosen, interval: annual ? 'year' : 'month', timezone: guessTimezone(), accept_terms: accept },
       })
       applyTokens(res)
       if (res.next === 'checkout') {
         // Straight to Stripe Checkout: card first (trial included), then the setup wizard.
-        const checkout = await api<{ url: string }>('/t/billing/checkout', { method: 'POST', body: { plan, interval: annual ? 'year' : 'month' } })
+        const checkout = await api<{ url: string }>('/t/billing/checkout', { method: 'POST', body: { plan: chosen, interval: annual ? 'year' : 'month' } })
         window.location.assign(checkout.url)
         return
       }
@@ -147,7 +154,7 @@ export default function Signup() {
           {selfServe.map((p) => (
             <button key={p.key} type="button" onClick={() => setPlan(p.key)}
               className={cn('rounded-xl border bg-card p-5 text-left text-card-foreground transition-shadow',
-                plan === p.key ? 'border-primary ring-2 ring-primary/40' : 'hover:shadow-md')}>
+                chosen === p.key ? 'border-primary ring-2 ring-primary/40' : 'hover:shadow-md')}>
               <div className="flex items-center justify-between">
                 <span className="font-semibold">{p.name}</span>
                 {p.recommended && <Badge>Most popular</Badge>}
@@ -157,6 +164,9 @@ export default function Signup() {
                 <span className="text-sm font-normal text-muted-foreground">/mo</span>
               </div>
               {annual && <div className="text-xs text-muted-foreground">{formatPrice(p.annual, p.currency)} billed yearly</div>}
+              {p.setup_fee_required && p.setup_fee ? (
+                <div className="text-xs text-muted-foreground">+ {formatPrice(p.setup_fee, p.currency)} one-time onboarding</div>
+              ) : null}
               <p className="mt-2 text-sm text-muted-foreground">{p.tagline}</p>
               <ul className="mt-3 space-y-1 text-sm">
                 {p.features.map((f) => (

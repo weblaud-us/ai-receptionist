@@ -108,3 +108,38 @@ answers new calls, so a deploy drops nothing.
   (managed, same network as the media, scales on active jobs) or to ECS / Cloud Run jobs / Fly
   Machines with a scale rule on CPU. The image needs no change: it only makes outbound
   connections and drains on SIGTERM. ⚠ Verify LiveKit Cloud agent-hosting limits and pricing first.
+
+## Regional stacks (AU and UK dental practices)
+
+Dental practices' call data is health data (UK GDPR Article 9; health information under the
+Australian Privacy Act). Each country gets its own stack, so the database, the recordings and Redis
+stay in that country's AWS region. See [docs/COMPLIANCE.md](../docs/COMPLIANCE.md) §7b and DPA §5.
+
+| Stack | Environment name | `DEPLOYMENT_REGION` | Twilio | Cliniko shard | Profile |
+|---|---|---|---|---|---|
+| Australia | `production-au` | `ap-southeast-2` (Sydney) | `TWILIO_EDGE=sydney`, `TWILIO_REGION=au1` | `au1` / `au2` | [regions/ap-southeast-2.env.example](regions/ap-southeast-2.env.example) |
+| United Kingdom | `production-uk` | `eu-west-2` (London) | `TWILIO_EDGE=dublin`, `TWILIO_REGION=ie1` | `uk1` | [regions/eu-west-2.env.example](regions/eu-west-2.env.example) |
+
+Per stack:
+
+1. **Host and data in the region:** an EC2 host (or equivalent) in that region; a MongoDB Atlas cluster
+   in the same AWS region; an S3 bucket there (`RECORDING_S3_REGION`); a managed Redis there (or the
+   bundled container).
+2. **Settings:** `/etc/receptionist/production-au.env` = `AI-receptionist-1/.env.example` plus the
+   region profile above. `/etc/receptionist/production-au.deploy` = the usual compose variables plus
+   `DEPLOYMENT_REGION=ap-southeast-2`. `deploy.sh` refuses to run when the two disagree, or when a
+   `*-au` / `*-uk` environment has the wrong region.
+3. **Twilio:** create API credentials **in that Twilio region** (AU1 / IE1); route the SIP trunk
+   through the same edge (`<trunk>.pstn.sydney.twilio.com` / `<trunk>.pstn.dublin.twilio.com` as
+   `TWILIO_TERMINATION_URI`). ⚠ VERIFY regional availability of every Twilio product you use.
+4. **LiveKit:** a LiveKit Cloud project (or self-hosted server) near the region.
+5. **Domains:** e.g. `api.au.example.com` / `app.au.example.com`. Point the signup page for that
+   country at that stack's API.
+6. **Preflight:** run `docker compose run --rm jobs python -m scripts.check_env` on the host.
+   The dental preflight must show no ❌ (encryption key, signature checks, no-training flags,
+   Cliniko User-Agent) before the first practice goes live, and the ⚠ lines must be understood (ZDR
+   not approved means you don't promise ZDR).
+7. **Deploy:** `./deploy.sh v1.2.3 production-au`.
+
+Speech and language models are processed where each vendor runs them (see the sub-processor list),
+whatever the stack's region. The region keeps stored data local, not every API call.

@@ -146,7 +146,8 @@ async def is_opted_out(db: Any, tenant_id: str, phone: str) -> bool:
     if doc is not None:
         return True
     latest = await db[EVENTS].find(  # cross-tenant: platform-wide opt-outs apply to every business
-        {"phone": number, "scope": "platform"}, {"kind": 1}).sort("at", -1).limit(1).to_list(1)
+        {"phone": number, "scope": "platform"}, {"kind": 1}).sort([("at", -1), ("_id", -1)]).limit(1).to_list(1)
+    # _id breaks ties: BSON dates are millisecond-precise, so a STOP and a START can share one `at`.
     return bool(latest) and latest[0].get("kind") == "opt_out"
 
 

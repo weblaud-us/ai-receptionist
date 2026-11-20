@@ -30,6 +30,8 @@ def init_sentry(component: str) -> bool:
         release=settings.GIT_SHA or None,
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
         send_default_pii=False,
+        # ⚖ Stack-frame variables would carry tool arguments (symptoms, names, numbers) to Sentry.
+        include_local_variables=False,
         before_send=_before_send,
         before_send_transaction=_before_send,
     )

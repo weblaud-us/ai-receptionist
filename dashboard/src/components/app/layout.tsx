@@ -58,6 +58,7 @@ interface NavItem {
 function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
   const L = ctx.vertical.labels
   const isHotel = ctx.vertical.key === 'hotel'
+  const isDental = ctx.vertical.key === 'dental'
   const work: NavItem[] = isHotel
     ? [
         { to: '/bookings', label: 'Bookings', icon: CalendarDays },
@@ -68,10 +69,11 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
         { to: '/reminders', label: 'Reminders', icon: Bell },
       ]
     : [
-        { to: '/appointments', label: L.appointments, icon: CalendarClock },
+        { to: '/appointments', label: isDental ? 'Consultations & appointments' : L.appointments, icon: CalendarClock },
         ...(ctx.vertical.key === 'home_services' ? [{ to: '/leads', label: 'Job requests', icon: ClipboardList }] : []),
+        ...(ctx.vertical.key === 'dental' ? [{ to: '/leads', label: 'Captured leads', icon: ClipboardList }] : []),
         { to: '/contacts', label: L.contacts, icon: Contact },
-        { to: '/services', label: `${L.services} & ${L.resources.toLowerCase()}`, icon: ctx.vertical.key === 'salon' ? Scissors : Wrench, role: 'admin' },
+        { to: '/services', label: isDental ? 'Treatments & fees' : `${L.services} & ${L.resources.toLowerCase()}`, icon: ctx.vertical.key === 'salon' ? Scissors : Wrench, role: 'admin' },
       ]
   return [
     {

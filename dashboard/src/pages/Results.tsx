@@ -14,6 +14,8 @@ import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { money } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
 import { useFeedback, useInsights, type Insights } from '@/lib/compliance'
+import { DentalRoi } from '@/components/app/dental-roi'
+import { useCtx } from '@/lib/tenant'
 
 const PERIODS = [
   { value: '7', label: 'Last 7 days' },
@@ -102,6 +104,7 @@ function FeedbackCard({ current }: { current: Insights['satisfaction'] }) {
 
 /** Phase 7: what the assistant did for the business — the pilot scorecard and the monthly retention story. */
 export default function Results() {
+  const ctx = useCtx()
   const [days, setDays] = useState('30')
   const q = useInsights(Number(days))
   const d = q.data
@@ -121,6 +124,7 @@ export default function Results() {
               <Badge>Pilot</Badge> You’re on the free pilot. We go through these numbers with you on the weekly call.
             </div>
           )}
+          {d.dental && <DentalRoi dental={d.dental} locale={ctx.tenant.locale} />}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Stat highlight label="Calls that would have been missed" value={d.would_have_missed} sub={MODE_HINT[d.answering_mode]} icon={<PhoneMissed className="size-4" />} />
             <Stat label="Bookings made" value={d.bookings} sub={d.est_booking_value ? `About ${money(d.est_booking_value, d.currency)} at list price` : 'By phone or WhatsApp'} icon={<CalendarCheck className="size-4" />} />

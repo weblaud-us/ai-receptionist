@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from agent.state import CallState
+from core.sensitive import seal
 from agent.summary import summarise_call
 from agent.telemetry import summarise
 from config import settings
@@ -46,6 +47,23 @@ def _after_hours(state: CallState) -> Optional[bool]:
     try:
         tenant = state.profile.tenant
         return not tenant.is_open(business_now(tenant.timezone, state.started_at))
+    except Exception:
+        return None
+
+
+def _answer_window(state: CallState) -> Optional[str]:
+    """open | lunch_break | after_hours when the call came in (dental overflow KPIs, Phase 5)."""
+    try:
+        tenant = state.profile.tenant
+        return tenant.answer_window(business_now(tenant.timezone, state.started_at))
+    except Exception:
+        return None
+
+
+def _overflow(state: CallState) -> Optional[bool]:
+    """Forwarded while the business was open because reception was busy (answering_mode=overflow)."""
+    try:
+        return _answer_window(state) == "open" and state.profile.tenant.answering_mode == "overflow"
     except Exception:
         return None
 
@@ -80,6 +98,8 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "fallbacks": state.fallbacks,
         "transfer": state.transfer,
         "after_hours": _after_hours(state),
+        "answer_window": _answer_window(state),
+        "overflow": _overflow(state),
         "updated_at": now,
     }
     if final:
@@ -121,9 +141,13 @@ class CallRecorder:
 
     async def _write(self, *, final: bool) -> None:
         try:
+            doc = call_document(self.state, final=final)
+            tenant = getattr(self.state.profile, "tenant", None)
+            if tenant is not None and tenant.clinical_encryption:
+                doc = seal(doc, ("transcript",))      # health details: encrypted at rest (dental)
             await Repos(get_db(), self.state.profile.business_id).calls.update_one(
                 {"call_id": self.state.call_id},
-                {"$set": call_document(self.state, final=final),
+                {"$set": doc,
                  "$setOnInsert": {"created_at": self.state.started_at}},
                 upsert=True,
             )
@@ -139,11 +163,20 @@ class CallRecorder:
         await self._write(final=True)
         await self._record_usage()
         await self._summarise_and_notify()
+        await self._schedule_recovery()
         latency = summarise(self.state.turns)
         logger.info("Call %s ended: outcome=%s turns=%s p50=%ss p95=%ss tool_p50=%ss greeting=%ss",
                     self.state.call_id, self.state.outcome or "completed", latency["turns"],
                     latency["p50_s"], latency["p95_s"], latency["tool_p50_s"], self.state.greeting_latency_s)
 
+
+    async def _schedule_recovery(self) -> None:
+        """A text to a caller who hung up without booking (opt-in per business; never raises)."""
+        if self.state.profile.business_id == "unassigned":
+            return
+        from core.services import recovery
+
+        await recovery.schedule(self.state)
 
     async def _summarise_and_notify(self) -> None:
         """Store a one-paragraph summary and fire `call.completed` (Tasks 2.2 and 2.8). Best effort."""

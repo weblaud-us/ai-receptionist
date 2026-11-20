@@ -24,6 +24,11 @@ export interface PlanInfo {
   features: string[]
   recommended: boolean
   self_serve: boolean
+  /** One-time onboarding fee in `currency`; charged on the first invoice when required (dental plans). */
+  setup_fee?: number
+  setup_fee_required?: boolean
+  /** Empty = any business; otherwise the verticals this plan is for. */
+  verticals?: string[]
 }
 
 export interface Catalogue {
@@ -114,10 +119,16 @@ export interface NumberOrder {
 }
 
 /** Plans priced for `country` (ISO code): GBP for GB, AUD for AU, EUR in the euro area, else USD. */
-export const usePlans = (country = '') =>
+export const usePlans = (country = '', vertical = '') =>
   useQuery({
-    queryKey: ['public-plans', country],
-    queryFn: () => api<Catalogue>(`/public/plans${country ? `?country=${encodeURIComponent(country)}` : ''}`, { auth: false }),
+    queryKey: ['public-plans', country, vertical],
+    queryFn: () => {
+      const q = new URLSearchParams()
+      if (country) q.set('country', country)
+      if (vertical) q.set('vertical', vertical)
+      const qs = q.toString()
+      return api<Catalogue>(`/public/plans${qs ? `?${qs}` : ''}`, { auth: false })
+    },
     staleTime: 300_000,
     placeholderData: (prev) => prev,
   })

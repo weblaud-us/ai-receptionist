@@ -15,7 +15,11 @@
 # while worker-a drains its live calls (up to LIVEKIT_DRAIN_TIMEOUT), worker-b answers new ones.
 #
 # Variables (deploy.sh exports them): IMAGE_PREFIX (ghcr.io/owner/receptionist), TAG (v1.2.3),
-# DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN.
+# DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN,
+# DEPLOYMENT_REGION (regional stacks: ap-southeast-2 for AU, eu-west-2 for UK; see deploy/regions/).
+# A regional stack is the same file deployed as its own environment (deploy.sh v1.2.3 production-au),
+# on a host in that region, with that region's env file: data never leaves the region's database,
+# bucket and Redis.
 
 x-logging: &logging
   driver: json-file
@@ -23,6 +27,9 @@ x-logging: &logging
 
 x-backend: &backend
   env_file: ${ENV_FILE:?set ENV_FILE}
+  labels:
+    com.receptionist.region: ${DEPLOYMENT_REGION:-global}
+    com.receptionist.environment: ${DEPLOY_ENV}
   restart: unless-stopped
   depends_on:
     redis: { condition: service_healthy }
