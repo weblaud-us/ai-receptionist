@@ -1,0 +1,49 @@
+---
+/** The whole landing page; rendered once per region by src/pages/index.astro and src/pages/uk/index.astro. */
+import Base from '../layouts/Base.astro';
+import Capabilities from './Capabilities.astro';
+import ClinicDay from './ClinicDay.astro';
+import Compliance from './Compliance.astro';
+import DemoShowcase from './DemoShowcase.astro';
+import Faq from './Faq.astro';
+import FinalCta from './FinalCta.astro';
+import Footer from './Footer.astro';
+import Hero from './Hero.astro';
+import LeakStrip from './LeakStrip.astro';
+import Nav from './Nav.astro';
+import Pricing from './Pricing.astro';
+import RoiCalculator from './RoiCalculator.astro';
+import { BRAND } from '../data/site';
+
+const titles = {
+  au: `${BRAND}: AI overflow receptionist for Australian dental practices`,
+  uk: `${BRAND}: AI overflow receptionist for UK dental practices`,
+};
+const descriptions = {
+  au: 'Answers busy lines, lunch breaks and after-hours calls for private dental practices, qualifies implant and cosmetic enquiries, and books into Cliniko. Hosted in Sydney.',
+  uk: 'Answers busy lines, lunch breaks and after-hours calls for private dental practices, qualifies implant and cosmetic enquiries, and books into your practice diary. Hosted in London.',
+};
+---
+<Base titles={titles} descriptions={descriptions}>
+  <Nav />
+  <main id="main" tabindex="-1">
+    <Hero />
+    <LeakStrip />
+    <DemoShowcase />
+    <ClinicDay />
+    <RoiCalculator />
+    <Capabilities />
+    <Compliance />
+    <Pricing />
+    <Faq />
+    <FinalCta />
+  </main>
+  <Footer />
+</Base>
+
+<script>
+  import { initNav } from '../scripts/nav';
+  import { initRegion } from '../scripts/region';
+  initRegion();
+  initNav();
+</script>

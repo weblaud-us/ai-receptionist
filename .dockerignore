@@ -9,3 +9,4 @@ deploy
 docs
 *.md
 !packages/shared/README.md
+**/.astro

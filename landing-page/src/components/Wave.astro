@@ -1,0 +1,20 @@
+---
+/** Deterministic waveform bars; animate when `data-live="true"` is set on the container. */
+interface Props {
+  bars?: number;
+  seed?: number;
+  class?: string;
+  live?: boolean;
+  id?: string;
+}
+const { bars = 28, seed = 7, class: className = '', live = false, id } = Astro.props;
+let x = seed;
+const heights = Array.from({ length: bars }, (_, i) => {
+  x = (x * 9301 + 49297) % 233280;
+  const envelope = 0.45 + 0.55 * Math.sin((i / bars) * Math.PI);
+  return Math.max(0.18, Math.min(1, (x / 233280) * envelope + 0.12)).toFixed(2);
+});
+---
+<span class:list={['wave', className]} data-live={String(live)} id={id} aria-hidden="true">
+  {heights.map((h, i) => <i style={`--h:${h};--i:${i}`}></i>)}
+</span>

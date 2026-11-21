@@ -1,0 +1,86 @@
+---
+import R from './R.astro';
+import Regional from './Regional.astro';
+import { BRAND } from '../data/site';
+
+const terms = ['Invisalign', 'zirconia', 'composite bonding', 'All-on-4', 'CBCT', 'veneers', 'periodontal'];
+---
+<section class="section border-t border-hairline" aria-labelledby="cap-title">
+  <div class="container-page">
+    <h2 id="cap-title" class="h2 max-w-3xl text-ink">Made for how a dental practice actually runs</h2>
+
+    <div class="mt-14 grid grid-cols-1 gap-14 lg:grid-cols-12 lg:gap-16">
+      <!-- Diary sync -->
+      <div class="lg:col-span-6">
+        <h3 class="text-xl text-ink">Books straight into your diary</h3>
+        <Regional as="p" class="mt-3 max-w-[56ch] text-slate">
+          <Fragment slot="au">
+            Connect Cliniko with an API key. {BRAND} reads your practitioners, appointment types and live availability, then books the right
+            appointment with the right dentist. Nobody re-types anything.
+          </Fragment>
+          <Fragment slot="uk">
+            Dentally is in early access: we connect it during onboarding once your practice is approved. Cliniko practices connect with an API key
+            today, and the built-in diary syncs with Google Calendar in the meantime.
+          </Fragment>
+        </Regional>
+
+        <div class="mt-8 rounded-[var(--radius-panel)] border border-hairline bg-surface p-5 sm:p-6" aria-label="How a booking reaches your diary" role="img">
+          <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-5">
+            <div class="rounded-[var(--radius-control)] border border-hairline px-3 py-3">
+              <p class="text-[0.8125rem] text-slate">Call</p>
+              <p class="text-[0.9375rem] font-medium text-ink">“Invisalign consult, please”</p>
+            </div>
+            <svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true" focusable="false"><path d="M0 6h25M20 1l5 5-5 5" fill="none" stroke="#0F766E" stroke-width="1.5"></path></svg>
+            <div class="rounded-[var(--radius-control)] bg-teal px-3 py-3 text-white">
+              <p class="text-[0.8125rem] text-white/80"><R v={{ au: 'Cliniko', uk: 'Dentally' }} /></p>
+              <p class="text-[0.9375rem] font-medium">Booked, Fri 4:15 pm</p>
+            </div>
+          </div>
+          <ul class="mt-5 grid grid-cols-1 gap-2 border-t border-hairline pt-5 text-[0.9375rem] text-slate sm:grid-cols-2">
+            <li>Practitioners and appointment types</li>
+            <li>Live availability, per dentist</li>
+            <li>Lunch breaks kept clear</li>
+            <li>Patient found or created by phone</li>
+          </ul>
+          <p class="mt-4 text-[0.8125rem] text-slate">
+            If the diary doesn't respond within a few seconds, the caller isn't dropped: their details are taken and the practice is asked to call
+            back.
+          </p>
+        </div>
+      </div>
+
+      <!-- Dental intelligence -->
+      <div class="lg:col-span-6 lg:border-l lg:border-hairline lg:pl-16">
+        <h3 class="text-xl text-ink">Knows dentistry, and its limits</h3>
+        <dl class="mt-6 divide-y divide-hairline border-y border-hairline">
+          <div class="py-5">
+            <dt class="font-medium text-ink"><R v={{ au: 'Australian', uk: 'British' }} /> English, dental vocabulary</dt>
+            <dd class="mt-1.5 text-[0.9375rem] text-slate">
+              Speech recognition set to <R v={{ au: 'en-AU', uk: 'en-GB' }} /> and tuned for the words your patients use: {terms.join(', ')}.
+            </dd>
+          </div>
+          <div class="py-5">
+            <dt class="font-medium text-ink">Qualifies implant and cosmetic leads</dt>
+            <dd class="mt-1.5 text-[0.9375rem] text-slate">
+              Asks about treatment, timeframe and <R v={{ au: 'health fund or finance', uk: 'payment plans or finance' }} />, then books the consult
+              or flags a priority callback. It never estimates treatment costs.
+            </dd>
+          </div>
+          <div class="py-5">
+            <dt class="font-medium text-ink">An ROI dashboard you can read in a minute</dt>
+            <dd class="mt-1.5 text-[0.9375rem] text-slate">
+              Overflow calls answered, consultations booked, emergencies triaged, missed calls recovered by text, and the estimated pipeline captured.
+            </dd>
+          </div>
+          <div class="py-5">
+            <dt class="font-medium text-ink">Recalls lapsed hygiene patients by text</dt>
+            <dd class="mt-1.5 text-[0.9375rem] text-slate">
+              Finds patients overdue for their six-month visit in your diary system and texts them inside quiet hours, with no clinical details and
+              instant STOP handling.
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>

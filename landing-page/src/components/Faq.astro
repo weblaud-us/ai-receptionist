@@ -1,0 +1,26 @@
+---
+import R from './R.astro';
+import { FAQS } from '../data/faq';
+---
+<section class="section border-t border-hairline pt-20 lg:pt-24" aria-labelledby="faq-title">
+  <div class="container-page grid grid-cols-1 gap-10 lg:grid-cols-12">
+    <h2 id="faq-title" class="h2 text-ink lg:col-span-4">Questions principals ask</h2>
+    <div class="divide-y divide-hairline border-y border-hairline lg:col-span-8">
+      {
+        FAQS.map((f) => (
+          <details class="group">
+            <summary class="flex items-center justify-between gap-6 py-5 text-[1.0625rem] font-medium text-ink">
+              {f.q}
+              <svg class="shrink-0 transition-transform duration-200 group-open:rotate-45" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+            </summary>
+            <p class="max-w-[64ch] pb-6 text-slate">
+              <R v={f.a} />
+            </p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>

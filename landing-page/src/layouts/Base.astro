@@ -1,0 +1,98 @@
+---
+import '../styles/global.css';
+import { PLANS } from '../data/plans';
+import { REGION, regionFromPath, type Regional } from '../data/regions';
+import { BRAND, LINKS } from '../data/site';
+
+interface Props {
+  titles: Regional<string>;
+  descriptions: Regional<string>;
+  noindex?: boolean;
+}
+const { titles, descriptions, noindex = false } = Astro.props;
+const region = regionFromPath(Astro.url.pathname);
+const title = titles[region];
+const description = descriptions[region];
+const facts = REGION[region];
+const site = LINKS.site;
+const canonical = `${site}${facts.path}`;
+const ogImage = `${site}/og.png`;
+
+const prices = PLANS.map((p) => p.monthly[region]);
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: `${BRAND} for dental practices`,
+  applicationCategory: 'BusinessApplication',
+  applicationSubCategory: 'AI phone receptionist',
+  operatingSystem: 'Web',
+  url: canonical,
+  description,
+  inLanguage: facts.locale,
+  areaServed: facts.label,
+  offers: {
+    '@type': 'AggregateOffer',
+    priceCurrency: facts.currency,
+    lowPrice: Math.min(...prices),
+    highPrice: Math.max(...prices),
+    offerCount: PLANS.length,
+    offers: PLANS.map((p) => ({
+      '@type': 'Offer',
+      name: p.name,
+      price: p.monthly[region],
+      priceCurrency: facts.currency,
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        price: p.monthly[region],
+        priceCurrency: facts.currency,
+        unitCode: 'MON',
+        valueAddedTaxIncluded: false,
+      },
+    })),
+  },
+};
+---
+<!doctype html>
+<html lang={facts.locale} data-region={region}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Applies a saved AU/UK choice before first paint (external file: the CSP allows no inline script). -->
+    <script is:inline src="/region-init.js"></script>
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="title-au" content={titles.au} />
+    <meta name="title-uk" content={titles.uk} />
+    <meta name="theme-color" content="#FAFAF8" />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    {!noindex && <link rel="alternate" hreflang="en-AU" href={`${site}/`} />}
+    {!noindex && <link rel="alternate" hreflang="en-GB" href={`${site}/uk/`} />}
+    {!noindex && <link rel="alternate" hreflang="x-default" href={`${site}/`} />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={BRAND} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content={facts.locale.replace('-', '_')} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={`${BRAND}: an AI overflow receptionist for dental practices`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    {!noindex && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+  </head>
+  <body class="min-h-dvh">
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-[var(--radius-control)] focus:bg-ink focus:px-4 focus:py-2 focus:text-white"
+    >Skip to content</a>
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,52 @@
+---
+import Button from './Button.astro';
+import Logo from './Logo.astro';
+import RegionToggle from './RegionToggle.astro';
+import { LINKS, NAV } from '../data/site';
+---
+<header class="sticky top-0 z-50 border-b border-hairline bg-porcelain/85 backdrop-blur-md supports-[not(backdrop-filter:blur(1px))]:bg-porcelain">
+  <div class="container-page flex h-[72px] items-center gap-6">
+    <a href="#top" class="shrink-0 rounded-sm" aria-label="Front page"><Logo /></a>
+
+    <nav aria-label="Main" class="hidden flex-1 justify-center lg:flex">
+      <ul class="flex items-center gap-7">
+        {NAV.map((item) => (
+          <li><a href={item.href} class="text-[0.9375rem] text-slate transition-colors hover:text-ink">{item.label}</a></li>
+        ))}
+      </ul>
+    </nav>
+
+    <div class="ml-auto flex items-center gap-2 sm:gap-3 lg:ml-0">
+      <RegionToggle />
+      <a href={LINKS.login} class="hidden px-2 text-[0.9375rem] text-slate transition-colors hover:text-ink md:inline">Sign in</a>
+      <div class="hidden md:block"><Button signup="dental_essentials">Start 14-day pilot</Button></div>
+      <button
+        type="button"
+        id="menu-button"
+        class="inline-flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] border border-hairline-strong bg-surface lg:hidden"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+      >
+        <span class="sr-only">Menu</span>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <path class="menu-open" d="M2 5h14M2 9h14M2 13h14"></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="mobile-menu" hidden class="border-t border-hairline bg-porcelain lg:hidden">
+    <div class="container-page flex flex-col gap-1 pb-8 pt-4">
+      <nav aria-label="Main, mobile">
+        <ul class="flex flex-col">
+          {NAV.map((item) => (
+            <li><a href={item.href} data-menu-link class="block border-b border-hairline py-3.5 text-lg text-ink">{item.label}</a></li>
+          ))}
+        </ul>
+      </nav>
+      <a href={LINKS.login} class="mt-5 self-start text-[0.9375rem] text-slate underline underline-offset-4">Sign in</a>
+      <Button signup="dental_essentials" size="lg" class="mt-5 w-full">Start 14-day pilot</Button>
+    </div>
+  </div>
+  <p id="region-status" class="sr-only" role="status" aria-live="polite"></p>
+</header>

@@ -1,0 +1,33 @@
+---
+import { regionFromPath } from '../data/regions';
+
+interface Props {
+  class?: string;
+  id?: string;
+}
+const { class: className = '', id = 'region-toggle' } = Astro.props;
+const region = regionFromPath(Astro.url.pathname);
+const options = [
+  { key: 'au', short: 'AU', long: 'Australia, prices in AUD' },
+  { key: 'uk', short: 'UK', long: 'United Kingdom, prices in GBP' },
+] as const;
+---
+<div role="group" aria-labelledby={`${id}-label`} class:list={['inline-flex items-center gap-2', className]}>
+  <span id={`${id}-label`} class="sr-only">Region</span>
+  <span class="inline-flex rounded-full border border-hairline-strong bg-surface p-0.5">
+    {
+      options.map((o) => (
+        <button
+          type="button"
+          data-region-option={o.key}
+          aria-pressed={o.key === region}
+          aria-label={o.long}
+          title={o.long}
+          class="h-8 min-w-11 rounded-full px-3 text-[0.8125rem] font-medium text-slate transition-colors duration-150 hover:text-ink aria-pressed:bg-ink aria-pressed:text-white"
+        >
+          {o.short}
+        </button>
+      ))
+    }
+  </span>
+</div>

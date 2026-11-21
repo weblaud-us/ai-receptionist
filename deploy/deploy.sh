@@ -7,7 +7,8 @@
 # Called by .github/workflows/deploy.yml over SSH. Safe to run by hand; the same command with the
 # previous tag is the rollback. Needs: Docker with the compose plugin, `docker login ghcr.io`
 # done once, /etc/receptionist/<environment>.env (app settings) and
-# /etc/receptionist/<environment>.deploy (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN). See deploy/README.md.
+# /etc/receptionist/<environment>.deploy (IMAGE_PREFIX, API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN, and
+# SITE_DOMAIN on the environment that serves the landing page). See deploy/README.md.
 #
 # Order matters:
 #   1. indexes          idempotent migration, never at boot or inside a call
@@ -116,8 +117,13 @@ else
   COMPOSE_PROFILES="dialer" dc rm -sf sales-worker >/dev/null 2>&1 || true
 fi
 
-echo "==> [6/6] Dashboard, platform admin app and proxy"
+echo "==> [6/6] Dashboard, platform admin app, landing page and proxy"
 dc up -d --wait --no-deps dashboard platform-dashboard
+if [ -n "${SITE_DOMAIN:-}" ]; then
+  COMPOSE_PROFILES="landing" dc up -d --wait --no-deps landing
+else
+  COMPOSE_PROFILES="landing" dc rm -sf landing >/dev/null 2>&1 || true
+fi
 dc up -d --no-deps caddy
 
 for _ in $(seq 1 30); do

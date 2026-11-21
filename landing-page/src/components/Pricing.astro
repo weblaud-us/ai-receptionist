@@ -1,0 +1,97 @@
+---
+import Button from './Button.astro';
+import R from './R.astro';
+import { ANNUAL_MONTHS_CHARGED, OVERAGE_PER_MIN, PLANS, TRIAL } from '../data/plans';
+import { both, money } from '../data/regions';
+import { LINKS } from '../data/site';
+
+const tax = { au: 'GST', uk: 'VAT' };
+const pms = { au: 'Cliniko connection', uk: 'diary connection' };
+const overage = both((r) => money(r, OVERAGE_PER_MIN[r], { cents: true }));
+const freeMonths = 12 - ANNUAL_MONTHS_CHARGED;
+---
+<section id="pricing" class="section" aria-labelledby="pricing-title">
+  <div class="container-page">
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <h2 id="pricing-title" class="h2 text-ink lg:col-span-6">Clear pricing, in <R v={{ au: 'Australian dollars', uk: 'pounds sterling' }} /></h2>
+      <p class="lede lg:col-span-5 lg:col-start-8 lg:pt-2">A monthly retainer and a one-time onboarding fee. No per-booking commission, and you can cancel from the billing page.</p>
+    </div>
+
+    <!-- Pilot -->
+    <div class="mt-14 grid grid-cols-1 gap-8 rounded-[var(--radius-console)] border border-teal/25 bg-teal-wash px-6 py-8 sm:px-10 lg:grid-cols-12 lg:items-center lg:gap-12">
+      <div class="lg:col-span-7">
+        <h3 class="font-display text-[1.875rem] font-normal leading-tight text-ink">Start with a {TRIAL.days}-day after-hours and lunch pilot</h3>
+        <p class="mt-3 max-w-[58ch] text-slate">
+          Cover lunch breaks and evenings for two weeks without touching daytime reception. Forwarding goes on your existing number, your team stays
+          on the front desk, and you see every call and booking in the dashboard.
+        </p>
+      </div>
+      <div class="lg:col-span-5">
+        <ul class="space-y-2 text-[0.9375rem] text-ink">
+          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>{TRIAL.days} days, with your first {TRIAL.minutes} minutes included</li>
+          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>Card required; the monthly plan starts on day {TRIAL.days + 1}</li>
+          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>Cancel during the pilot and the monthly fee is never charged</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Plans -->
+    <div class="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+      {
+        PLANS.map((plan) => (
+          <article
+            class:list={[
+              'flex flex-col rounded-[var(--radius-panel)] border bg-surface p-6 sm:p-8',
+              plan.recommended ? 'border-ink/25' : 'border-hairline',
+            ]}
+            aria-labelledby={`plan-${plan.key}`}
+          >
+            <div class="flex items-start justify-between gap-4">
+              <h3 id={`plan-${plan.key}`} class="text-xl text-ink">{plan.name}</h3>
+              {plan.recommended && <span class="rounded-full bg-ink px-2.5 py-1 text-[0.75rem] font-medium text-white">Recommended</span>}
+            </div>
+            <p class="mt-1.5 text-[0.9375rem] text-slate">{plan.tagline}</p>
+
+            <p class="mt-7 flex items-baseline gap-1.5">
+              <span class="font-display text-[3rem] leading-none text-ink tnum">
+                <R v={both((r) => money(r, plan.monthly[r]))} />
+              </span>
+              <span class="text-slate">a month</span>
+            </p>
+            <p class="mt-2 text-[0.9375rem] text-slate">
+              plus <span class="text-ink tnum"><R v={both((r) => money(r, plan.setupFee[r]))} /></span> one-time onboarding
+            </p>
+
+            <ul class="mt-7 space-y-2.5 border-t border-hairline pt-6 text-[0.9375rem] text-ink">
+              {plan.features.map((f) => (
+                <li class="flex gap-3">
+                  <svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                    <path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#0F766E" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  {f === 'Books into Cliniko or Dentally' ? <R v={{ au: 'Books into Cliniko (Dentally in early access)', uk: 'Books into Dentally (early access) or Cliniko' }} /> : f}
+                </li>
+              ))}
+            </ul>
+
+            <div class="mt-auto pt-8">
+              <Button signup={plan.key} variant={plan.recommended ? 'primary' : 'secondary'} size="lg" class="w-full">
+                Start pilot on {plan.name.replace('Dental ', '')}
+              </Button>
+            </div>
+          </article>
+        ))
+      }
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-4 text-[0.9375rem] text-slate md:grid-cols-2 md:gap-10">
+      <p>
+        Onboarding covers call forwarding, the <R v={pms} />, your treatment menu and fees, voice and greeting tuning, and a test-call review. It is
+        charged at sign-up.
+      </p>
+      <p>
+        Prices exclude <R v={tax} />. Extra minutes are <R v={overage} /> each. Pay annually and get {freeMonths} months free.
+        {LINKS.bookDemo && <Fragment> More than three locations? <a href={LINKS.bookDemo} class="text-ink underline underline-offset-4">Talk to us</a>.</Fragment>}
+      </p>
+    </div>
+  </div>
+</section>

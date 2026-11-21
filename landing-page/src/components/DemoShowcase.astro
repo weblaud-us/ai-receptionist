@@ -1,0 +1,143 @@
+---
+import Regional from './Regional.astro';
+import Wave from './Wave.astro';
+import { REGIONS } from '../data/regions';
+import { SCENARIOS, SPEAKER_LABEL } from '../data/scenarios';
+import { LINKS } from '../data/site';
+
+const fmt = (s: number) => `00:${String(s).padStart(2, '0')}`;
+const phone = LINKS.demoPhone;
+const hasLive = Boolean(LINKS.demoCall || phone.au || phone.uk);
+const tel = (n: string) => `tel:${n.replace(/[^\d+]/g, '')}`;
+---
+<section id="demo" class="on-dark bg-night text-mist" aria-labelledby="demo-title">
+  <div class="container-page section">
+    <div class="grid grid-cols-1 gap-12 lg:grid-cols-12">
+      <div class="lg:col-span-4">
+        <h2 id="demo-title" class="h2 text-white">Hear it handle real dental calls</h2>
+        <p class="lede mt-4">Four calls practices worry about most. Each one follows the rules your team would: no guessing at prices, no diagnosis.</p>
+
+        <div role="tablist" aria-label="Sample calls" aria-orientation="vertical" class="mt-10 flex flex-col border-t border-hairline-dark" data-demo-tabs>
+          {
+            SCENARIOS.map((s, i) => (
+              <button
+                type="button"
+                role="tab"
+                id={`tab-${s.id}`}
+                aria-controls={`panel-${s.id}`}
+                aria-selected={i === 0}
+                tabindex={i === 0 ? 0 : -1}
+                class="group flex items-center justify-between gap-4 border-b border-hairline-dark py-4 text-left text-[1.0625rem] text-mist-muted transition-colors hover:text-mist aria-selected:text-white"
+              >
+                <span>
+                  {s.tab.au === s.tab.uk ? s.tab.au : <Fragment><span class="r-au">{s.tab.au}</span><span class="r-uk">{s.tab.uk}</span></Fragment>}
+                </span>
+                <span class="h-1.5 w-1.5 rounded-full bg-teal-light opacity-0 transition-opacity group-aria-selected:opacity-100" aria-hidden="true" />
+              </button>
+            ))
+          }
+        </div>
+      </div>
+
+      <div class="lg:col-span-8">
+        {
+          SCENARIOS.map((s, i) => (
+            <div role="tabpanel" id={`panel-${s.id}`} aria-labelledby={`tab-${s.id}`} hidden={i !== 0} tabindex="0" class="rounded-[var(--radius-console)] border border-hairline-dark bg-night-raised">
+              {REGIONS.map((r) => {
+                const sc = s.script[r];
+                return (
+                  <div class={`r-${r}`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>
+                    <div class="border-b border-hairline-dark px-5 py-5 sm:px-7">
+                      <h3 class="text-xl text-white">{sc.title}</h3>
+                      <p class="mt-1 text-[0.9375rem] text-mist-muted">{sc.context}</p>
+                      <div class="mt-5 flex items-center gap-4">
+                        <button
+                          type="button"
+                          data-play
+                          aria-label={`Play sample call: ${sc.title}`}
+                          class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-teal-light text-night transition-colors hover:bg-[#7ccac1]"
+                        >
+                          <svg data-icon-play width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M3 1.5v11l9-5.5z" fill="currentColor" /></svg>
+                          <svg data-icon-pause class="hidden" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M3 1.5h3v11H3zM8 1.5h3v11H8z" fill="currentColor" /></svg>
+                        </button>
+                        <Wave class="h-7 min-w-0 flex-1 overflow-hidden text-teal-light/80" bars={40} seed={i * 13 + (r === 'uk' ? 5 : 1)} />
+                        <span class="shrink-0 font-mono text-[0.8125rem] text-mist-muted tnum" data-time>{fmt(0)} / {fmt(sc.duration)}</span>
+                      </div>
+                      {sc.audio ? (
+                        // The full transcript is printed beside the player and linked with aria-describedby.
+                        // eslint-disable-next-line astro/jsx-a11y/media-has-caption
+                        <audio preload="none" src={sc.audio} aria-describedby={`transcript-${s.id}-${r}`} />
+                      ) : <p class="mt-3 text-[0.8125rem] text-mist-muted">Simulated playback with a timed transcript. Recorded audio coming soon.</p>}
+                    </div>
+
+                    <ol id={`transcript-${s.id}-${r}`} class="space-y-4 px-5 py-6 sm:px-7" aria-label="Transcript">
+                      {sc.lines.map((l) => (
+                        <li class="line grid grid-cols-1 gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-4" data-at={l.at}>
+                          <span class:list={['text-[0.8125rem] font-medium', l.who === 'assistant' ? 'text-teal-light' : 'text-mist-muted']}>
+                            {SPEAKER_LABEL[l.who]}
+                          </span>
+                          <span class:list={['line-text min-w-0 text-[0.9375rem] leading-relaxed text-mist/85 [overflow-wrap:anywhere]', l.who === 'system' && 'font-mono text-[0.8125rem]']}>{l.text}</span>
+                        </li>
+                      ))}
+                    </ol>
+
+                    <div class="mx-5 mb-6 rounded-[var(--radius-panel)] border border-hairline-dark px-5 py-4 sm:mx-7">
+                      <p class="text-[0.8125rem] font-medium text-white">What happened</p>
+                      <ul class="mt-2 space-y-1.5">
+                        {sc.outcome.map((o) => (
+                          <li class="flex gap-2.5 text-[0.9375rem] text-mist">
+                            <svg class="mt-[7px] shrink-0" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><circle cx="5" cy="5" r="4" fill="#5FB8AE" /></svg>
+                            {o}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))
+        }
+
+        {
+          hasLive && (
+            <div class="mt-6 flex flex-col gap-4 rounded-[var(--radius-panel)] border border-hairline-dark px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+              <div>
+                <p class="font-medium text-white">Try it yourself</p>
+                <p class="mt-1 text-[0.9375rem] text-mist-muted">Ring the demo practice and ask what your patients ask.</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-3">
+                <Regional as="span" class="contents">
+                  <Fragment slot="au">
+                    {phone.au && (
+                      <a href={tel(phone.au)} class="inline-flex h-11 items-center rounded-[var(--radius-control)] bg-teal-light px-5 font-mono text-[0.9375rem] font-medium text-night tnum hover:bg-[#7ccac1]">
+                        {phone.au}
+                      </a>
+                    )}
+                  </Fragment>
+                  <Fragment slot="uk">
+                    {phone.uk && (
+                      <a href={tel(phone.uk)} class="inline-flex h-11 items-center rounded-[var(--radius-control)] bg-teal-light px-5 font-mono text-[0.9375rem] font-medium text-night tnum hover:bg-[#7ccac1]">
+                        {phone.uk}
+                      </a>
+                    )}
+                  </Fragment>
+                </Regional>
+                {LINKS.demoCall && (
+                  <a href={LINKS.demoCall} target="_blank" rel="noopener" class="inline-flex h-11 items-center rounded-[var(--radius-control)] border border-hairline-dark px-5 text-[0.9375rem] text-mist hover:border-mist/40">
+                    Call from your browser
+                  </a>
+                )}
+              </div>
+            </div>
+          )
+        }
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { initDemo } from '../scripts/demo-player';
+  initDemo();
+</script>

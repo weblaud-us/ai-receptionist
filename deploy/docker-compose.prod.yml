@@ -4,7 +4,8 @@
 #
 #   Caddy (TLS) ─┬─ api-a, api-b        2 API replicas; state is in Redis
 #                ├─ dashboard           client dashboard, static build (APP_DOMAIN)
-#                └─ platform-dashboard  platform admin app, static build (ADMIN_DOMAIN)
+#                ├─ platform-dashboard  platform admin app, static build (ADMIN_DOMAIN)
+#                └─ landing             public landing page, static build (SITE_DOMAIN; optional)
 #   worker-a, worker-b                  LiveKit voice workers (outbound connections only)
 #   jobs                                reminders, digests, calendar sync, WhatsApp replies, the dialer tick
 #   sales-worker (profile "dialer")     outbound sales calls, only when the dialer is switched on
@@ -16,6 +17,7 @@
 #
 # Variables (deploy.sh exports them): IMAGE_PREFIX (ghcr.io/owner/receptionist), TAG (v1.2.3),
 # DEPLOY_ENV, ENV_FILE (/etc/receptionist/production.env), API_DOMAIN, APP_DOMAIN, ADMIN_DOMAIN,
+# SITE_DOMAIN (optional: the public landing page, on the one environment that serves it),
 # DEPLOYMENT_REGION (regional stacks: ap-southeast-2 for AU, eu-west-2 for UK; see deploy/regions/).
 # A regional stack is the same file deployed as its own environment (deploy.sh v1.2.3 production-au),
 # on a host in that region, with that region's env file: data never leaves the region's database,
@@ -92,6 +94,14 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # Public landing page (landing-page/). Optional: deploy.sh starts it only when the .deploy file sets
+  # SITE_DOMAIN, so regional stacks that don't serve the marketing site don't need its image.
+  landing:
+    image: ${IMAGE_PREFIX}-landing:${TAG}-${DEPLOY_ENV}
+    profiles: ["landing"]
+    restart: unless-stopped
+    logging: *logging
+
   caddy:
     image: caddy:2-alpine
     ports: ["80:80", "443:443"]
@@ -99,6 +109,8 @@ services:
       API_DOMAIN: ${API_DOMAIN}
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
+      # Without a landing page the site block answers plain HTTP on localhost only (no certificate).
+      SITE_DOMAIN: ${SITE_DOMAIN:-http://localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

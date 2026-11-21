@@ -1,0 +1,43 @@
+---
+import R from './R.astro';
+
+const pms = { au: 'Cliniko', uk: 'Dentally or Cliniko' };
+const busy = { au: 'HICAPS claims', uk: 'payments' };
+---
+<section class="border-y border-hairline bg-surface" aria-labelledby="leak-title">
+  <div class="container-page section">
+    <div class="max-w-3xl">
+      <h2 id="leak-title" class="h2 text-ink">Where high-value calls go missing</h2>
+      <p class="lede mt-4">
+        Implant, Invisalign and veneer enquiries rarely leave a voicemail. They ring the next practice on the map. Three gaps cause most of it.
+      </p>
+    </div>
+
+    <div class="mt-14 grid grid-cols-1 gap-12 md:grid-cols-3 md:gap-0">
+      <article class="md:border-r md:border-hairline md:pr-10">
+        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink tnum">12:50–1:50</p>
+        <h3 class="mt-5 text-lg text-ink">Lunch and after hours</h3>
+        <p class="mt-2 text-slate">
+          The front desk closes for lunch and again at 5:30, just when people ring after clicking your Google ad. Every unanswered call is a
+          patient deciding somewhere else.
+        </p>
+      </article>
+      <article class="md:border-r md:border-hairline md:px-10">
+        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink">4 rings</p>
+        <h3 class="mt-5 text-lg text-ink">A busy front desk</h3>
+        <p class="mt-2 text-slate">
+          Check-ins, <R v={busy} /> and chairside cover all land at once. When the lines stack up, the call that would have booked an implant
+          consult rings out.
+        </p>
+      </article>
+      <article class="md:pl-10">
+        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink">No re-typing</p>
+        <h3 class="mt-5 text-lg text-ink">Messages nobody actions</h3>
+        <p class="mt-2 text-slate">
+          Call centres email notes that sit unread until the patient has moved on. Bookings should land in <R v={pms} />, with the notes
+          attached.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>

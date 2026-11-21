@@ -75,7 +75,7 @@ jobs:
           EVAL_ANTHROPIC_API_KEY: ${{ secrets.EVAL_ANTHROPIC_API_KEY }}
           RUN_EVALS: ${{ secrets.EVAL_OPENAI_API_KEY != '' && secrets.EVAL_ANTHROPIC_API_KEY != '' && '1' || '0' }}
 
-  # Client dashboard, platform admin app and the shared package (npm workspaces at the repo root).
+  # Client dashboard, platform admin app, landing page and the shared package (npm workspaces at the repo root).
   frontends:
     runs-on: ubuntu-latest
     steps:
@@ -89,6 +89,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck:shared
       - run: npm run build
+      - name: Landing-page prices match core/billing/plans.py
+        run: npm run check:prices -w landing-page
+      - name: Landing-page colours meet WCAG AA
+        run: npm run check:contrast -w landing-page
       - name: The client bundle carries no platform-admin code
         run: "! grep -lE '/platform/(tenants|sales|costs)' dashboard/dist/assets/*.js"
 
@@ -144,6 +148,11 @@ jobs:
               --build-arg VITE_PLATFORM_URL=https://admin.example.com \
               -t "receptionist-$app:ci" .
           done
+          docker buildx build --load -f landing-page/Dockerfile \
+            --build-arg VITE_SITE_URL=https://www.example.com \
+            --build-arg VITE_DASHBOARD_SIGNUP_URL=https://app.example.com/signup \
+            --build-arg VITE_DASHBOARD_LOGIN_URL=https://app.example.com/login \
+            -t receptionist-landing:ci .
       - name: Compose files are valid
         run: |
           cp AI-receptionist-1/.env.example AI-receptionist-1/.env

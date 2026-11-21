@@ -1,0 +1,17 @@
+# Used instead of the root .dockerignore when building with -f landing-page/Dockerfile (BuildKit).
+# The landing page needs only the root manifests and its own folder.
+**/node_modules
+**/dist
+**/.astro
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.vscode
+AI-receptionist-1
+dashboard
+platform-dashboard
+deploy
+docs
+*.md

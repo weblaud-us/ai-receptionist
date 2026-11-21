@@ -48,6 +48,35 @@ jobs:
           VAR_API_URL: ${{ vars.API_URL }}
           VAR_APP_URL: ${{ vars.APP_URL }}
           VAR_PLATFORM_URL: ${{ vars.PLATFORM_URL }}
+      # The public landing page, only on the environment that serves it (vars.SITE_URL set there;
+      # the server's .deploy file then sets SITE_DOMAIN). Its links point at this environment's dashboard.
+      - name: Build and push the landing page for this environment
+        if: ${{ vars.SITE_URL != '' }}
+        run: |
+          docker buildx build --push -f landing-page/Dockerfile \
+            --build-arg VITE_SITE_URL="$VAR_SITE_URL" \
+            --build-arg VITE_DASHBOARD_SIGNUP_URL="${VAR_APP_URL%/}/signup" \
+            --build-arg VITE_DASHBOARD_LOGIN_URL="${VAR_APP_URL%/}/login" \
+            --build-arg VITE_DEMO_CALL_URL="$VAR_DEMO_CALL_URL" \
+            --build-arg VITE_BOOK_DEMO_URL="$VAR_BOOK_DEMO_URL" \
+            --build-arg VITE_DEMO_PHONE_AU="$VAR_DEMO_PHONE_AU" \
+            --build-arg VITE_DEMO_PHONE_UK="$VAR_DEMO_PHONE_UK" \
+            --build-arg VITE_PRIVACY_URL="$VAR_PRIVACY_URL" \
+            --build-arg VITE_TERMS_URL="$VAR_TERMS_URL" \
+            --build-arg VITE_DPA_URL="$VAR_DPA_URL" \
+            --build-arg VITE_CLAIM_ZDR="${VAR_CLAIM_ZDR:-false}" \
+            -t "${{ inputs.image_prefix }}-landing:${{ inputs.tag }}-${{ inputs.environment }}" .
+        env:
+          VAR_SITE_URL: ${{ vars.SITE_URL }}
+          VAR_APP_URL: ${{ vars.APP_URL }}
+          VAR_DEMO_CALL_URL: ${{ vars.DEMO_CALL_URL }}
+          VAR_BOOK_DEMO_URL: ${{ vars.BOOK_DEMO_URL }}
+          VAR_DEMO_PHONE_AU: ${{ vars.DEMO_PHONE_AU }}
+          VAR_DEMO_PHONE_UK: ${{ vars.DEMO_PHONE_UK }}
+          VAR_PRIVACY_URL: ${{ vars.PRIVACY_URL }}
+          VAR_TERMS_URL: ${{ vars.TERMS_URL }}
+          VAR_DPA_URL: ${{ vars.DPA_URL }}
+          VAR_CLAIM_ZDR: ${{ vars.CLAIM_ZDR }}
       # The server keeps a checkout of this repo only for deploy/ (compose file, Caddyfile, script).
       # Workers drain live calls one at a time, so a deploy can take up to ~2 × LIVEKIT_DRAIN_TIMEOUT.
       - name: Roll the release onto the server

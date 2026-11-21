@@ -1,0 +1,77 @@
+---
+import Button from './Button.astro';
+import CallConsole from './CallConsole.astro';
+import R from './R.astro';
+import Regional from './Regional.astro';
+import { both, money } from '../data/regions';
+import { CLAIM_ZDR } from '../data/site';
+
+const headlineValue = both((r, f) => money(r, f.headlineValue));
+const accent = { au: 'Australian', uk: 'British' };
+---
+<section id="top" class="relative overflow-hidden" aria-labelledby="hero-title">
+  <div class="container-page grid grid-cols-1 gap-14 pb-20 pt-12 sm:pt-16 lg:grid-cols-12 lg:gap-12 lg:pb-28 lg:pt-24">
+    <div class="lg:col-span-7 lg:pr-6">
+      <p class="inline-flex items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1 text-[0.8125rem] text-slate">
+        <span class="h-1.5 w-1.5 rounded-full bg-teal" aria-hidden="true"></span>
+        Built for private and mixed cosmetic dental practices
+      </p>
+
+      <h1 id="hero-title" class="mt-6 text-[clamp(2.75rem,6.5vw,4.75rem)] leading-[1.02] text-ink">
+        Stop losing <R v={headlineValue} /> implant patients to voicemail.
+      </h1>
+
+      <Regional as="p" class="lede mt-6">
+        <Fragment slot="au">
+          An AI overflow receptionist for Australian dental practices. It answers busy lines, lunch breaks and after-hours calls within a second,
+          qualifies implant and cosmetic enquiries, and books consultations straight into Cliniko.
+        </Fragment>
+        <Fragment slot="uk">
+          An AI overflow receptionist for British dental practices. It answers busy lines, lunch breaks and after-hours calls within a second,
+          qualifies implant and cosmetic enquiries, and books consultations straight into your practice diary.
+        </Fragment>
+      </Regional>
+
+      <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <Button signup="dental_essentials" size="lg">Start 14-day pilot</Button>
+        <Button href="#demo" variant="secondary" size="lg">Hear a dental call</Button>
+      </div>
+
+      <dl class="mt-12 grid grid-cols-2 border-t border-hairline sm:grid-cols-4">
+        <div class="border-b border-hairline py-4 pr-4 sm:border-b-0 sm:border-r">
+          <dt class="text-[0.9375rem] font-semibold text-ink">About a second</dt>
+          <dd class="mt-1 text-[0.8125rem] leading-snug text-slate">to reply, in a natural <R v={accent} /> voice</dd>
+        </div>
+        <div class="border-b border-hairline py-4 pl-4 sm:border-b-0 sm:border-r sm:pr-4">
+          <dt class="text-[0.9375rem] font-semibold text-ink"><R v={{ au: 'Cliniko', uk: 'Dentally' }} /> booking</dt>
+          <dd class="mt-1 text-[0.8125rem] leading-snug text-slate">
+            <R v={{ au: 'straight into the diary; Dentally in early access', uk: 'in early access; Cliniko and Google Calendar today' }} />
+          </dd>
+        </div>
+        <div class="py-4 pr-4 sm:border-r sm:border-hairline sm:pl-4">
+          {
+            CLAIM_ZDR ? (
+              <Fragment>
+                <dt class="text-[0.9375rem] font-semibold text-ink">Zero data retention</dt>
+                <dd class="mt-1 text-[0.8125rem] leading-snug text-slate">on AI processing of patient calls</dd>
+              </Fragment>
+            ) : (
+              <Fragment>
+                <dt class="text-[0.9375rem] font-semibold text-ink">No AI training</dt>
+                <dd class="mt-1 text-[0.8125rem] leading-snug text-slate">on your patients' calls, by anyone</dd>
+              </Fragment>
+            )
+          }
+        </div>
+        <div class="py-4 pl-4">
+          <dt class="text-[0.9375rem] font-semibold text-ink">Instant text-back</dt>
+          <dd class="mt-1 text-[0.8125rem] leading-snug text-slate">within 15 seconds when a caller hangs up</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class="lg:col-span-5 lg:pt-4">
+      <CallConsole />
+    </div>
+  </div>
+</section>

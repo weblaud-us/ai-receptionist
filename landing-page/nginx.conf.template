@@ -1,0 +1,59 @@
+# Static multi-page site (Astro build): /, /uk/, /404.html. Rendered at container start by the
+# nginx image's envsubst step; this file has no variables yet, which keeps the image identical to
+# the dashboards' layout.
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    server_tokens off;
+    absolute_redirect off;
+
+    # Every script, style, font and image is a same-origin file, so the CSP needs no 'unsafe-inline'
+    # for scripts. Inline style attributes (Tailwind arbitrary values) need style-src 'unsafe-inline'.
+    set $csp "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests";
+
+    add_header Content-Security-Policy $csp always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=()" always;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml application/xml text/plain;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+
+    # Hashed build output (scripts, styles, fonts): cache for a year.
+    location /_astro/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    # Pages: always revalidate so a deploy shows up at once. add_header in a location replaces the
+    # server-level ones, so the security headers are repeated here.
+    location / {
+        add_header Cache-Control "no-cache";
+        add_header Content-Security-Policy $csp always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=()" always;
+        try_files $uri $uri/index.html $uri.html =404;
+    }
+
+    error_page 404 /404.html;
+    location = /404.html {
+        internal;
+        add_header Cache-Control "no-cache";
+        add_header Content-Security-Policy $csp always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+}

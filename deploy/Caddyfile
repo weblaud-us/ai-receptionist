@@ -31,3 +31,11 @@
 	header X-Robots-Tag "noindex, nofollow"
 	reverse_proxy platform-dashboard:8080
 }
+
+# Public landing page. SITE_DOMAIN comes from the .deploy file; when it isn't set, compose passes
+# http://localhost, so this block requests no certificate and the landing container isn't running.
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	header -Server
+	reverse_proxy landing:8080
+}

@@ -1,0 +1,11 @@
+---
+/** Inline regional text: renders both variants; CSS shows the active region's one. */
+import type { Regional } from '../data/regions';
+
+interface Props {
+  v: Regional<string | number>;
+}
+const { v } = Astro.props;
+const same = v.au === v.uk;
+---
+{same ? <Fragment>{v.au}</Fragment> : <Fragment><span class="r-au">{v.au}</span><span class="r-uk">{v.uk}</span></Fragment>}

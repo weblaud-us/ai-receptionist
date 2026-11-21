@@ -1,0 +1,97 @@
+---
+import Regional from './Regional.astro';
+import { CLAIM_ZDR, LINKS } from '../data/site';
+
+const shared = [
+  {
+    title: CLAIM_ZDR ? 'Zero data retention on AI processing' : 'Never used to train AI',
+    body: CLAIM_ZDR
+      ? 'Language and speech providers process calls under zero-data-retention terms and never train on them.'
+      : 'Speech and language providers run with storage for training switched off. Your patients’ calls never train anyone’s models.',
+  },
+  {
+    title: 'Clinical notes encrypted',
+    body: 'Call transcripts and the symptoms and notes taken from patients are encrypted field by field at rest, readable only by your authorised staff.',
+  },
+  {
+    title: 'Recordings deleted on schedule',
+    body: 'Recordings are deleted after 30 days and transcripts after 90 by default. Choose 30, 60 or 90 days.',
+  },
+  {
+    title: 'Access and erasure requests',
+    body: 'Find everything held about a patient and export or erase it, including recordings and captured leads.',
+  },
+];
+---
+<section id="compliance" class="on-dark bg-night text-mist" aria-labelledby="compliance-title">
+  <div class="container-page section">
+    <div class="grid grid-cols-1 gap-12 lg:grid-cols-12">
+      <div class="lg:col-span-5">
+        <h2 id="compliance-title" class="h2 text-white">Patient privacy, handled like clinical data</h2>
+        <p class="lede mt-4">Calls about teeth are health information. The product is built to the privacy law your practice answers to, not to a US standard.</p>
+        <p class="mt-6 text-[0.9375rem] text-mist-muted">
+          The practice is the data controller; we act as your processor under a data processing agreement.
+          {LINKS.dpa && <a href={LINKS.dpa} class="text-teal-light underline underline-offset-4">Read the DPA</a>}
+        </p>
+      </div>
+
+      <div class="lg:col-span-7">
+        <Regional class="rounded-[var(--radius-console)] border border-hairline-dark bg-night-raised p-6 sm:p-8">
+          <Fragment slot="au">
+            <h3 class="text-lg text-white">For Australian practices</h3>
+            <dl class="mt-5 grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <div>
+                <dt class="font-medium text-mist">Australian Privacy Principles</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">Built to the Privacy Act 1988 and the APPs, including APP 8 on overseas disclosure and the Notifiable Data Breaches scheme.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Hosted in Sydney</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">Database, recordings and servers in AWS Sydney (<span class="font-mono text-[0.8125rem]">ap-southeast-2</span>). Speech and language models run where each provider hosts them.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Recall texts under the Spam Act</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">Spam Act 2003 rules on every recall text: consent recorded, the practice named, STOP honoured. DNCR checks before any voice recall.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Recording announced</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">When recording is on, callers hear it before anything else, and the assistant always says it is an AI.</dd>
+              </div>
+            </dl>
+          </Fragment>
+          <Fragment slot="uk">
+            <h3 class="text-lg text-white">For UK practices</h3>
+            <dl class="mt-5 grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <div>
+                <dt class="font-medium text-mist">UK GDPR Article 9</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">Health data treated as special category data, processed under Article 9(2)(h) and an ICO-aligned data processing agreement.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Hosted in London</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">Database, recordings and servers in AWS London (<span class="font-mono text-[0.8125rem]">eu-west-2</span>). Speech and language models run where each provider hosts them.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Recall texts under PECR</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">The soft opt-in for existing patients, the consent basis logged on every text, and STOP honoured. TPS screening before any voice recall.</dd>
+              </div>
+              <div>
+                <dt class="font-medium text-mist">Recording announced</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">When recording is on, callers hear it before anything else, and the assistant always says it is an AI.</dd>
+              </div>
+            </dl>
+          </Fragment>
+        </Regional>
+
+        <dl class="mt-10 grid grid-cols-1 gap-x-10 gap-y-7 sm:grid-cols-2">
+          {
+            shared.map((item) => (
+              <div class="border-t border-hairline-dark pt-5">
+                <dt class="font-medium text-mist">{item.title}</dt>
+                <dd class="mt-1 text-[0.9375rem] text-mist-muted">{item.body}</dd>
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>

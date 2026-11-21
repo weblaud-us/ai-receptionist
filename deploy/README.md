@@ -46,6 +46,7 @@ IMAGE_PREFIX=ghcr.io/owner/receptionist
 API_DOMAIN=api.example.com
 APP_DOMAIN=app.example.com              # client dashboard (businesses)
 ADMIN_DOMAIN=admin.example.com          # platform admin app
+# SITE_DOMAIN=www.example.com            # public landing page: set on ONE environment only (see below)
 WORKERS=2                                # voice worker containers, 2–4
 LIVEKIT_WSS_URL=wss://your-project.livekit.cloud   # platform app CSP: dialer listen-in / takeover
 # CSP_EXTRA_CONNECT_SRC=https://o123.ingest.sentry.io   # if the dashboards report to Sentry
@@ -58,6 +59,19 @@ List both origins in `CORS_ORIGINS` in the env file:
 
 DNS: `API_DOMAIN`, `APP_DOMAIN` and `ADMIN_DOMAIN` → the host. Firewall: allow 80/443 (and SSH) only. Caddy gets
 the certificates on first start. Put Cloudflare (proxied) in front afterwards for WAF/DDoS.
+
+**Landing page (optional).** The public marketing site (`landing-page/`) runs on one environment
+only, normally `production`. On that environment:
+
+1. GitHub environment variables: `SITE_URL=https://www.example.com` (turns on the image build), plus
+   optionally `BOOK_DEMO_URL`, `DEMO_CALL_URL`, `DEMO_PHONE_AU`, `DEMO_PHONE_UK`, `PRIVACY_URL`,
+   `TERMS_URL`, `DPA_URL` and `CLAIM_ZDR` (leave it unset until both vendors have approved Zero Data
+   Retention). Its signup and sign-in links use that environment's `APP_URL`.
+2. The `.deploy` file: `SITE_DOMAIN=www.example.com`, and a DNS record pointing it at the host.
+
+Environments without `SITE_DOMAIN` don't start the `landing` container, and Caddy's site block falls
+back to `http://localhost`, so no certificate is requested. Regional stacks (`production-au`,
+`production-uk`) normally leave it unset.
 
 Twilio trunk → **Disaster Recovery URL**: the independent fallback below (not this host).
 

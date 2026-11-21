@@ -1,0 +1,53 @@
+---
+import Logo from './Logo.astro';
+import R from './R.astro';
+import { BRAND, LINKS, YEAR } from '../data/site';
+
+const legal = [
+  { href: LINKS.privacy, label: 'Privacy policy' },
+  { href: LINKS.dpa, label: 'Data processing agreement' },
+  { href: LINKS.terms, label: 'Terms of service' },
+].filter((l) => l.href);
+const linkClass = 'text-[0.9375rem] text-slate transition-colors hover:text-ink';
+---
+<footer class="border-t border-hairline bg-porcelain">
+  <div class="container-page grid grid-cols-1 gap-10 py-16 sm:grid-cols-2 lg:grid-cols-12">
+    <div class="lg:col-span-4">
+      <Logo />
+      <p class="mt-4 max-w-[34ch] text-[0.9375rem] text-slate">An AI overflow and after-hours receptionist for private and mixed dental practices.</p>
+    </div>
+
+    <nav aria-labelledby="f-product" class="lg:col-span-2 lg:col-start-6">
+      <h2 id="f-product" class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Product</h2>
+      <ul class="mt-4 space-y-2.5">
+        <li><a class={linkClass} href="#how-it-works">How it works</a></li>
+        <li><a class={linkClass} href="#demo">Sample calls</a></li>
+        <li><a class={linkClass} href="#roi">ROI calculator</a></li>
+        <li><a class={linkClass} href="#pricing">Pricing</a></li>
+        <li><a class={linkClass} href={LINKS.login}>Sign in</a></li>
+      </ul>
+    </nav>
+
+    <nav aria-labelledby="f-legal" class="lg:col-span-2">
+      <h2 id="f-legal" class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Compliance and legal</h2>
+      <ul class="mt-4 space-y-2.5">
+        <li><a class={linkClass} href="#compliance">Privacy and hosting</a></li>
+        {legal.map((l) => <li><a class={linkClass} href={l.href}>{l.label}</a></li>)}
+      </ul>
+    </nav>
+
+    <div class="lg:col-span-3">
+      <h2 class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Regions</h2>
+      <ul class="mt-4 space-y-2.5 text-[0.9375rem] text-slate">
+        <li><a class={linkClass} href="/" hreflang="en-AU">Australia</a>, hosted in Sydney</li>
+        <li><a class={linkClass} href="/uk/" hreflang="en-GB">United Kingdom</a>, hosted in London</li>
+      </ul>
+    </div>
+  </div>
+  <div class="border-t border-hairline">
+    <div class="container-page flex flex-col gap-2 py-6 text-[0.8125rem] text-slate sm:flex-row sm:justify-between">
+      <p>© {YEAR} {BRAND}. All rights reserved.</p>
+      <p>Prices exclude <R v={{ au: 'GST', uk: 'VAT' }} />. Sample practices and phone numbers on this page are fictional.</p>
+    </div>
+  </div>
+</footer>
