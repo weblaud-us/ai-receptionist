@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -111,7 +111,7 @@ jobs:
           #   below 1.45. Fixed by moving the livekit-agents family to 1.8.7+, which needs openai>=3.
           uvx pip-audit -r /tmp/requirements.txt --require-hashes --disable-pip \
             --ignore-vuln CVE-2026-114603 --ignore-vuln CVE-2026-126360
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Frontend dependencies (npm audit, production only, all workspaces)
