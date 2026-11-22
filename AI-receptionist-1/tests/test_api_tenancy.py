@@ -5,7 +5,8 @@ Two tenants — a salon (A) and a plumber (B) — share phone numbers and look-a
 endpoint called as A must never return or change B's data, and a spoofed X-Tenant-Id is refused.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -302,6 +303,23 @@ async def test_appointments_through_the_dashboard_are_scoped_and_race_free(world
     assert client.get("/t/appointments", headers=_h(world["owner_b"]), params={"date_from": day}).json()["appointments"] == []
 
 
+async def test_slots_cover_a_range_of_days_for_the_booking_picker(world, client):
+    h = _h(world["owner_a"])
+    svc = client.get("/t/services", headers=h).json()["services"][0]
+    first = (datetime.now(timezone.utc).date() + timedelta(days=3)).isoformat()
+    r = client.get("/t/slots", headers=h, params={"service_id": svc["id"], "day": first, "days": 7})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["timezone"] == "America/Chicago"
+    zone = ZoneInfo("America/Chicago")
+    local_days = {datetime.fromisoformat(s["start"].replace("Z", "+00:00")).astimezone(zone).date() for s in body["slots"]}
+    assert len(local_days) > 1                                    # a week of a Tue–Sat salon spans several days
+    last = (date.fromisoformat(first) + timedelta(days=6))
+    assert all(date.fromisoformat(first) <= d <= last for d in local_days)
+    assert len({s["start"] for s in body["slots"]}) == len(body["slots"])   # one resource per time
+    assert client.get("/t/slots", headers=h, params={"service_id": svc["id"], "days": 15}).status_code == 422
+
+
 async def test_knowledge_and_unanswered(world, client, db):
     h = _h(world["owner_a"])
     item = client.post("/t/knowledge", headers=h, json={"question": "Gift cards?", "answer": "Yes, any amount."}).json()
@@ -311,6 +329,64 @@ async def test_knowledge_and_unanswered(world, client, db):
     assert client.post("/t/unanswered/un1/answer", headers=_h(world["owner_b"]), json={"answer": "x"}).status_code == 404
     r = client.post("/t/unanswered/un1/answer", headers=h, json={"answer": "Yes, book a trial first."})
     assert r.status_code == 200 and client.get("/t/unanswered", headers=h).json()["items"] == []
+
+
+async def test_contact_detail_opens_for_contacts_the_assistant_created(world, client, db):
+    """Contacts come from an upsert (and legacy ones have ObjectId ids) — the detail must still open."""
+    from bson import ObjectId
+
+    h = _h(world["owner_a"])
+    repos = Repos(db, "ten_A")
+    created = await repos.contacts.upsert_by_phone("+15125550111", {"name": "Mia"})
+    assert isinstance(created["_id"], str) and created["_id"].startswith("con_")
+    legacy = ObjectId()
+    await repos.contacts.insert_one({"_id": legacy, "phone": "+15125550122", "name": "Old", "tags": [],
+                                     "do_not_contact": False})
+    await repos.appointments.insert_one({"appointment_id": "ap1", "contact_id": legacy, "service_name": "Cut",
+                                         "start": datetime.now(timezone.utc), "status": "confirmed"})
+    for cid, name in ((created["_id"], "Mia"), (str(legacy), "Old")):
+        r = client.get(f"/t/contacts/{cid}", headers=h)
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == name
+    assert [a["appointment_id"] for a in client.get(f"/t/contacts/{legacy}", headers=h).json()["appointments"]] == ["ap1"]
+    assert client.patch(f"/t/contacts/{legacy}", headers=h, json={"notes": "prefers mornings"}).json()["notes"] == \
+        "prefers mornings"
+    assert client.get(f"/t/contacts/{legacy}", headers=_h(world["owner_b"])).status_code == 404
+
+
+async def test_unanswered_groups_repeats_and_one_answer_clears_them(world, client, db):
+    from core.tools.knowledge import record_unanswered
+
+    h = _h(world["owner_a"])
+    repos = Repos(db, "ten_A")
+    for call in ("c1", "c2", "c3"):
+        await record_unanswered(repos, "Do you sell gift vouchers?" if call != "c2" else "do you sell gift voucher",
+                                channel="phone", call_id=call)
+    await record_unanswered(repos, "Is there a lift?", channel="phone", call_id="c4")
+    items = client.get("/t/unanswered", headers=h).json()["items"]
+    assert [(i["count"], len(i["call_ids"])) for i in items] == [(3, 3), (1, 1)]
+    r = client.post(f"/t/unanswered/{items[0]['id']}/answer", headers=h,
+                    json={"answer": "Yes, any amount.", "tags": ["voucher"]})
+    assert r.status_code == 200 and r.json()["item"]["tags"] == ["voucher"]
+    assert [i["question"] for i in client.get("/t/unanswered", headers=h).json()["items"]] == ["Is there a lift?"]
+    assert client.post(f"/t/unanswered/{items[1]['id']}/dismiss", headers=h).status_code == 200
+    assert client.get("/t/unanswered", headers=h).json()["items"] == []
+    assert len(client.get("/t/unanswered", headers=h, params={"status": "dismissed"}).json()["items"]) == 1
+
+
+async def test_knowledge_suggestions_and_tester(world, client):
+    h = _h(world["owner_a"])
+    before = [s["question"] for s in client.get("/t/knowledge/suggestions", headers=h).json()["suggestions"]]
+    assert "Do I need a patch test?" in before and "Is the building wheelchair accessible?" in before
+    client.post("/t/knowledge", headers=h, json={"question": "Can I get in with a wheelchair?", "answer": "Yes, step-free."})
+    after = [s["question"] for s in client.get("/t/knowledge/suggestions", headers=h).json()["suggestions"]]
+    assert "Is the building wheelchair accessible?" not in after and len(after) == len(before) - 1
+
+    r = client.post("/t/knowledge/test", headers=h, json={"question": "is it ok for wheelchairs"}).json()
+    assert r["matches"][0]["question"] == "Can I get in with a wheelchair?" and r["matches"][0]["strength"] == "strong"
+    assert client.post("/t/knowledge/test", headers=h, json={"question": "zebra crossing"}).json()["matches"] == []
+    listed = client.get("/t/knowledge", headers=h).json()
+    assert listed["chars"] > 0 and listed["max_items"] == 60
 
 
 # ── Platform ─────────────────────────────────────────────
@@ -338,6 +414,36 @@ async def test_platform_provisions_tenant_owner_and_number(world, client, db):
     assert {"ten_A", "ten_B", tid} <= listed
     assert client.patch(f"/platform/tenants/{tid}", headers=root, json={"status": "suspended"}).status_code == 200
     assert (await db.audit_log.find_one({"tenant_id": tid, "action": "tenant.create"}))
+
+
+async def test_platform_business_details_and_team_controls(world, client, db):
+    root = _h(world["root"])
+    assert client.get("/platform/tenants/ten_A", headers=_h(world["owner_a"])).status_code == 403
+    d = client.get("/platform/tenants/ten_A", headers=root)
+    assert d.status_code == 200, d.text
+    body = d.json()
+    assert body["stats"]["calls_30d"] == 1 and body["stats"]["contacts"] == 1 and body["stats"]["leads"] == 1
+    assert [c["call_id"] for c in body["recent_calls"]] == ["call_ten_A"]          # never B's calls
+    assert {m["email"] for m in body["members"]} == {"owner@a.com", "staff@a.com"}
+    assert client.get("/platform/tenants/nope", headers=root).status_code == 404
+
+    added = client.post("/platform/tenants/ten_A/members", headers=root, json={"email": "new@a.com", "role": "admin"})
+    assert added.status_code == 200 and "reset-password?token=" in added.json()["set_password_link"]
+    new_id = added.json()["member"]["id"]
+    owner_id = (await db.users.find_one({"email": "owner@a.com"}))["_id"]
+    # The last owner can't be demoted or removed; anyone else can.
+    assert client.patch(f"/platform/tenants/ten_A/members/{owner_id}", headers=root, json={"role": "staff"}).status_code == 409
+    assert client.delete(f"/platform/tenants/ten_A/members/{owner_id}", headers=root).status_code == 409
+    assert client.patch(f"/platform/tenants/ten_A/members/{new_id}", headers=root, json={"role": "owner"}).status_code == 200
+    assert client.patch(f"/platform/tenants/ten_A/members/{owner_id}", headers=root, json={"role": "staff"}).status_code == 200
+    # A member of another business is "not found" here.
+    owner_b = (await db.users.find_one({"email": "owner@b.com"}))["_id"]
+    assert client.delete(f"/platform/tenants/ten_A/members/{owner_b}", headers=root).status_code == 404
+    link = client.post(f"/platform/tenants/ten_A/members/{owner_id}/reset-link", headers=root)
+    assert link.status_code == 200 and "reset-password?token=" in link.json()["link"]
+    assert client.delete(f"/platform/tenants/ten_A/members/{owner_id}", headers=root).status_code == 200
+    actions = {a["action"] for a in client.get("/platform/tenants/ten_A", headers=root).json()["audit"]}
+    assert {"team.add", "team.role", "team.remove", "team.reset_link"} <= actions
 
 
 async def test_suspended_tenant_users_are_locked_out(world, client, db):

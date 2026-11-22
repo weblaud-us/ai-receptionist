@@ -4,6 +4,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@receptionist/shared/lib/api'
+import type { SiteDraft } from '@receptionist/shared/lib/site-import'
 
 const NO_TENANT = { tenant: null } as const
 
@@ -74,20 +75,229 @@ export const useVerticals = () =>
 export const useCostModel = () =>
   useQuery({ queryKey: ['p-costs'], queryFn: () => api<CostModel>('/platform/costs', NO_TENANT) })
 
+/* ───────────── one business (details page) ───────────── */
+
+export type Role = 'owner' | 'admin' | 'staff'
+
+export interface TenantMember {
+  id: string
+  email: string
+  name: string
+  role: Role | null
+  last_login_at: string | null
+  disabled: boolean
+  pending_password: boolean
+  mfa: boolean
+}
+
+export interface TenantNumber {
+  e164: string
+  purpose?: string
+  provider?: string
+  status?: string
+  country?: string
+  assigned_at?: string
+}
+
+export interface TenantCall {
+  call_id: string
+  started_at: string
+  duration_s: number | null
+  outcome: string | null
+  status: string
+  direction?: string
+  caller_phone?: string
+  summary?: string
+  after_hours?: boolean | null
+}
+
+export interface AuditEntry {
+  user_id: string | null
+  action: string
+  target_type: string
+  target_id: string
+  diff: Record<string, unknown>
+  ip: string
+  at: string
+}
+
+/** The tenant document as stored (only the parts the details page reads are typed). */
+export interface TenantDoc {
+  id: string
+  name: string
+  slug: string
+  vertical: Vertical
+  status: string
+  region: 'us' | 'eu' | 'me'
+  country: string
+  timezone: string
+  locale: string
+  currency: string
+  phone: string
+  website: string
+  answering_mode: 'all_calls' | 'overflow' | 'after_hours'
+  agent: { name: string; max_call_minutes: number; recording: { enabled: boolean; retention_days: number; announce: boolean; announce_text: string } }
+  transfer: { number: string }
+  notifications: { owner_email: string; owner_phone: string }
+  limits: { included_minutes: number; max_concurrent_calls: number; max_users: number; max_numbers: number }
+  billing: {
+    plan: string
+    interval: string
+    subscription_status: string
+    stripe_customer_id: string
+    trial_ends_at: string | null
+    period_end: string | null
+    hard_cap: boolean
+    cancelled_at: string | null
+    delete_after: string | null
+  }
+  pilot: { active: boolean; ends_at: string | null }
+  legal: { dpa_version: string; dpa_accepted_at: string | null }
+  onboarding: { completed_at?: string }
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface TenantDetails {
+  tenant: TenantDoc
+  stats: {
+    calls_30d: number
+    minutes_30d: number
+    calls_total: number
+    contacts: number
+    appointments_upcoming: number
+    leads: number
+    messages: number
+    knowledge: number
+    services: number
+  }
+  numbers: TenantNumber[]
+  members: TenantMember[]
+  invites: { email: string; role: Role; expires_at: string | null }[]
+  recent_calls: TenantCall[]
+  audit: AuditEntry[]
+  number_orders: NumberOrder[]
+}
+
+/** Orders still moving: the details page and the wizard's last step refresh while one is. */
+export const ORDER_IN_FLIGHT: NumberOrder['status'][] = ['pending', 'running']
+
+export const usePlatformTenant = (id: string | undefined) =>
+  useQuery({
+    queryKey: ['p-tenant', id],
+    queryFn: () => api<TenantDetails>(`/platform/tenants/${encodeURIComponent(id!)}`, NO_TENANT),
+    enabled: !!id,
+    refetchInterval: (q) => (q.state.data?.number_orders?.some((o) => ORDER_IN_FLIGHT.includes(o.status)) ? 3000 : false),
+  })
+
+/* ───────────── New business wizard: website import, numbers ───────────── */
+
+export type NumberMode = 'twilio' | 'fake' | 'off'
+
+export interface NumberOption {
+  e164: string
+  locality?: string
+  region?: string
+  country?: string
+  friendly_name?: string
+  fake?: boolean
+}
+
+export interface NumberList {
+  numbers: NumberOption[]
+  mode: NumberMode
+  problems: string[]
+  instant?: boolean
+}
+
+export interface NumberChoice {
+  source: 'owned' | 'buy' | 'none'
+  e164: string
+}
+
+export interface ProvisionResult {
+  tenant: { id: string; name: string; slug: string; vertical: Vertical }
+  owner: { id: string; email: string }
+  set_password_link: string | null
+  emailed: boolean
+  added: { services: number; knowledge: number }
+  order: NumberOrder | null
+  number_error: string | null
+}
+
+export const useSiteImport = () =>
+  useMutation({
+    mutationFn: (url: string) => api<{ draft: SiteDraft }>('/platform/site-import', { method: 'POST', body: { url }, ...NO_TENANT }),
+  })
+
+export const useOwnedNumbers = (enabled = true) =>
+  useQuery({
+    queryKey: ['p-owned-numbers'],
+    queryFn: () => api<NumberList>('/platform/numbers/owned', NO_TENANT),
+    enabled,
+    staleTime: 30_000,
+  })
+
+export const useAvailableNumbers = (search: { country: string; area_code: string; contains: string } | null) =>
+  useQuery({
+    queryKey: ['p-available-numbers', search],
+    queryFn: () => api<NumberList>('/platform/numbers/available', { params: search ?? undefined, ...NO_TENANT }),
+    enabled: !!search,
+  })
+
+export function useOrderTenantNumber(tenantId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { e164: string; source: 'buy' | 'owned' }) =>
+      api<{ order: NumberOrder }>(`/platform/tenants/${encodeURIComponent(tenantId)}/numbers`, { method: 'POST', body, ...NO_TENANT }),
+    onSuccess: () => {
+      for (const key of ['p-tenant', 'p-tenants', 'p-owned-numbers', 'p-number-orders']) void qc.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
+export function useTenantTeamMutations(tenantId: string) {
+  const qc = useQueryClient()
+  const done = () => void qc.invalidateQueries({ queryKey: ['p-tenant', tenantId] })
+  const base = `/platform/tenants/${encodeURIComponent(tenantId)}/members`
+  return {
+    add: useMutation({
+      mutationFn: (body: { email: string; name: string; role: Role }) =>
+        api<{ member: { id: string; email: string }; set_password_link: string | null }>(base, { method: 'POST', body, ...NO_TENANT }),
+      onSuccess: done,
+    }),
+    setRole: useMutation({
+      mutationFn: ({ userId, role }: { userId: string; role: Role }) =>
+        api(`${base}/${encodeURIComponent(userId)}`, { method: 'PATCH', body: { role }, ...NO_TENANT }),
+      onSuccess: done,
+    }),
+    remove: useMutation({
+      mutationFn: (userId: string) => api(`${base}/${encodeURIComponent(userId)}`, { method: 'DELETE', ...NO_TENANT }),
+      onSuccess: done,
+    }),
+    resetLink: useMutation({
+      mutationFn: (userId: string) => api<{ link: string }>(`${base}/${encodeURIComponent(userId)}/reset-link`, { method: 'POST', ...NO_TENANT }),
+      onSuccess: done,
+    }),
+  }
+}
+
 /* ───────────── mutations ───────────── */
 
 export function usePlatformMutations() {
   const qc = useQueryClient()
-  const done = () => void qc.invalidateQueries({ queryKey: ['p-tenants'] })
+  const done = () => {
+    void qc.invalidateQueries({ queryKey: ['p-tenants'] })
+    void qc.invalidateQueries({ queryKey: ['p-tenant'] })
+  }
   return {
     provision: useMutation({
       mutationFn: (body: Record<string, unknown>) =>
-        api<{ tenant: { id: string; name: string }; set_password_link: string | null }>('/platform/tenants', {
-          method: 'POST',
-          body,
-          ...NO_TENANT,
-        }),
-      onSuccess: done,
+        api<ProvisionResult>('/platform/tenants', { method: 'POST', body, ...NO_TENANT }),
+      onSuccess: () => {
+        done()
+        void qc.invalidateQueries({ queryKey: ['p-owned-numbers'] })
+      },
     }),
     update: useMutation({
       mutationFn: ({ id, ...body }: { id: string } & Record<string, unknown>) =>
@@ -101,6 +311,11 @@ export function usePlatformMutations() {
     }),
     releaseNumber: useMutation({
       mutationFn: (e164: string) => api(`/platform/phone-numbers/${encodeURIComponent(e164)}`, { method: 'DELETE', ...NO_TENANT }),
+      onSuccess: done,
+    }),
+    /** Cancel now: stops the Stripe subscription, keeps data CANCEL_RETENTION_DAYS, e-mails the owners. */
+    cancel: useMutation({
+      mutationFn: (id: string) => api(`/platform/tenants/${encodeURIComponent(id)}/cancel`, { method: 'POST', ...NO_TENANT }),
       onSuccess: done,
     }),
   }
@@ -275,6 +490,8 @@ export interface NumberOrder {
   status: 'pending' | 'running' | 'active' | 'failed' | 'verify_failed' | 'needs_documents' | 'cancelled'
   steps: Record<string, boolean>
   error: string
+  source?: 'owned' | 'buy'
+  failed_step?: string
   note?: string
   attempts: number
   created_at: string
@@ -289,7 +506,10 @@ export const useNumberOrders = (status = '') =>
 
 export function useNumberOrderMutations() {
   const qc = useQueryClient()
-  const refresh = () => void qc.invalidateQueries({ queryKey: ['p-number-orders'] })
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['p-number-orders'] })
+    void qc.invalidateQueries({ queryKey: ['p-tenant'] })
+  }
   return {
     approve: useMutation({
       mutationFn: ({ id, bundle_sid, address_sid }: { id: string; bundle_sid: string; address_sid: string }) =>

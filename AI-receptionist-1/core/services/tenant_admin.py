@@ -86,7 +86,8 @@ async def apply_template(tenant_id: str, vertical: str, *, replace: bool = False
         if replace or await repos.services.count() == 0:
             for i, svc in enumerate(spec.default_services):
                 await repos.services.insert_one({"_id": new_id("svc"), "active": True, "ai_bookable": True,
-                                                 "resource_ids": [], "buffer_min": 0, "sort": i, **svc})
+                                                 "resource_ids": [], "buffer_min": 0, "sort": i,
+                                                 "source": "template", **svc})
                 added["services"] += 1
     if replace or await repos.knowledge.count() == 0:
         for faq in spec.default_faqs:

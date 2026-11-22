@@ -1,8 +1,8 @@
 import { Plus, X } from 'lucide-react'
-import { Button } from '@receptionist/shared/components/ui/button'
-import { Input } from '@receptionist/shared/components/ui/input'
-import { Switch } from '@receptionist/shared/components/ui/switch'
-import type { HoursEntry } from '@/lib/tenant-types'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Switch } from './ui/switch'
+import type { HoursEntry } from '../lib/hours'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 

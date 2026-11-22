@@ -1,4 +1,8 @@
 ---
+/**
+ * Footer (Ordin): link columns, a full-width lowercase wordmark and a mono status line. On desktop it
+ * is fixed underneath the page and revealed as the last band scrolls away (motion/scenes.ts).
+ */
 import Logo from './Logo.astro';
 import R from './R.astro';
 import { BRAND, LINKS, YEAR } from '../data/site';
@@ -8,46 +12,53 @@ const legal = [
   { href: LINKS.dpa, label: 'Data processing agreement' },
   { href: LINKS.terms, label: 'Terms of service' },
 ].filter((l) => l.href);
-const linkClass = 'text-[0.9375rem] text-slate transition-colors hover:text-ink';
+const linkClass = 'text-[max(0.9375rem,1.05vw)] tracking-[-0.01em] text-ink transition-colors duration-300 hover:text-teal';
+const headClass = 'ord-label text-teal';
 ---
-<footer class="border-t border-hairline bg-porcelain">
-  <div class="container-page grid grid-cols-1 gap-10 py-16 sm:grid-cols-2 lg:grid-cols-12">
-    <div class="lg:col-span-4">
+<footer data-tone="light" class="site-footer tone-light bg-bone">
+  <div class="container-page grid grid-cols-1 gap-10 pb-[max(2.5rem,3vw)] pt-[max(4rem,6vw)] sm:grid-cols-2 lg:grid-cols-12">
+    <div class="sm:col-span-2 lg:col-span-4">
       <Logo />
-      <p class="mt-4 max-w-[34ch] text-[0.9375rem] text-slate">An AI overflow and after-hours receptionist for private and mixed dental practices.</p>
+      <p class="mt-5 max-w-[34ch] text-[0.9375rem] text-slate">An AI overflow and after-hours receptionist for private and mixed dental practices.</p>
     </div>
 
     <nav aria-labelledby="f-product" class="lg:col-span-2 lg:col-start-6">
-      <h2 id="f-product" class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Product</h2>
-      <ul class="mt-4 space-y-2.5">
+      <h2 id="f-product" class={headClass}>Product</h2>
+      <ul class="mt-5 space-y-2.5">
         <li><a class={linkClass} href="#how-it-works">How it works</a></li>
         <li><a class={linkClass} href="#demo">Sample calls</a></li>
         <li><a class={linkClass} href="#roi">ROI calculator</a></li>
         <li><a class={linkClass} href="#pricing">Pricing</a></li>
-        <li><a class={linkClass} href={LINKS.login}>Sign in</a></li>
       </ul>
     </nav>
 
-    <nav aria-labelledby="f-legal" class="lg:col-span-2">
-      <h2 id="f-legal" class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Compliance and legal</h2>
-      <ul class="mt-4 space-y-2.5">
+    <nav aria-labelledby="f-legal" class="lg:col-span-3">
+      <h2 id="f-legal" class={headClass}>Compliance and legal</h2>
+      <ul class="mt-5 space-y-2.5">
         <li><a class={linkClass} href="#compliance">Privacy and hosting</a></li>
         {legal.map((l) => <li><a class={linkClass} href={l.href}>{l.label}</a></li>)}
       </ul>
     </nav>
 
-    <div class="lg:col-span-3">
-      <h2 class="font-sans text-[0.9375rem] font-medium tracking-normal text-ink">Regions</h2>
-      <ul class="mt-4 space-y-2.5 text-[0.9375rem] text-slate">
-        <li><a class={linkClass} href="/" hreflang="en-AU">Australia</a>, hosted in Sydney</li>
-        <li><a class={linkClass} href="/uk/" hreflang="en-GB">United Kingdom</a>, hosted in London</li>
+    <div class="lg:col-span-2">
+      <h2 class={headClass}>Regions</h2>
+      <ul class="mt-5 space-y-2.5 text-slate">
+        <li><a class={linkClass} href="/" hreflang="en-AU">Australia</a><span class="block ord-label">Sydney, ap-southeast-2</span></li>
+        <li><a class={linkClass} href="/uk/" hreflang="en-GB">United Kingdom</a><span class="block ord-label">London, eu-west-2</span></li>
+        <li class="pt-1"><a class={linkClass} href={LINKS.login}>Sign in</a></li>
       </ul>
     </div>
   </div>
-  <div class="border-t border-hairline">
-    <div class="container-page flex flex-col gap-2 py-6 text-[0.8125rem] text-slate sm:flex-row sm:justify-between">
-      <p>© {YEAR} {BRAND}. All rights reserved.</p>
+
+  <div class="overflow-hidden" aria-hidden="true">
+    <p class="container-page whitespace-nowrap text-[21vw] font-[450] lowercase leading-[0.8] tracking-[-0.075em] text-ink">{BRAND}</p>
+  </div>
+
+  <div class="container-page">
+    <div class="flex flex-col gap-2 border-t border-[var(--line-strong)] py-[max(1rem,1.2vw)] ord-label text-slate sm:flex-row sm:justify-between">
+      <p>© {YEAR} {BRAND}</p>
       <p>Prices exclude <R v={{ au: 'GST', uk: 'VAT' }} />. Sample practices and phone numbers on this page are fictional.</p>
+      <p class="flex items-center gap-2"><span class="h-1.5 w-1.5 bg-teal" aria-hidden="true"></span><R v={{ au: 'Australia · Sydney', uk: 'United Kingdom · London' }} /></p>
     </div>
   </div>
 </footer>

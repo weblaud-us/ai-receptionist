@@ -1,26 +1,37 @@
 ---
 import Button from './Button.astro';
 import R from './R.astro';
+import SectionRule from './SectionRule.astro';
 import { ESSENTIALS } from '../data/plans';
 import { REGION, money, regionFromPath, type Region } from '../data/regions';
 import { BRAND } from '../data/site';
 
 const region = regionFromPath(Astro.url.pathname);
 
+/** Three practice shapes; `value` is per region. Read by roi.ts. */
+const presets = [
+  { id: 'solo', label: 'Solo private', note: '1–2 chairs', calls: 8, hv: 15, close: 30, value: { au: 3000, uk: 2000 } },
+  { id: 'cosmetic', label: '3-chair cosmetic and implant', note: 'busy ads, long consults', calls: 16, hv: 30, close: 35, value: { au: 5000, uk: 3500 } },
+  { id: 'multi', label: 'Multi-site', note: '2–3 locations', calls: 35, hv: 25, close: 35, value: { au: 4500, uk: 3200 } },
+] as const;
+const DEFAULT = presets[1];
+
 /** Calculator settings per region; read by roi.ts. */
 const config = {
-  au: { locale: REGION.au.locale, currency: REGION.au.currency, plan: ESSENTIALS.monthly.au, value: { min: 1000, max: 15000, step: 250, def: 3500 } },
-  uk: { locale: REGION.uk.locale, currency: REGION.uk.currency, plan: ESSENTIALS.monthly.uk, value: { min: 600, max: 10000, step: 100, def: 2500 } },
+  au: { locale: REGION.au.locale, currency: REGION.au.currency, plan: ESSENTIALS.monthly.au, value: { min: 1000, max: 15000, step: 250, def: DEFAULT.value.au } },
+  uk: { locale: REGION.uk.locale, currency: REGION.uk.currency, plan: ESSENTIALS.monthly.uk, value: { min: 600, max: 10000, step: 100, def: DEFAULT.value.uk } },
 } satisfies Record<Region, unknown>;
 
 const CAPTURE = 0.6;
 const WEEKS_PER_MONTH = 4.33;
-const D = { calls: 12, hv: 20, close: 35 };
+const D = { calls: DEFAULT.calls, hv: DEFAULT.hv, close: DEFAULT.close };
 const v = config[region].value;
+const plan = config[region].plan;
 const leak = D.calls * WEEKS_PER_MONTH * (D.hv / 100) * (D.close / 100) * v.def;
 const recovered = leak * CAPTURE;
-const multiple = recovered / config[region].plan;
+const multiple = recovered / plan;
 const fill = (val: number, min: number, max: number) => `--fill:${(((val - min) / (max - min)) * 100).toFixed(1)}%`;
+const pctOf = (n: number) => `${Math.max(1.5, Math.min(100, (n / leak) * 100)).toFixed(1)}%`;
 
 const sliders = [
   { id: 'calls', label: 'Missed calls a week', hint: 'Lunch breaks, busy lines and after hours', min: 3, max: 40, step: 1, value: D.calls, text: `${D.calls}` },
@@ -28,73 +39,118 @@ const sliders = [
   { id: 'value', label: 'Average treatment value', hint: 'What an accepted case is worth', min: v.min, max: v.max, step: v.step, value: v.def, text: money(region, v.def) },
   { id: 'close', label: 'Consultations that go ahead', hint: 'Your consult-to-treatment rate', min: 10, max: 70, step: 5, value: D.close, text: `${D.close}%` },
 ];
+const presetData = presets.map((p) => ({ id: p.id, calls: p.calls, hv: p.hv, close: p.close, value: p.value }));
 ---
-<section id="roi" class="section border-t border-hairline" aria-labelledby="roi-title">
-  <div class="container-page">
-    <div class="max-w-3xl">
-      <h2 id="roi-title" class="h2 text-ink">What missed calls cost your practice</h2>
-      <p class="lede mt-4">Move the sliders to match your practice. Everything is worked out in your browser; nothing is sent anywhere.</p>
+<section id="roi" data-tone="light" data-orb="light" class="tone-light bg-paper" aria-labelledby="roi-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="05" label="ROI calculator">Runs in your browser</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+      <h2 id="roi-title" class="h2 lg:col-span-8">What missed calls cost your practice. <span class="hl">Worked out in your browser.</span></h2>
+      <p class="lede lg:col-span-4">Pick the practice closest to yours, then fine-tune. Nothing you enter is sent anywhere.</p>
     </div>
 
     <form
       id="roi-form"
-      class="mt-14 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-16"
+      class="mt-[max(3rem,4.5vw)] grid grid-cols-1 gap-5 lg:grid-cols-12"
       data-config={JSON.stringify(config)}
+      data-presets={JSON.stringify(presetData)}
       data-capture={CAPTURE}
       data-weeks={WEEKS_PER_MONTH}
       data-page-region={region}
     >
-      <fieldset class="space-y-9 lg:col-span-7">
-        <legend class="sr-only">Your practice</legend>
-        {
-          sliders.map((s) => (
-            <div>
-              <div class="flex items-baseline justify-between gap-4">
-                <label for={`roi-${s.id}`} class="font-medium text-ink">
-                  {s.label}
-                </label>
-                <output id={`roi-${s.id}-out`} for={`roi-${s.id}`} class="font-mono text-[1.0625rem] text-ink tnum">
-                  {s.text}
-                </output>
+      <div class="card p-2 lg:col-span-7">
+        <fieldset class="well p-2">
+          <legend class="sr-only">Practice type</legend>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3" data-presets-group>
+            {
+              presets.map((p) => (
+                <button
+                  type="button"
+                  data-preset={p.id}
+                  aria-pressed={p.id === DEFAULT.id}
+                  class="rounded-[2px] border border-transparent px-3.5 py-3 text-left transition-[background-color,border-color,box-shadow] duration-300 hover:border-[var(--line-strong)] aria-pressed:border-ink/25 aria-pressed:bg-surface"
+                >
+                  <span class="block text-[0.9375rem] leading-snug tracking-[-0.01em] text-ink">{p.label}</span>
+                  <span class="mt-0.5 block text-[0.8125rem] text-slate">{p.note}</span>
+                </button>
+              ))
+            }
+          </div>
+        </fieldset>
+
+        <fieldset class="space-y-8 px-4 pb-6 pt-8 sm:px-6">
+          <legend class="sr-only">Your practice</legend>
+          {
+            sliders.map((s) => (
+              <div>
+                <div class="flex items-baseline justify-between gap-4">
+                  <label for={`roi-${s.id}`} class="text-[1rem] tracking-[-0.01em] text-ink">
+                    {s.label}
+                  </label>
+                  <output id={`roi-${s.id}-out`} for={`roi-${s.id}`} class="rounded-[2px] border border-[var(--line)] bg-surface px-2 py-0.5 font-mono text-[0.9375rem] text-ink tnum">
+                    {s.text}
+                  </output>
+                </div>
+                <p id={`roi-${s.id}-hint`} class="mt-0.5 text-[0.875rem] text-slate">
+                  {s.hint}
+                </p>
+                <input
+                  id={`roi-${s.id}`}
+                  name={s.id}
+                  type="range"
+                  class="range mt-2"
+                  min={s.min}
+                  max={s.max}
+                  step={s.step}
+                  value={s.value}
+                  aria-describedby={`roi-${s.id}-hint`}
+                  aria-valuetext={s.text}
+                  style={fill(s.value, s.min, s.max)}
+                />
               </div>
-              <p id={`roi-${s.id}-hint`} class="mt-0.5 text-sm text-slate">
-                {s.hint}
-              </p>
-              <input
-                id={`roi-${s.id}`}
-                name={s.id}
-                type="range"
-                class="range mt-3"
-                min={s.min}
-                max={s.max}
-                step={s.step}
-                value={s.value}
-                aria-describedby={`roi-${s.id}-hint`}
-                aria-valuetext={s.text}
-                style={fill(s.value, s.min, s.max)}
-              />
-            </div>
-          ))
-        }
-      </fieldset>
+            ))
+          }
+        </fieldset>
+      </div>
 
       <div class="lg:col-span-5">
-        <div class="rounded-[var(--radius-panel)] border border-hairline bg-sage p-6 sm:p-8">
+        <div class="tone-dark card glow relative overflow-hidden !bg-night p-6 sm:p-8">
           <p id="roi-summary" class="sr-only" role="status" aria-live="polite"></p>
-          <dl class="space-y-7">
+          <div class="flex items-start justify-between gap-4">
             <div>
-              <dt class="text-[0.9375rem] text-slate">Leaking to voicemail each month</dt>
-              <dd class="mt-1 font-display text-[2.5rem] leading-none text-ink tnum" id="roi-leak">{money(region, Math.round(leak))}</dd>
+              <p class="text-[0.9375rem] text-[var(--fg-2)]">Leaking to voicemail each month</p>
+              <p class="mt-2 text-[clamp(2.5rem,1.6rem+2.4vw,3.5rem)] leading-none tracking-[-0.05em] text-[var(--fg)] tnum" id="roi-leak">{money(region, Math.round(leak))}</p>
             </div>
-            <div class="border-t border-hairline-strong pt-6">
-              <dt class="text-[0.9375rem] text-slate">Recovered each month with {BRAND}</dt>
-              <dd class="mt-1 font-display text-[2.5rem] leading-none text-teal-deep tnum" id="roi-recovered">{money(region, Math.round(recovered))}</dd>
-              <dd class="mt-2 text-sm text-slate">If it captures 60% of those calls</dd>
+            <p class="shrink-0 rounded-[2px] border border-aqua/35 bg-aqua/10 px-2.5 py-1.5 text-center">
+              <span class="block font-mono text-[1.25rem] leading-none text-aqua tnum" id="roi-multiple">{Math.round(multiple)}×</span>
+              <span class="mt-1 block text-[0.6875rem] text-[var(--fg-2)]">return</span>
+            </p>
+          </div>
+
+          <div class="mt-8 space-y-4" aria-hidden="true">
+            <div>
+              <div class="flex justify-between text-[0.8125rem]"><span class="text-[var(--fg-2)]">Leaking</span><span class="font-mono text-[var(--fg-2)] tnum" data-bar-label="leak">{money(region, Math.round(leak))}</span></div>
+              <div class="mt-1.5 h-3 rounded-[1px] bg-white/5"><div class="h-full rounded-[1px] bg-[repeating-linear-gradient(-45deg,rgb(255_138_128/.55)_0_2px,rgb(255_138_128/.25)_2px_6px)]" style="width:100%" data-bar="leak"></div></div>
             </div>
-            <div class="border-t border-hairline-strong pt-6">
-              <dt class="text-[0.9375rem] text-slate">Return on Dental Essentials</dt>
-              <dd class="mt-1 font-display text-[2.5rem] leading-none text-ink tnum" id="roi-multiple">{Math.round(multiple)}×</dd>
-              <dd class="mt-2 text-sm text-slate" id="roi-payback">One accepted case covers {Math.floor(v.def / config[region].plan)} months of the plan.</dd>
+            <div>
+              <div class="flex justify-between text-[0.8125rem]"><span class="text-[var(--fg)]">Recovered with {BRAND}</span><span class="font-mono text-aqua tnum" data-bar-label="recovered">{money(region, Math.round(recovered))}</span></div>
+              <div class="mt-1.5 h-3 rounded-[1px] bg-white/5"><div class="h-full rounded-[1px] bg-aqua transition-[width] duration-500 ease-[var(--ease-out-soft)]" style={`width:${pctOf(recovered)}`} data-bar="recovered"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between text-[0.8125rem]"><span class="text-[var(--fg-2)]">Dental Essentials</span><span class="font-mono text-champagne tnum" data-bar-label="plan">{money(region, plan)}</span></div>
+              <div class="mt-1.5 h-3 rounded-[1px] bg-white/5"><div class="h-full rounded-[1px] bg-champagne transition-[width] duration-500 ease-[var(--ease-out-soft)]" style={`width:${pctOf(plan)}`} data-bar="plan"></div></div>
+            </div>
+          </div>
+
+          <dl class="mt-8 grid grid-cols-2 border-t border-[var(--line)] pt-6">
+            <div>
+              <dt class="text-[0.8125rem] text-[var(--fg-2)]">Recovered a month</dt>
+              <dd class="mt-1 text-[1.75rem] leading-none tracking-[-0.04em] text-aqua tnum" id="roi-recovered">{money(region, Math.round(recovered))}</dd>
+              <dd class="mt-1.5 text-[0.75rem] text-[var(--fg-3)]">at 60% of those calls</dd>
+            </div>
+            <div class="border-l border-[var(--line)] pl-5">
+              <dt class="text-[0.8125rem] text-[var(--fg-2)]">Payback</dt>
+              <dd class="mt-1 text-[0.9375rem] leading-snug text-[var(--fg)]" id="roi-payback">One accepted case covers {Math.floor(v.def / plan)} months of the plan.</dd>
             </div>
           </dl>
           <Button signup="dental_essentials" size="lg" class="mt-8 w-full">Start your 14-day pilot</Button>

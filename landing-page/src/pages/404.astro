@@ -8,13 +8,15 @@ const titles = { au: `Page not found | ${BRAND}`, uk: `Page not found | ${BRAND}
 const descriptions = { au: 'This page does not exist.', uk: 'This page does not exist.' };
 ---
 <Base titles={titles} descriptions={descriptions} noindex>
-  <main id="main" class="container-page flex min-h-dvh flex-col justify-center py-20">
-    <a href="/" aria-label="Front page"><Logo /></a>
-    <h1 class="mt-12 text-[clamp(2.5rem,6vw,4rem)] leading-[1.05] text-ink">This page doesn't exist.</h1>
-    <p class="lede mt-4">The link may be out of date. Everything about the dental receptionist is on the front page.</p>
-    <div class="mt-8 flex flex-wrap gap-3">
-      <Button href="/">Go to the front page</Button>
-      <Button href="/uk/" variant="secondary">UK site</Button>
+  <main id="main" data-tone="dark" class="tone-dark glow grain flex min-h-dvh flex-col justify-center overflow-hidden">
+    <div class="container-page py-20">
+      <a href="/" aria-label="Front page"><Logo /></a>
+      <h1 class="display mt-12 max-w-[16ch]">This page doesn't exist. <span class="hl">The front page does.</span></h1>
+      <p class="lede mt-6">The link may be out of date. Everything about the dental receptionist is on the front page.</p>
+      <div class="mt-10 flex flex-wrap gap-3">
+        <Button href="/">Go to the front page</Button>
+        <Button href="/uk/" variant="outline">UK site</Button>
+      </div>
     </div>
   </main>
 </Base>

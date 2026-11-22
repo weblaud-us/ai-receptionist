@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, time, timezone
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -291,6 +292,38 @@ class Integrations(BaseModel):
         return out
 
 
+# Query parameters that belong to one visitor's browsing session, or to ad tracking, never to the page.
+# A link copied from a website often carries them; texted to a caller it opens an expired session and
+# hands every caller the practice's portal login ids.
+_VOLATILE_PARAM = re.compile(
+    r"(?i)^(utm_.*|fbclid|gclid|gbraid|wbraid|msclkid|mc_eid|mc_cid|_ga|_gl|sid|jsessionid|phpsessid"
+    r"|.*session.*|.*random.*|userid|user_id|weblogin|sourceref|sourceid)$")
+# Booking portals whose path already names the practice; their query string is session state only.
+_PATH_ONLY_HOSTS = re.compile(r"(?i)(^|\.)centaurportal\.com$")
+
+
+def clean_link(url: str) -> str:
+    """A shareable version of a link: scheme added, session and tracking parameters removed."""
+    v = (url or "").strip()
+    if not v:
+        return ""
+    if not re.match(r"^https?://", v, re.I):
+        v = "https://" + v
+    try:
+        parts = urlsplit(v)
+    except ValueError:
+        return v[:500]
+    params = parse_qsl(parts.query, keep_blank_values=True)
+    kept = [(k, val) for k, val in params if not _VOLATILE_PARAM.match(k)]
+    if _PATH_ONLY_HOSTS.search(parts.hostname or ""):
+        query = ""
+    elif len(kept) == len(params):
+        query = parts.query                    # nothing to drop: keep it exactly as typed
+    else:
+        query = urlencode(kept, safe=":/")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))[:500]
+
+
 class Links(BaseModel):
     """Pages the assistant may text to a caller with send_info_link (Task 2.7)."""
 
@@ -303,10 +336,7 @@ class Links(BaseModel):
     @field_validator("booking", "menu", "directions", "payment")
     @classmethod
     def _url(cls, v: str) -> str:
-        v = (v or "").strip()
-        if v and not re.match(r"^https?://", v, re.I):
-            v = "https://" + v
-        return v[:500]
+        return clean_link(v)
 
 
 class Limits(BaseModel):

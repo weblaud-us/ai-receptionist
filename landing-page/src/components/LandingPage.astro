@@ -1,5 +1,10 @@
 ---
-/** The whole landing page; rendered once per region by src/pages/index.astro and src/pages/uk/index.astro. */
+/**
+ * The whole landing page; rendered once per region by src/pages/index.astro and src/pages/uk/index.astro.
+ * Order follows the Ordin template's rhythm: a run of dark bands (hero → leak → demo → compliance),
+ * one hand-off where the first light band slides up over the dark (clinic day), light bands after,
+ * a dark closing band, and the footer revealed from underneath.
+ */
 import Base from '../layouts/Base.astro';
 import Capabilities from './Capabilities.astro';
 import ClinicDay from './ClinicDay.astro';
@@ -11,6 +16,7 @@ import Footer from './Footer.astro';
 import Hero from './Hero.astro';
 import LeakStrip from './LeakStrip.astro';
 import Nav from './Nav.astro';
+import Preloader from './Preloader.astro';
 import Pricing from './Pricing.astro';
 import RoiCalculator from './RoiCalculator.astro';
 import { BRAND } from '../data/site';
@@ -25,25 +31,30 @@ const descriptions = {
 };
 ---
 <Base titles={titles} descriptions={descriptions}>
+  <Preloader />
   <Nav />
   <main id="main" tabindex="-1">
+    <canvas class="orb" aria-hidden="true"></canvas>
     <Hero />
     <LeakStrip />
     <DemoShowcase />
+    <Compliance />
     <ClinicDay />
     <RoiCalculator />
     <Capabilities />
-    <Compliance />
     <Pricing />
     <Faq />
     <FinalCta />
   </main>
   <Footer />
+  <div class="ord-noise" aria-hidden="true"></div>
 </Base>
 
 <script>
+  import { initMotion } from '../scripts/motion';
   import { initNav } from '../scripts/nav';
   import { initRegion } from '../scripts/region';
   initRegion();
   initNav();
+  initMotion();
 </script>

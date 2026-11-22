@@ -291,14 +291,15 @@ async def remove_membership(user_id: str, tenant_id: str) -> None:
     await get_db().users.update_one({"_id": user_id}, {"$pull": {"memberships": {"tenant_id": tenant_id}}})
 
 
-async def start_password_reset(email: str) -> Optional[str]:
-    """Returns the one-time token (the caller e-mails the link). Silent for unknown e-mails."""
+async def start_password_reset(email: str, *, ttl: timedelta = RESET_TTL) -> Optional[str]:
+    """Returns the one-time token (the caller e-mails the link). Silent for unknown e-mails.
+    `ttl`: 1 hour for a reset; longer (INVITE_TTL) for a new owner's welcome e-mail."""
     doc = await UsersStore(get_db()).by_email(email)
     if not doc or doc.get("disabled"):
         return None
     token = new_opaque_token()
     await get_db().password_resets.insert_one({"token_hash": token_hash(token), "user_id": doc["_id"],
-                                               "expires_at": utcnow() + RESET_TTL, "created_at": utcnow()})
+                                               "expires_at": utcnow() + ttl, "created_at": utcnow()})
     return token
 
 

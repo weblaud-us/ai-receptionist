@@ -1,26 +1,45 @@
 ---
+import Button from './Button.astro';
 import R from './R.astro';
+import SectionRule from './SectionRule.astro';
 import { FAQS } from '../data/faq';
+import { LINKS } from '../data/site';
 ---
-<section class="section border-t border-hairline pt-20 lg:pt-24" aria-labelledby="faq-title">
-  <div class="container-page grid grid-cols-1 gap-10 lg:grid-cols-12">
-    <h2 id="faq-title" class="h2 text-ink lg:col-span-4">Questions principals ask</h2>
-    <div class="divide-y divide-hairline border-y border-hairline lg:col-span-8">
-      {
-        FAQS.map((f) => (
-          <details class="group">
-            <summary class="flex items-center justify-between gap-6 py-5 text-[1.0625rem] font-medium text-ink">
-              {f.q}
-              <svg class="shrink-0 transition-transform duration-200 group-open:rotate-45" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
-            </summary>
-            <p class="max-w-[64ch] pb-6 text-slate">
-              <R v={f.a} />
-            </p>
-          </details>
-        ))
-      }
+<section data-tone="light" data-orb="light" class="tone-light bg-bone" aria-labelledby="faq-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="08" label="FAQ">{FAQS.length} questions</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-12 lg:grid-cols-12">
+      <div class="lg:col-span-4">
+        <h2 id="faq-title" class="h2">Questions principals ask. <span class="hl">Answered.</span></h2>
+        <p class="lede mt-6">Still deciding? Hear a sample call, or start the pilot on lunch breaks and evenings only.</p>
+        <div class="mt-8">
+          {
+            LINKS.bookDemo ? (
+              <Button href={LINKS.bookDemo} variant="outline" external>Book a 10-minute demo</Button>
+            ) : (
+              <Button href="#demo" variant="outline">Hear a dental call</Button>
+            )
+          }
+        </div>
+      </div>
+      <div class="border-t border-[var(--line-strong)] lg:col-span-7 lg:col-start-6">
+        {
+          FAQS.map((f, i) => (
+            <details class="faq group border-b border-[var(--line-strong)]">
+              <summary class="grid grid-cols-[2.5rem_1fr_auto] items-baseline gap-x-4 py-[max(1.25rem,1.6vw)] text-ink sm:grid-cols-[3rem_1fr_auto]">
+                <span class="ord-label text-slate transition-colors group-open:text-teal">{String(i + 1).padStart(2, '0')}</span>
+                <span class="t-24">{f.q}</span>
+                <span class="relative flex h-8 w-8 shrink-0 items-center justify-center self-center border border-[var(--line-strong)] transition-colors duration-300 group-open:border-teal group-open:bg-teal group-open:text-bone" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.3" /><path class="origin-center transition-transform duration-300 group-open:scale-y-0" d="M6 1v10" stroke="currentColor" stroke-width="1.3" /></svg>
+                </span>
+              </summary>
+              <p class="max-w-[62ch] pb-[max(1.5rem,1.8vw)] pl-[calc(2.5rem+1rem)] pr-12 text-[1rem] leading-relaxed text-slate sm:pl-[calc(3rem+1rem)]">
+                <R v={f.a} />
+              </p>
+            </details>
+          ))
+        }
+      </div>
     </div>
   </div>
 </section>

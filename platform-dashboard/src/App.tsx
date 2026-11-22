@@ -8,6 +8,8 @@ import { PlatformLayout } from '@/components/layout'
 import { RequirePlatformAdmin } from '@/components/require-platform-admin'
 
 const Businesses = lazy(() => import('@/pages/Businesses'))
+const BusinessDetail = lazy(() => import('@/pages/BusinessDetail'))
+const NewBusiness = lazy(() => import('@/pages/NewBusiness'))
 const Economics = lazy(() => import('@/pages/Economics'))
 const Dialer = lazy(() => import('@/pages/Dialer'))
 const Pilots = lazy(() => import('@/pages/Pilots'))
@@ -43,6 +45,8 @@ export default function App() {
           }
         >
           <Route index element={<Businesses />} />
+          <Route path="businesses/new" element={<NewBusiness />} />
+          <Route path="businesses/:id" element={<BusinessDetail />} />
           <Route path="economics" element={<Economics />} />
           <Route path="dialer" element={<Dialer />} />
           <Route path="pilots" element={<Pilots />} />

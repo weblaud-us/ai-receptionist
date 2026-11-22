@@ -1,5 +1,5 @@
 import { Suspense, useState, type ComponentType } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -13,10 +13,12 @@ interface NavItem {
   label: string
   icon: ComponentType<{ className?: string }>
   end?: boolean
+  /** Also highlight under this path prefix (e.g. a list's detail pages). */
+  also?: string
 }
 
 const NAV: NavItem[] = [
-  { to: '/', label: 'Businesses', icon: Building2, end: true },
+  { to: '/', label: 'Businesses', icon: Building2, end: true, also: '/businesses/' },
   { to: '/numbers', label: 'Numbers', icon: Hash },
   { to: '/economics', label: 'Unit economics', icon: ChartNoAxesCombined },
   { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing },
@@ -26,9 +28,10 @@ const NAV: NavItem[] = [
 ]
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
+  const { pathname } = useLocation()
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV.map(({ to, label, icon: Icon, end }) => (
+      {NAV.map(({ to, label, icon: Icon, end, also }) => (
         <NavLink
           key={to}
           to={to}
@@ -37,7 +40,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
           className={({ isActive }) =>
             cn(
               'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              isActive
+              isActive || (also && pathname.startsWith(also))
                 ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                 : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
             )

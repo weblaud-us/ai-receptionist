@@ -12,9 +12,9 @@ const options = [
   { key: 'uk', short: 'UK', long: 'United Kingdom, prices in GBP' },
 ] as const;
 ---
-<div role="group" aria-labelledby={`${id}-label`} class:list={['inline-flex items-center gap-2', className]}>
+<div role="group" aria-labelledby={`${id}-label`} class:list={['inline-flex items-center', className]}>
   <span id={`${id}-label`} class="sr-only">Region</span>
-  <span class="inline-flex rounded-full border border-hairline-strong bg-surface p-0.5">
+  <span class="inline-flex rounded-[2px] border border-[var(--line-strong)] p-[3px]">
     {
       options.map((o) => (
         <button
@@ -23,7 +23,7 @@ const options = [
           aria-pressed={o.key === region}
           aria-label={o.long}
           title={o.long}
-          class="h-8 min-w-11 rounded-full px-3 text-[0.8125rem] font-medium text-slate transition-colors duration-150 hover:text-ink aria-pressed:bg-ink aria-pressed:text-white"
+          class="h-[34px] min-w-11 rounded-[1px] px-3 font-mono text-[0.75rem] font-medium text-[var(--fg-2)] transition-colors duration-300 hover:text-[var(--fg)] aria-pressed:bg-[var(--fg)] aria-pressed:text-[var(--toggle-on,#fff)]"
         >
           {o.short}
         </button>

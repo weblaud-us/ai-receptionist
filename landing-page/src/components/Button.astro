@@ -1,7 +1,9 @@
 ---
 /**
- * Link styled as a button. With `signup`, the href is the dashboard signup for this page's region
- * and plan; `data-signup-au` / `data-signup-uk` let the region switch swap it without a reload.
+ * Link styled as a button (Ordin: 2px corners, label that scrambles on hover, arrow that swaps).
+ * With `signup`, the href is the dashboard signup for this page's region and plan;
+ * `data-signup-au` / `data-signup-uk` let the region switch swap it without a reload.
+ * Colours come from the surrounding band (.tone-dark / .tone-light).
  */
 import type { PlanKey } from '../data/plans';
 import { regionFromPath } from '../data/regions';
@@ -10,31 +12,31 @@ import { signupUrl } from '../data/site';
 interface Props {
   href?: string;
   signup?: PlanKey;
-  variant?: 'primary' | 'secondary' | 'quiet' | 'primary-dark' | 'secondary-dark';
+  variant?: 'primary' | 'outline' | 'ink';
   size?: 'md' | 'lg';
   class?: string;
   external?: boolean;
+  arrow?: boolean;
 }
-const { href = '#', signup, variant = 'primary', size = 'md', class: className = '', external = false } = Astro.props;
+const { href = '#', signup, variant = 'primary', size = 'md', class: className = '', external = false, arrow = true } = Astro.props;
 const region = regionFromPath(Astro.url.pathname);
 const finalHref = signup ? signupUrl(region, signup) : href;
-
-const base =
-  'inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] font-medium whitespace-nowrap transition-colors duration-150 select-none';
-const sizes = { md: 'h-11 px-5 text-[0.9375rem]', lg: 'h-12 px-6 text-base' };
-const variants = {
-  primary: 'bg-teal text-white hover:bg-teal-deep',
-  secondary: 'bg-surface text-ink border border-hairline-strong hover:border-ink/30',
-  quiet: 'text-ink underline decoration-hairline-strong underline-offset-4 hover:decoration-teal px-1 h-auto',
-  'primary-dark': 'bg-teal-light text-night hover:bg-[#7ccac1]',
-  'secondary-dark': 'text-mist border border-hairline-dark hover:border-mist/40',
-};
 ---
 <a
   href={finalHref}
-  class:list={[base, variant === 'quiet' ? 'text-[0.9375rem]' : sizes[size], variants[variant], className]}
+  class:list={['btn', `btn-${variant}`, size === 'lg' && 'btn-lg', className]}
   data-signup-au={signup ? signupUrl('au', signup) : undefined}
   data-signup-uk={signup ? signupUrl('uk', signup) : undefined}
   target={external ? '_blank' : undefined}
   rel={external ? 'noopener' : undefined}
-><slot /></a>
+>
+  <span data-scramble><slot /></span>
+  {
+    arrow && (
+      <span class="btn-arrow" aria-hidden="true">
+        <svg viewBox="0 0 11 11" focusable="false"><path d="M2 9 9 2M3.5 2H9v5.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" /></svg>
+        <svg viewBox="0 0 11 11" focusable="false"><path d="M2 9 9 2M3.5 2H9v5.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" /></svg>
+      </span>
+    )
+  }
+</a>

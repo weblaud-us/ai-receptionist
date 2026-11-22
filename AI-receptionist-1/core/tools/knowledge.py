@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+
+from core.tenancy.ids import new_id
 
 if TYPE_CHECKING:
     from core.tools.registry import ToolContext
@@ -55,7 +57,16 @@ def _tokens(text: str) -> set:
     return {_stem(w) for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if w not in _STOP and len(w) > 1}
 
 
+def question_key(question: str) -> str:
+    """Normalised form so "Is there parking?" and "is there parking" group as one unanswered question."""
+    return " ".join(sorted(_tokens(question)))
+
+
 def rank_items(items: List[Dict[str, Any]], question: str, n: int = 3) -> List[Dict[str, Any]]:
+    return [it for _, it in rank_scored(items, question, n)]
+
+
+def rank_scored(items: List[Dict[str, Any]], question: str, n: int = 3) -> List[Tuple[int, Dict[str, Any]]]:
     q = _tokens(question)
     if not q:
         return []
@@ -67,12 +78,15 @@ def rank_items(items: List[Dict[str, Any]], question: str, n: int = 3) -> List[D
         if score:
             scored.append((score, it))
     scored.sort(key=lambda x: -x[0])
-    return [it for _, it in scored[:n]]
+    return scored[:n]
+
+
+def kb_chars(items: List[Dict[str, Any]]) -> int:
+    return sum(len(i.get("question", "")) + len(i.get("answer", "")) for i in items)
 
 
 def fits_inline(items: List[Dict[str, Any]]) -> bool:
-    total = sum(len(i.get("question", "")) + len(i.get("answer", "")) for i in items)
-    return len(items) <= KB_INLINE_MAX_ITEMS and total <= KB_INLINE_MAX_CHARS
+    return len(items) <= KB_INLINE_MAX_ITEMS and kb_chars(items) <= KB_INLINE_MAX_CHARS
 
 
 async def answer_from_knowledge(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
@@ -105,7 +119,8 @@ async def record_unanswered(repos: Any, question: str, *, channel: str, call_id:
         if call_id and await repos.unanswered.find_one({"call_id": call_id, "question": question}, {"_id": 1}):
             return False
         await repos.unanswered.insert_one({
-            "question": question, "channel": channel, "call_id": call_id, "caller_phone": caller_phone,
+            "_id": new_id("uq"), "question": question, "qkey": question_key(question),
+            "channel": channel, "call_id": call_id, "caller_phone": caller_phone,
             "status": "open", "source": source, "created_at": datetime.now(timezone.utc),
         })
         return True

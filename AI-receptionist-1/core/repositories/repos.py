@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.repositories.base import TenantRepo, utcnow
+from core.tenancy.ids import new_id
 
 
 class ServicesRepo(TenantRepo):
@@ -36,7 +37,8 @@ class ContactsRepo(TenantRepo):
         sets["last_seen_at"] = now
         await self.update_one(
             {"phone": phone},
-            {"$set": sets, "$setOnInsert": {"phone": phone, "first_seen_at": now, "created_at": now,
+            # String _id like every other dashboard entity — the API looks contacts up by the id it returned.
+            {"$set": sets, "$setOnInsert": {"_id": new_id("con"), "phone": phone, "first_seen_at": now, "created_at": now,
                                             "tags": [], "do_not_contact": False,
                                             "stats": {"calls": 0, "appointments": 0, "no_shows": 0}}},
             upsert=True,
@@ -102,6 +104,10 @@ class BookingsRepo(TenantRepo):
     collection = "bookings"
 
 
+class WaOutboxRepo(TenantRepo):
+    collection = "wa_outbox"               # WhatsApp messages staff sent from the dashboard + Meta delivery status
+
+
 class Repos:
     """All of one tenant's repositories, built once per request / call."""
 
@@ -127,6 +133,7 @@ class Repos:
         self.recalls = RecallsRepo(db, tenant_id)
         self.rooms = RoomsRepo(db, tenant_id)
         self.bookings = BookingsRepo(db, tenant_id)
+        self.wa_outbox = WaOutboxRepo(db, tenant_id)
 
 
 # ── Platform-level collections (not tenant-scoped) ───────────────────────────

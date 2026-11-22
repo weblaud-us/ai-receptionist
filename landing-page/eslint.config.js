@@ -5,7 +5,8 @@ import tseslint from 'typescript-eslint';
 import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
-  globalIgnores(['dist', '.astro', 'node_modules']),
+  // .claude, .agents and agent hold installed AI-assistant skills (third-party tooling, not site code).
+  globalIgnores(['dist', '.astro', 'node_modules', '.claude', '.agents', 'agent', '.tmp-ref']),
   js.configs.recommended,
   tseslint.configs.recommended,
   astro.configs.recommended,

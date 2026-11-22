@@ -89,11 +89,15 @@ export function addDaysISO(iso: string, days: number): string {
   return toISODate(d)
 }
 
-/** `01712 345 678` stays as typed (+ prefixed); `00880…` -> `+880…`. Does not guess a country. */
-export function normalizePhone(raw: string): string {
-  const cleaned = raw.replace(/[\s\-()]/g, '')
+/**
+ * `00880…` -> `+880…`. With the business's dialling code, a national number gets its leading 0 swapped:
+ * `0412 345 678` + `+61` -> `+61412345678`. Without one, `01712 345 678` stays as typed (+ prefixed).
+ */
+export function normalizePhone(raw: string, dial?: string): string {
+  const cleaned = raw.replace(/[\s\-().]/g, '')
   if (!cleaned) return ''
   if (cleaned.startsWith('00')) return `+${cleaned.slice(2)}`
+  if (dial && /^0[1-9]/.test(cleaned)) return `${dial}${cleaned.slice(1)}`
   return cleaned.startsWith('+') ? cleaned : `+${cleaned}`
 }
 
@@ -108,7 +112,16 @@ export const TIMEZONES = [
   'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Vancouver', 'America/Halifax',
   'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
   'Europe/Amsterdam', 'Europe/Stockholm', 'Europe/Warsaw', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Qatar',
-  'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Dhaka', 'Asia/Kolkata', 'UTC',
+  'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Dhaka', 'Asia/Kolkata', 'Australia/Sydney', 'Australia/Melbourne',
+  'Australia/Brisbane', 'Australia/Adelaide', 'Australia/Perth', 'Pacific/Auckland', 'UTC',
 ]
 
-export const CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'BDT', 'INR']
+export const CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR', 'AUD', 'NZD', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'BDT', 'INR']
+
+/** ISO countries offered on business forms (code + name). Anything else can still be typed. */
+export const COUNTRIES = [
+  ['US', 'United States'], ['CA', 'Canada'], ['GB', 'United Kingdom'], ['IE', 'Ireland'], ['AU', 'Australia'],
+  ['NZ', 'New Zealand'], ['AE', 'United Arab Emirates'], ['SA', 'Saudi Arabia'], ['QA', 'Qatar'], ['KW', 'Kuwait'],
+  ['BH', 'Bahrain'], ['BD', 'Bangladesh'], ['IN', 'India'], ['DE', 'Germany'], ['FR', 'France'], ['ES', 'Spain'],
+  ['IT', 'Italy'], ['NL', 'Netherlands'],
+] as const

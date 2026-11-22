@@ -32,7 +32,9 @@ from database.mongodb import get_db
 from core.tenancy import resolve_by_whatsapp_phone_number_id
 from core.tenancy.models import TenantConfig, legacy_hotel_tenant
 from database.tenancy import tenant_profile
+from core.repositories import Repos
 from core.repositories.scoped import scoped_db
+from core.services import whatsapp_outbox as wa_outbox
 from whatsapp.handler import _get_or_create_whatsapp_session
 from voice.stt_tts import get_stt, get_tts
 
@@ -459,12 +461,21 @@ async def _handle_webhook_payload(payload: dict) -> None:
                     logger.warning("WhatsApp message for an unassigned number id; ignored")
                     continue
                 set_tenant(tenant.id)
+                repos = None if tenant.is_legacy else Repos(get_db(), tenant.id)
+
+                # Delivery receipts for messages staff sent from the dashboard (failed ones carry the reason).
+                if repos is not None and value.get("statuses"):
+                    await wa_outbox.apply_statuses(repos, value.get("statuses") or [])
 
                 messages = value.get("messages", []) or []
                 contacts = value.get("contacts", []) or []
                 profile_name = None
                 if contacts and isinstance(contacts[0], dict):
                     profile_name = (contacts[0].get("profile") or {}).get("name")
+                if repos is not None:
+                    for msg in messages:      # each inbound message reopens the 24-hour free-text window
+                        await wa_outbox.note_inbound(repos, _normalize_wa_phone(msg.get("from") or ""),
+                                                     name=profile_name)
 
                 for msg in messages:
                     msg_id = msg.get("id")

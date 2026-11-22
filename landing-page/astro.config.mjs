@@ -36,6 +36,8 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    // Bind mounts from a Windows or macOS host (docker compose) don't deliver file-change events.
+    server: process.env.DEV_WATCH_POLLING === 'true' ? { watch: { usePolling: true, interval: 300 } } : {},
     build: { assetsInlineLimit: 0 },
   },
 });

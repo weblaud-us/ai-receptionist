@@ -117,7 +117,7 @@ async def send(tenant_id: str, call_id: str, *, db: Any = None) -> Dict[str, Any
     tenant = await resolve_by_id(tenant_id)
     if tenant is None:
         return {"sent": False, "reason": "unknown_business"}
-    repos = Repos(db or get_db(), tenant.id)
+    repos = Repos(db if db is not None else get_db(), tenant.id)
     call = await repos.calls.find_one({"call_id": call_id})
     if not call:
         return {"sent": False, "reason": "unknown_call"}

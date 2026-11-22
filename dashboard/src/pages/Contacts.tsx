@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Loader2, Search, Users } from 'lucide-react'
 import { EmptyState, ErrorBanner, Field, PageHeader, Pagination, TableSkeleton } from '@receptionist/shared/components/blocks'
@@ -17,12 +18,18 @@ import { zoneDateTime } from '@/lib/tenant-format'
 import { useContact, useContacts, useUpdateContact } from '@/lib/tenant-hooks'
 import type { Contact } from '@/lib/tenant-types'
 import { OutcomeBadge } from './TenantOverview'
+import { ContactWhatsApp } from '@/components/app/contact-whatsapp'
 
 export default function Contacts() {
   const L = useCtx().vertical.labels
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [open, setOpen] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const [open, setOpenState] = useState<string | null>(() => params.get('contact'))
+  const setOpen = (id: string | null) => {
+    setOpenState(id)
+    if (!id && params.has('contact')) setParams({}, { replace: true })   // drop the deep link once closed
+  }
   const q = useDebounced(search, 300)
   const list = useContacts({ q, page, limit: 25 })
 
@@ -77,46 +84,89 @@ export default function Contacts() {
 function ContactSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
   const ctx = useCtx()
   const tz = ctx.tenant.timezone
+  const L = ctx.vertical.labels
   const q = useContact(id)
   const c = q.data
+  const upcoming = c?.appointments.filter((a) => new Date(a.start) > new Date() && !['cancelled', 'no_show'].includes(a.status)) ?? []
 
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>{c?.name || c?.phone || 'Contact'}</SheetTitle>
-          <SheetDescription>{c?.phone}</SheetDescription>
+          <SheetTitle>{c ? c.name || 'Unknown caller' : L.contact}</SheetTitle>
+          <SheetDescription className="font-mono">{c?.phone}{c?.email ? ` · ${c.email}` : ''}</SheetDescription>
         </SheetHeader>
         {q.isLoading && <Loader2 className="mx-auto size-5 animate-spin" />}
+        {q.error && <div className="px-4"><ErrorBanner error={q.error} onRetry={() => q.refetch()} /></div>}
         {c && (
-          <div className="space-y-5 px-4 pb-6">
-            <ContactForm key={c.id} contact={c} />
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">{ctx.vertical.labels.appointments}</h3>
-              {c.appointments.length === 0 ? <p className="text-sm text-muted-foreground">None</p> : c.appointments.map((a) => (
-                <div key={a.appointment_id} className="flex justify-between border-b py-1.5 text-sm">
-                  <span>{zoneDateTime(a.start, tz)} · {a.service_name}</span><span className="text-muted-foreground">{titleCase(a.status)}</span>
-                </div>
-              ))}
-            </section>
+          <div className="space-y-6 px-4 pb-6">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <Stat label="Calls" value={c.stats?.calls ?? c.calls.length} />
+              <Stat label={L.appointments} value={c.stats?.appointments ?? c.appointments.length} />
+              <Stat label="No-shows" value={c.stats?.no_shows ?? 0} warn={!!c.stats?.no_shows} />
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {c.first_seen_at && <span>First contact {zoneDateTime(c.first_seen_at, tz)}</span>}
+              {c.last_seen_at && <span>Last seen {timeAgo(c.last_seen_at)}</span>}
+              {c.do_not_contact && <Badge variant="destructive">Do not contact</Badge>}
+            </div>
+            {upcoming.length > 0 && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+                <div className="mb-1 text-xs font-medium text-primary">Next {L.appointment.toLowerCase()}</div>
+                {zoneDateTime(upcoming[upcoming.length - 1].start, tz)} · {upcoming[upcoming.length - 1].service_name}
+                {upcoming[upcoming.length - 1].resource_name && ` with ${upcoming[upcoming.length - 1].resource_name}`}
+              </div>
+            )}
             <section>
               <h3 className="mb-2 text-sm font-semibold">Calls</h3>
               {c.calls.length === 0 ? <p className="text-sm text-muted-foreground">None</p> : c.calls.map((call) => (
-                <div key={call.call_id} className="flex items-center justify-between border-b py-1.5 text-sm">
-                  <span>{zoneDateTime(call.started_at, tz)} · {duration(call.duration_s)}</span><OutcomeBadge outcome={call.outcome} />
+                <Link key={call.call_id} to={`/calls?call=${encodeURIComponent(call.call_id)}`}
+                  className="block border-b py-2 text-sm hover:bg-muted/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{zoneDateTime(call.started_at, tz)} · {duration(call.duration_s)}</span><OutcomeBadge outcome={call.outcome} />
+                  </div>
+                  {call.summary && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{call.summary}</p>}
+                </Link>
+              ))}
+            </section>
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">{L.appointments}</h3>
+              {c.appointments.length === 0 ? <p className="text-sm text-muted-foreground">None</p> : c.appointments.map((a) => (
+                <div key={a.appointment_id} className="flex justify-between gap-2 border-b py-1.5 text-sm">
+                  <span>{zoneDateTime(a.start, tz)} · {a.service_name}{a.resource_name ? ` · ${a.resource_name}` : ''}</span>
+                  <span className="shrink-0 text-muted-foreground">{titleCase(a.status)}</span>
                 </div>
               ))}
             </section>
             {c.messages.length > 0 && (
               <section>
                 <h3 className="mb-2 text-sm font-semibold">Messages left</h3>
-                {c.messages.map((m) => <p key={m.message_id} className="border-b py-1.5 text-sm">{m.message}</p>)}
+                {c.messages.map((m) => (
+                  <div key={m.message_id} className="border-b py-1.5 text-sm">
+                    <p>{m.message}</p>
+                    <p className="text-xs text-muted-foreground">{timeAgo(m.created_at)} · {titleCase(m.status)}</p>
+                  </div>
+                ))}
               </section>
             )}
+            <ContactWhatsApp key={`wa-${c.id}`} contact={c} />
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">Details</h3>
+              <ContactForm key={c.id} contact={c} />
+            </section>
           </div>
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+  return (
+    <div className="rounded-lg border p-2">
+      <div className={`text-lg font-semibold ${warn ? 'text-destructive' : ''}`}>{value}</div>
+      <div className="truncate text-xs text-muted-foreground">{label}</div>
+    </div>
   )
 }
 

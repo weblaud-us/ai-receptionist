@@ -13,6 +13,7 @@ import { isValidPhone, normalizePhone } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { useTestCall, useUpdateSettings } from '@/lib/tenant-hooks'
 import type { AgentConfig, Links, Tenant } from '@/lib/tenant-types'
+import { regionFor } from '@/lib/region'
 import { useDraft } from '@/lib/use-draft'
 
 // English only at launch: the fixed phrases (greeting, "are you there?", transfer lines) and turn
@@ -36,12 +37,22 @@ const PATIENCE = [
 
 type Draft = Pick<Tenant, 'agent' | 'transfer' | 'emergency_instructions' | 'links'>
 
-const LINK_FIELDS: { key: keyof Links; label: string; hint: string }[] = [
+const linkFields = (dental: boolean): { key: keyof Links; label: string; hint: string }[] => [
   { key: 'booking', label: 'Online booking page', hint: 'Sent when a caller would rather book themselves.' },
-  { key: 'menu', label: 'Menu or price list', hint: 'A PDF or web page.' },
+  { key: 'menu', label: dental ? 'Fee schedule or price list' : 'Menu or price list', hint: 'A PDF or web page.' },
   { key: 'directions', label: 'Directions', hint: 'Empty = a maps link built from your address.' },
   { key: 'payment', label: 'Payment page', hint: 'Deposits, invoices or online payment.' },
 ]
+
+const emergencyExample = (dental: boolean, emergency: string) =>
+  dental
+    ? `e.g. "For facial swelling that affects breathing or swallowing, call ${emergency} or go to hospital now. For a knocked-out adult tooth, keep it in milk and we'll see you first thing."`
+    : `e.g. "For a gas smell, leave the building and call ${emergency}, then call us."`
+
+const instructionsExample = (dental: boolean) =>
+  dental
+    ? "Always offer our new-patient check-up special. Dr Lee doesn't do extractions on Fridays."
+    : 'Always mention our loyalty card. Never book new customers on Saturday mornings.'
 
 /** Starts a test call in a new tab. Shared with onboarding. */
 export function TestCallButton({ label = 'Call your assistant now' }: { label?: string }) {
@@ -76,7 +87,9 @@ export default function Assistant() {
   if (!draft) return null
   const a = draft.agent
   const setAgent = (patch: Partial<AgentConfig>) => setDraft({ ...draft, agent: { ...a, ...patch } })
-  const transferPhone = draft.transfer.number ? normalizePhone(draft.transfer.number) : ''
+  const region = regionFor(ctx.tenant.country)
+  const dental = ctx.vertical.key === 'dental'
+  const transferPhone = draft.transfer.number ? normalizePhone(draft.transfer.number, region.dial) : ''
   const transferOk = !transferPhone || isValidPhone(transferPhone)
 
   return (
@@ -98,7 +111,7 @@ export default function Assistant() {
       {ctx.legacy && (
         <div className="mb-4"><ErrorBanner error={new Error('This deployment still reads its settings from .env. Run migration m0003 to edit them here.')} /></div>
       )}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         <Card>
           <CardHeader>
             <CardTitle>Voice & greeting</CardTitle>
@@ -126,7 +139,7 @@ export default function Assistant() {
             <Field label="Greeting" hint="Leave empty for the standard greeting. Callers must hear that they're talking to a virtual assistant — that's the law in many places.">
               <Textarea rows={2} value={a.greeting} placeholder={ctx.greeting} onChange={(e) => setAgent({ greeting: e.target.value })} />
             </Field>
-            {ctx.vertical.key === 'dental' && (
+            {dental && (
               <Field label="Words to listen for"
                 hint="Comma-separated: your dentists' names, brands and treatments callers say (e.g. Invisalign, Bupa, zirconia). Common dental terms are already included.">
                 <Input value={(a.stt_keyterms ?? []).join(', ')}
@@ -167,8 +180,8 @@ export default function Assistant() {
             <CardDescription>When a caller asks for a person, is upset, or has an emergency.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Field label="Transfer to (your staff line)" hint={!transferOk ? 'International format, e.g. +15125550100' : 'Empty = never transfer; the assistant takes a message instead.'}>
-              <Input value={draft.transfer.number} aria-invalid={!transferOk} placeholder="+1…"
+            <Field label="Transfer to (your staff line)" hint={!transferOk ? `Include the area code, e.g. ${region.phoneExample}` : 'Empty = never transfer; the assistant takes a message instead.'}>
+              <Input value={draft.transfer.number} aria-invalid={!transferOk} placeholder={region.phoneExample} inputMode="tel"
                 onChange={(e) => setDraft({ ...draft, transfer: { ...draft.transfer, number: e.target.value } })} />
             </Field>
             <label className="flex items-center gap-2 text-sm">
@@ -176,7 +189,7 @@ export default function Assistant() {
                 onCheckedChange={(v) => setDraft({ ...draft, transfer: { ...draft.transfer, only_during_hours: v } })} />
               Only transfer while we're open
             </label>
-            <Field label="Emergency instructions" hint='e.g. "For a gas smell, leave the house and call 911, then call us."'>
+            <Field label="Emergency instructions" hint={emergencyExample(dental, region.emergency)}>
               <Textarea rows={2} value={draft.emergency_instructions} onChange={(e) => setDraft({ ...draft, emergency_instructions: e.target.value })} />
             </Field>
           </CardContent>
@@ -189,7 +202,7 @@ export default function Assistant() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea rows={6} maxLength={1500} value={a.custom_instructions}
-              placeholder="Always mention our loyalty card. Never book Anna for colour on Saturdays."
+              placeholder={instructionsExample(dental)}
               onChange={(e) => setAgent({ custom_instructions: e.target.value })} />
             <p className="text-right text-xs text-muted-foreground">{a.custom_instructions.length} / 1500</p>
             <div className="space-y-2 rounded-lg border p-3">
@@ -198,7 +211,7 @@ export default function Assistant() {
                 Record calls
               </label>
               <p className="text-xs text-muted-foreground">
-                ⚖ The greeting then announces recording. Some US states and the EU/UK require every party's consent — check with your lawyer.
+                ⚖ {region.recordingNote}
               </p>
               {a.recording.enabled && (
                 <Field label="Delete recordings after (days)">
@@ -222,7 +235,7 @@ export default function Assistant() {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
-            {LINK_FIELDS.map((f) => (
+            {linkFields(dental).map((f) => (
               <Field key={f.key} label={f.label} hint={f.hint}>
                 <Input value={draft.links[f.key] ?? ''} placeholder="https://…"
                   onChange={(e) => setDraft({ ...draft, links: { ...draft.links, [f.key]: e.target.value } })} />

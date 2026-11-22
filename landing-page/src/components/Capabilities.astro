@@ -1,86 +1,201 @@
 ---
+/** Four capabilities, each shown as a small piece of the product rather than described. */
 import R from './R.astro';
+import SectionRule from './SectionRule.astro';
 import Regional from './Regional.astro';
+import Wave from './Wave.astro';
+import { both, money } from '../data/regions';
 import { BRAND } from '../data/site';
 
-const terms = ['Invisalign', 'zirconia', 'composite bonding', 'All-on-4', 'CBCT', 'veneers', 'periodontal'];
+const pms = both((_, f) => f.pms.primary);
+const dentists = { au: ['Dr Patel', 'Dr Lee'], uk: ['Dr Okafor', 'Dr Hughes'] };
+const practice = both((_, f) => f.practice.name);
+const bookUrl = { au: 'harbourline.example/book', uk: 'wimpole.example/book' };
+const pipeline = both((r) => money(r, r === 'au' ? 38400 : 26900));
+const funds = { au: 'HICAPS', uk: 'Denplan' };
+const locale = both((_, f) => f.locale);
+const rows = ['12:00', '12:30', '13:00', '13:30', '14:00', '14:30'];
+// Sparkline: captured pipeline over four weeks (sample data).
+const points = [6, 9, 8, 13, 12, 17, 15, 21, 24, 22, 28, 31];
+const W = 320;
+const H = 96;
+const max = 34;
+const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${((i / (points.length - 1)) * W).toFixed(1)} ${(H - (p / max) * H).toFixed(1)}`).join(' ');
+const area = `${path} L${W} ${H} L0 ${H} Z`;
+const kpis = [
+  { k: 'Overflow calls answered', v: '214' },
+  { k: 'Consults booked', v: '31' },
+  { k: 'Recovered by text', v: '18' },
+];
+const terms = [
+  { t: 'Invisalign', x: '8%', y: '14%' },
+  { t: 'All-on-4', x: '34%', y: '72%' },
+  { t: 'zirconia', x: '58%', y: '10%' },
+  { t: 'funds', x: '76%', y: '68%' },
+];
 ---
-<section class="section border-t border-hairline" aria-labelledby="cap-title">
-  <div class="container-page">
-    <h2 id="cap-title" class="h2 max-w-3xl text-ink">Made for how a dental practice actually runs</h2>
+<section data-tone="light" data-orb="light" class="tone-light bg-bone" aria-labelledby="cap-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="06" label="Capabilities">Built for dentistry</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+      <h2 id="cap-title" class="h2 lg:col-span-8">Made for how a dental practice runs. <span class="hl">Down to the diary.</span></h2>
+      <p class="lede lg:col-span-4">Booking, reporting, recalls and speech, each built for dentistry rather than adapted from a generic call bot.</p>
+    </div>
 
-    <div class="mt-14 grid grid-cols-1 gap-14 lg:grid-cols-12 lg:gap-16">
-      <!-- Diary sync -->
-      <div class="lg:col-span-6">
-        <h3 class="text-xl text-ink">Books straight into your diary</h3>
-        <Regional as="p" class="mt-3 max-w-[56ch] text-slate">
-          <Fragment slot="au">
-            Connect Cliniko with an API key. {BRAND} reads your practitioners, appointment types and live availability, then books the right
-            appointment with the right dentist. Nobody re-types anything.
-          </Fragment>
-          <Fragment slot="uk">
-            Dentally is in early access: we connect it during onboarding once your practice is approved. Cliniko practices connect with an API key
-            today, and the built-in diary syncs with Google Calendar in the meantime.
-          </Fragment>
-        </Regional>
-
-        <div class="mt-8 rounded-[var(--radius-panel)] border border-hairline bg-surface p-5 sm:p-6" aria-label="How a booking reaches your diary" role="img">
-          <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-5">
-            <div class="rounded-[var(--radius-control)] border border-hairline px-3 py-3">
-              <p class="text-[0.8125rem] text-slate">Call</p>
-              <p class="text-[0.9375rem] font-medium text-ink">“Invisalign consult, please”</p>
+    <div class="mt-[max(3rem,4.5vw)] grid grid-cols-1 gap-5 lg:grid-cols-12">
+      <!-- 1. Live chair diary -->
+      <article class="card ord-draw flex flex-col p-2 lg:col-span-7">
+        <div class="px-4 pb-6 pt-5 sm:px-6">
+          <p class="ord-label text-teal">01</p>
+          <h3 class="h3 mt-3">Books straight into <R v={pms} /></h3>
+          <Regional as="p" class="mt-2.5 max-w-[58ch] text-[0.9375rem] text-slate">
+            <Fragment slot="au">
+              Connect Cliniko with an API key. {BRAND} reads practitioners, appointment types and live availability, keeps lunch clear, and books the
+              right appointment with the right dentist.
+            </Fragment>
+            <Fragment slot="uk">
+              Dentally is in early access and connected during onboarding once your practice is approved. Cliniko practices connect with an API key
+              today, and the built-in diary syncs with Google Calendar meanwhile.
+            </Fragment>
+          </Regional>
+        </div>
+        <div class="well mt-auto overflow-hidden p-3 sm:p-4" aria-hidden="true">
+          <div class="rounded-[2px] border border-[var(--line)] bg-surface">
+            <div class="grid grid-cols-[3.25rem_1fr_1fr] border-b border-[var(--line)] text-[0.75rem]">
+              <span class="px-2.5 py-2 font-mono text-slate">Thu</span>
+              <span class="border-l border-[var(--line)] px-3 py-2 text-ink"><R v={{ au: dentists.au[0], uk: dentists.uk[0] }} /></span>
+              <span class="border-l border-[var(--line)] px-3 py-2 text-ink"><R v={{ au: dentists.au[1], uk: dentists.uk[1] }} /></span>
             </div>
-            <svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true" focusable="false"><path d="M0 6h25M20 1l5 5-5 5" fill="none" stroke="#0F766E" stroke-width="1.5"></path></svg>
-            <div class="rounded-[var(--radius-control)] bg-teal px-3 py-3 text-white">
-              <p class="text-[0.8125rem] text-white/80"><R v={{ au: 'Cliniko', uk: 'Dentally' }} /></p>
-              <p class="text-[0.9375rem] font-medium">Booked, Fri 4:15 pm</p>
+            <div class="relative grid grid-cols-[3.25rem_1fr_1fr]">
+              {
+                rows.map((t) => (
+                  <Fragment>
+                    <span class="h-9 border-b border-[var(--line)] px-2.5 pt-1.5 font-mono text-[0.6875rem] text-slate tnum">{t}</span>
+                    <span class="h-9 border-b border-l border-[var(--line)]" />
+                    <span class="h-9 border-b border-l border-[var(--line)]" />
+                  </Fragment>
+                ))
+              }
+              <!-- booked -->
+              <span class="absolute left-[calc(3.25rem+6px)] top-[4px] flex h-[50px] w-[calc((100%-3.25rem)/2-12px)] items-start rounded-[2px] border border-[var(--line-strong)] bg-paper px-2 py-1.5 text-[0.6875rem] text-slate">Crown prep</span>
+              <span class="absolute left-[calc(3.25rem+(100%-3.25rem)/2+6px)] top-[4px] flex h-[28px] w-[calc((100%-3.25rem)/2-12px)] items-center rounded-[2px] border border-[var(--line-strong)] bg-paper px-2 text-[0.6875rem] text-slate">Hygiene</span>
+              <!-- lunch band 12:50–13:50 -->
+              <span class="hatch absolute left-[3.25rem] right-0 top-[60px] flex h-[72px] items-center justify-center border-y border-champagne-ink/30 bg-[#f3eadb]/80">
+                <span class="rounded-[2px] bg-surface px-2 py-0.5 font-mono text-[0.6875rem] text-champagne-ink">12:50–13:50 lunch, blocked</span>
+              </span>
+              <!-- incoming -->
+              <span class="absolute left-[calc(3.25rem+6px)] top-[148px] flex h-[60px] w-[calc((100%-3.25rem)/2-12px)] flex-col justify-center rounded-[2px] bg-teal px-2.5 text-white">
+                <span class="text-[0.75rem] font-medium leading-tight">Implant consultation</span>
+                <span class="mt-0.5 text-[0.625rem] text-white/80">New patient, booked by {BRAND}</span>
+              </span>
+              <span class="absolute right-[6px] top-[152px] hidden rounded-[2px] border border-teal/30 bg-teal-wash px-2 py-1 font-mono text-[0.625rem] text-teal sm:block">synced 1:14 PM</span>
             </div>
           </div>
-          <ul class="mt-5 grid grid-cols-1 gap-2 border-t border-hairline pt-5 text-[0.9375rem] text-slate sm:grid-cols-2">
-            <li>Practitioners and appointment types</li>
-            <li>Live availability, per dentist</li>
-            <li>Lunch breaks kept clear</li>
-            <li>Patient found or created by phone</li>
-          </ul>
-          <p class="mt-4 text-[0.8125rem] text-slate">
-            If the diary doesn't respond within a few seconds, the caller isn't dropped: their details are taken and the practice is asked to call
-            back.
+        </div>
+      </article>
+
+      <!-- 2. ROI dashboard sparkline -->
+      <article class="card ord-draw flex flex-col p-2 lg:col-span-5">
+        <div class="px-4 pb-6 pt-5 sm:px-6">
+          <p class="ord-label text-teal">02</p>
+          <h3 class="h3 mt-3">An ROI dashboard you read in a minute</h3>
+          <p class="mt-2.5 text-[0.9375rem] text-slate">
+            Overflow calls answered, consultations booked, emergencies triaged, missed calls recovered by text, and the pipeline it captured.
           </p>
         </div>
-      </div>
+        <div class="tone-dark well mt-auto overflow-hidden !bg-night p-4 sm:p-5" aria-hidden="true">
+          <div class="flex items-end justify-between gap-3">
+            <div>
+              <p class="text-[0.75rem] text-[var(--fg-2)]">Captured pipeline, this month</p>
+              <p class="mt-1 text-[2rem] leading-none tracking-[-0.045em] text-[var(--fg)] tnum"><R v={pipeline} /></p>
+            </div>
+            <span class="chip border-aqua/30 text-aqua">+18% vs last</span>
+          </div>
+          <svg class="mt-4 w-full" viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#34E8A6" stop-opacity=".35" />
+                <stop offset="1" stop-color="#34E8A6" stop-opacity="0" />
+              </linearGradient>
+            </defs>
+            {[0.25, 0.5, 0.75].map((f) => <line x1="0" x2={W} y1={H * f} y2={H * f} stroke="rgb(228 236 232 / .08)" />)}
+            <path d={area} fill="url(#spark)" />
+            <path d={path} fill="none" stroke="#34E8A6" stroke-width="1.75" vector-effect="non-scaling-stroke" />
+            <circle cx={W} cy={H - (points[points.length - 1] / max) * H} r="3.5" fill="#34E8A6" />
+          </svg>
+          <div class="mt-4 grid grid-cols-3 gap-2">
+            {
+              kpis.map((k) => (
+                <div class="rounded-[2px] border border-[var(--line)] bg-white/[0.03] px-2.5 py-2">
+                  <p class="font-mono text-[1rem] text-[var(--fg)] tnum" data-count>{k.v}</p>
+                  <p class="mt-0.5 text-[0.6875rem] leading-tight text-[var(--fg-2)]">{k.k}</p>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </article>
 
-      <!-- Dental intelligence -->
-      <div class="lg:col-span-6 lg:border-l lg:border-hairline lg:pl-16">
-        <h3 class="text-xl text-ink">Knows dentistry, and its limits</h3>
-        <dl class="mt-6 divide-y divide-hairline border-y border-hairline">
-          <div class="py-5">
-            <dt class="font-medium text-ink"><R v={{ au: 'Australian', uk: 'British' }} /> English, dental vocabulary</dt>
-            <dd class="mt-1.5 text-[0.9375rem] text-slate">
-              Speech recognition set to <R v={{ au: 'en-AU', uk: 'en-GB' }} /> and tuned for the words your patients use: {terms.join(', ')}.
-            </dd>
+      <!-- 3. Recall SMS phone -->
+      <article class="card ord-draw flex flex-col p-2 lg:col-span-5">
+        <div class="px-4 pb-6 pt-5 sm:px-6">
+          <p class="ord-label text-teal">03</p>
+          <h3 class="h3 mt-3">Recalls lapsed hygiene patients by text</h3>
+          <p class="mt-2.5 text-[0.9375rem] text-slate">
+            Finds patients overdue for their six-month visit and texts them inside quiet hours, with no clinical details and instant STOP handling.
+          </p>
+        </div>
+        <div class="well grid-paper mt-auto flex justify-center overflow-hidden px-4 pt-6" aria-hidden="true">
+          <div class="w-[248px] rounded-t-[22px] border border-b-0 border-[var(--line-strong)] bg-surface px-3 pb-6 pt-3">
+            <div class="mx-auto h-1 w-12 rounded-full bg-ink/15"></div>
+            <div class="mt-3 flex items-center justify-between border-b border-[var(--line)] pb-2.5">
+              <span class="text-[0.75rem] font-medium text-ink"><R v={practice} /></span>
+              <span class="font-mono text-[0.625rem] text-slate">Tue 10:02</span>
+            </div>
+            <div class="mt-3 rounded-[12px] rounded-bl-[3px] bg-paper px-3 py-2.5 text-[0.75rem] leading-[1.5] text-ink">
+              Hi Sam, it's <R v={practice} />. You're due for your six-month check-up and clean. Book a time that suits:{' '}
+              <span class="text-teal underline"><R v={bookUrl} /></span>
+              <span class="mt-1.5 block text-slate">Reply STOP to opt out.</span>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <span class="chip !h-5 border-teal/30 bg-teal-wash !text-[0.625rem] text-teal">no clinical details</span>
+              <span class="chip !h-5 !text-[0.625rem]">quiet hours respected</span>
+            </div>
           </div>
-          <div class="py-5">
-            <dt class="font-medium text-ink">Qualifies implant and cosmetic leads</dt>
-            <dd class="mt-1.5 text-[0.9375rem] text-slate">
-              Asks about treatment, timeframe and <R v={{ au: 'health fund or finance', uk: 'payment plans or finance' }} />, then books the consult
-              or flags a priority callback. It never estimates treatment costs.
-            </dd>
+        </div>
+      </article>
+
+      <!-- 4. Dental speech -->
+      <article class="card ord-draw flex flex-col p-2 lg:col-span-7">
+        <div class="px-4 pb-6 pt-5 sm:px-6">
+          <p class="ord-label text-teal">04</p>
+          <h3 class="h3 mt-3">Knows dental words, and its limits</h3>
+          <p class="mt-2.5 max-w-[60ch] text-[0.9375rem] text-slate">
+            Speech recognition set to <R v={locale} /> and tuned for the words your patients use. It qualifies implant and cosmetic leads, and never
+            estimates treatment costs.
+          </p>
+        </div>
+        <div class="tone-dark well mt-auto overflow-hidden !bg-night p-4 sm:p-5" aria-hidden="true">
+          <div class="flex items-center justify-between gap-3">
+            <span class="chip"><R v={locale} /> · dental vocabulary</span>
+            <span class="font-mono text-[0.75rem] text-[var(--fg-2)]">reply <span class="text-aqua tnum">0.8 s</span></span>
           </div>
-          <div class="py-5">
-            <dt class="font-medium text-ink">An ROI dashboard you can read in a minute</dt>
-            <dd class="mt-1.5 text-[0.9375rem] text-slate">
-              Overflow calls answered, consultations booked, emergencies triaged, missed calls recovered by text, and the estimated pipeline captured.
-            </dd>
+          <div class="relative mt-4 h-[148px]">
+            <div class="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[var(--line)]"></div>
+            <Wave class="absolute inset-0 h-full w-full justify-between text-aqua/70" bars={72} seed={23} />
+            {
+              terms.map((t) => (
+                <span class="absolute rounded-[2px] border border-aqua/40 bg-night-card px-2 py-1 font-mono text-[0.75rem] text-[var(--fg)]" style={`left:${t.x};top:${t.y}`}>
+                  {t.t === 'funds' ? <R v={funds} /> : t.t}
+                </span>
+              ))
+            }
           </div>
-          <div class="py-5">
-            <dt class="font-medium text-ink">Recalls lapsed hygiene patients by text</dt>
-            <dd class="mt-1.5 text-[0.9375rem] text-slate">
-              Finds patients overdue for their six-month visit in your diary system and texts them inside quiet hours, with no clinical details and
-              instant STOP handling.
-            </dd>
+          <div class="mt-4 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-4">
+            {['veneers', 'composite bonding', 'CBCT', 'periodontal', 'crown', 'whitening'].map((w) => <span class="chip">{w}</span>)}
           </div>
-        </dl>
-      </div>
+        </div>
+      </article>
     </div>
   </div>
 </section>

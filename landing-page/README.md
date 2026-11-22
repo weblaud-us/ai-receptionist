@@ -4,6 +4,12 @@ The public marketing site for the dental AI receptionist: an overflow, lunch-bre
 receptionist for private and mixed dental practices in Australia (first) and the UK. Static Astro
 build, Tailwind v4, a few small TypeScript scripts, no UI framework. Served by Nginx in production.
 
+**With the whole stack:** `npm run stack` (or `make dev`) from the repo root starts the landing page
+with everything else, on **http://localhost:4321** (Australia at `/`, United Kingdom at `/uk/`). Its
+signup and sign-in buttons point at the local client dashboard on :5173. Logs: `docker compose logs -f landing`.
+
+**On its own:**
+
 ```sh
 npm install                      # from the repo root (npm workspaces)
 npm run dev:landing              # http://localhost:4321  (or: npm run dev -w landing-page)

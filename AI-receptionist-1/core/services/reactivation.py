@@ -117,7 +117,7 @@ async def refresh(tenant: TenantConfig, *, now: Optional[datetime] = None, db: A
     stats = {"patients": 0, "new": 0, "booked": 0, "skipped_no_mobile": 0}
     if not available(tenant):
         return stats
-    repos = Repos(db or get_db(), tenant.id)
+    repos = Repos(db if db is not None else get_db(), tenant.id)
     country = tenant.country.upper()
     for p in await _lapsed(tenant, now, exclude_booked=False):
         stats["patients"] += 1
@@ -151,7 +151,7 @@ async def preview(tenant: TenantConfig, *, now: Optional[datetime] = None, db: A
     now = now or utcnow()
     if not available(tenant):
         return {"available": False, "eligible": 0, "blocked": {}}
-    db = db or get_db()
+    db = db if db is not None else get_db()
     country = tenant.country.upper()
     settings_ = {**_settings(tenant), "enabled": True}
     eligible = 0
@@ -207,7 +207,7 @@ async def send_due(tenant: TenantConfig, *, now: Optional[datetime] = None, db: 
     stats = {"sent": 0, "deferred": 0, "closed": 0, "failed": 0}
     if not available(tenant):
         return stats
-    db = db or get_db()
+    db = db if db is not None else get_db()
     repos = Repos(db, tenant.id)
     country = tenant.country.upper()
     settings_ = _settings(tenant)
@@ -284,7 +284,7 @@ async def on_booking(tenant: TenantConfig, phone: str, appointment_id: str, *, n
 
     try:
         now = now or utcnow()
-        repos = Repos(db or get_db(), tenant.id)
+        repos = Repos(db if db is not None else get_db(), tenant.id)
         number = _mobile(phone, (tenant.country or "").upper()) or phone      # "0412 345 678" → +61412345678
         rows = await repos.recalls.find({"phone": {"$in": phone_variants(number)},
                                          "status": {"$in": list(OPEN_STATUSES)}})
@@ -329,7 +329,7 @@ async def stats(tenant: TenantConfig, since: datetime, until: datetime, *, db: A
     """For insights: recall texts sent and bookings credited to them in the period."""
     from database.mongodb import get_db
 
-    repos = Repos(db or get_db(), tenant.id)
+    repos = Repos(db if db is not None else get_db(), tenant.id)
     q_time = {"$gte": since, "$lt": until}
     sent = await repos.recalls.count({"last_sent_at": q_time})
     booked = await repos.recalls.count({"attributed_at": q_time, "attributed_booking_id": {"$ne": None}})

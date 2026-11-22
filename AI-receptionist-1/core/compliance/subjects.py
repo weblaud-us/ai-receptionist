@@ -56,8 +56,9 @@ SOURCES: Dict[str, tuple[str, tuple[str, ...]]] = {
     "bookings": ("bookings", ("guest_phone",)),
     "guests": ("guests", ("phone",)),
     "recalls": ("recalls", ("phone",)),
+    "whatsapp": ("wa_outbox", ("to",)),
 }
-DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls")
+DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls", "whatsapp")
 FUTURE_STATUSES = ("confirmed", "pending")
 
 RequestKind = Literal["access", "erasure"]

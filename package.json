@@ -18,7 +18,7 @@
     "stack": "docker compose up --build",
     "stack:dialer": "docker compose --profile dialer up --build",
     "stack:down": "docker compose down",
-    "stack:logs": "docker compose logs -f api worker jobs dashboard platform-dashboard"
+    "stack:logs": "docker compose logs -f api worker jobs dashboard platform-dashboard landing"
   },
   "engines": {
     "node": ">=22"

@@ -1,5 +1,8 @@
 /** Types for the Phase 2 tenant API (/t/*). */
 import type { BillingBrief } from './billing'
+import type { HoursEntry } from '@receptionist/shared/lib/hours'
+
+export type { HoursEntry }
 
 export type Role = 'owner' | 'admin' | 'staff'
 export type Vertical =
@@ -11,12 +14,6 @@ export type Vertical =
   | 'dental'
   | 'professional'
   | 'generic'
-
-export interface HoursEntry {
-  dow: number // 0 = Monday … 6 = Sunday
-  open: string // HH:MM
-  close: string // HH:MM, may be ≤ open for overnight, or 24:00
-}
 
 export interface AgentConfig {
   name: string
@@ -217,6 +214,7 @@ export interface Appointment {
   notes: string
   party_size?: number | null
   call_id?: string | null
+  contact_id?: string | null
 }
 
 export interface Slot {
@@ -280,6 +278,16 @@ export interface Lead {
   estimated_value_minor?: number | null
   currency?: string | null
   priority?: 'high' | 'normal' | null
+  /** dental_emergency only. */
+  severity?: 'life_threatening' | 'urgent' | 'routine' | null
+  red_flag?: boolean | null
+  /** cosmetic_consult only. */
+  patient_status?: 'new' | 'existing' | 'unknown' | null
+  timeframe?: 'asap' | 'within_1_month' | '1_3_months' | 'researching' | null
+  funding_interest?: 'health_fund' | 'finance' | 'both' | 'none' | 'unknown' | null
+  service_name?: string | null
+  notes?: string | null
+  channel?: string | null
 }
 
 export interface KnowledgeItem {
@@ -299,6 +307,29 @@ export interface UnansweredItem {
   call_id?: string | null
   created_at: string
   status: 'open' | 'answered' | 'dismissed'
+  /** How many times callers asked this (similar wordings are grouped). */
+  count: number
+  call_ids: string[]
+  first_asked_at?: string
+}
+
+export interface KnowledgeList {
+  items: KnowledgeItem[]
+  inline: boolean
+  count: number
+  chars: number
+  max_items: number
+  max_chars: number
+}
+
+export interface KnowledgeSuggestion {
+  question: string
+  hint: string
+}
+
+export interface KnowledgeTestResult {
+  inline: boolean
+  matches: (KnowledgeItem & { strength: 'strong' | 'weak' })[]
 }
 
 export interface Overview {
@@ -343,3 +374,35 @@ export interface ForwardingRow {
   cancel: string
 }
 
+
+export interface WhatsAppStatus {
+  configured: boolean
+  own_number: boolean
+  templates_configured: boolean
+}
+
+export interface WhatsAppTemplate {
+  name: string
+  language: string
+  category: string
+  body: string
+  /** Number of {{n}} placeholders in the body. */
+  params: number
+}
+
+export interface WhatsAppOutboxItem {
+  id: string
+  kind: 'text' | 'template'
+  template?: string | null
+  body: string
+  status: 'accepted' | 'sent' | 'delivered' | 'read' | 'failed'
+  error?: string | null
+  error_code?: number | null
+  created_at: string
+}
+
+export interface ContactWhatsApp {
+  window: { open: boolean; last_inbound_at: string | null; expires_at: string | null }
+  do_not_contact: boolean
+  messages: WhatsAppOutboxItem[]
+}

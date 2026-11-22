@@ -2,7 +2,7 @@
 # or run the docker compose line itself.
 .PHONY: dev down test logs images
 
-dev:            ## API + voice worker + jobs worker + client dashboard (:5173) + platform app (:5174) + MongoDB + Redis
+dev:            ## API + voice worker + jobs worker + client dashboard (:5173) + platform app (:5174) + landing page (:4321) + MongoDB + Redis
 	docker compose up --build
 
 down:           ## stop everything (data volumes are kept)

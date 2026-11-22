@@ -11,10 +11,14 @@ POST  /t/onboarding/template             apply a vertical's example services and
 POST  /t/onboarding/step                 save wizard progress
 GET   /t/verticals                       vertical catalog for the wizard
 CRUD  /t/services /t/resources /t/exceptions /t/knowledge
+GET   /t/knowledge/suggestions · POST /t/knowledge/test   unanswered common questions · try a caller's question
 GET   /t/unanswered · POST …/{id}/answer · POST …/{id}/dismiss
 POST  /t/knowledge/import                draft Q&A from the business's website (owner approves each)
+POST  /t/onboarding/site-import         read the website, draft profile / hours / services / FAQs (nothing saved)
+POST  /t/onboarding/apply-import        save the parts of that draft the owner kept
 GET   /t/appointments · POST · PATCH /t/appointments/{id} · GET /t/slots
 GET   /t/contacts · GET/PATCH /t/contacts/{id}
+GET   /t/whatsapp/status · /t/whatsapp/templates · GET/POST /t/contacts/{id}/whatsapp   message a patient
 GET   /t/calls · GET /t/calls/live · GET /t/calls/{call_id}
 GET   /t/messages · PATCH /t/messages/{id} · GET /t/leads · PATCH /t/leads/{id}
 GET   /t/phone-numbers                   numbers + call-forwarding instructions
@@ -28,30 +32,32 @@ GET   /t/voices                          voice catalogue with audio previews (El
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
 import re
-import socket
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-import httpx
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from config import settings
 from core.auth import TenantPrincipal, require_tenant, service as auth_service
+from core.integrations import whatsapp as wa_api
+from core.phone import digits
 from core.integrations.email import send_email
 from core.prompts.verticals import get_vertical, vertical_catalog
 from core.repositories.base import utcnow
 from core.repositories.repos import PhoneNumbersStore, UsersStore
 from core.repositories.scoped import scoped_db
 from core.sensitive import drop_ciphertext, unseal
+from core import ratelimit
 from core.services import availability as av
+from core.services import site_import
+from core.services import whatsapp_outbox as wa_outbox
 from core.services.scheduling import SchedulingError, SchedulingService
 from core.services.tenant_admin import EDITABLE_FIELDS, apply_template, update_tenant
 from core.signed_links import build_call_link
@@ -81,6 +87,14 @@ def _clean(doc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if _id is not None and "id" not in doc:
         doc["id"] = str(_id)
     return to_jsonable(doc)
+
+
+def _by_id(raw: str) -> Dict[str, Any]:
+    """Filter for a row by the id the API returned. Rows created by an upsert or a plain insert before
+    ids were generated explicitly have an ObjectId `_id`; match those too."""
+    if ObjectId.is_valid(raw):
+        return {"_id": {"$in": [raw, ObjectId(raw)]}}
+    return {"_id": raw}
 
 
 def _ip(request: Request) -> str:
@@ -260,6 +274,41 @@ async def onboarding_step(body: StepBody, request: Request, tp: TenantPrincipal 
         progress["completed_at"] = utcnow().isoformat()
     await update_tenant(tp.tenant, {"onboarding": progress}, allowed=EDITABLE_FIELDS, user_id=tp.user.user_id, ip=_ip(request))
     return {"success": True, "onboarding": progress}
+
+
+class SiteImportBody(BaseModel):
+    url: str = Field(min_length=4, max_length=500)
+
+
+@tenant_router.post("/onboarding/site-import")
+async def onboarding_site_import(body: SiteImportBody, tp: TenantPrincipal = Depends(_admin)):
+    """Read the business's website and draft its setup. Nothing is saved until /onboarding/apply-import."""
+    if not await ratelimit.allow_fixed(f"site-import:{tp.tenant.id}", 10, 3600):
+        raise HTTPException(429, "Too many website imports. Try again in an hour.")
+    try:
+        return {"draft": await site_import.import_site(_public_http_url(body.url))}
+    except site_import.SiteImportError as e:
+        raise HTTPException(e.status, str(e))
+
+
+class ApplyImportBody(BaseModel):
+    profile: Dict[str, Any] = Field(default_factory=dict)
+    hours: List[Dict[str, Any]] = Field(default_factory=list)
+    services: List[Dict[str, Any]] = Field(default_factory=list, max_length=60)
+    faqs: List[Dict[str, Any]] = Field(default_factory=list, max_length=40)
+    links: Dict[str, str] = Field(default_factory=dict)
+
+
+@tenant_router.post("/onboarding/apply-import")
+async def onboarding_apply_import(body: ApplyImportBody, request: Request, tp: TenantPrincipal = Depends(_admin)):
+    """Save the parts of a website draft the owner kept (examples are replaced, their own rows aren't)."""
+    if tp.tenant.is_legacy:
+        raise HTTPException(409, "Run migration m0003 first.")
+    try:
+        added = await site_import.apply_draft(tp.tenant, body.model_dump(), user_id=tp.user.user_id, ip=_ip(request))
+    except ValueError as e:
+        raise HTTPException(422, str(e)[:500])
+    return {"success": True, "added": added}
 
 
 @tenant_router.get("/verticals")
@@ -470,6 +519,7 @@ class KnowledgeBody(BaseModel):
     answer: str = Field(min_length=1, max_length=1500)
     tags: List[str] = Field(default_factory=list)
     active: bool = True
+    source: Literal["dashboard", "website"] = "dashboard"
 
 
 class KnowledgePatch(BaseModel):
@@ -482,15 +532,42 @@ class KnowledgePatch(BaseModel):
 @tenant_router.get("/knowledge")
 async def list_knowledge(tp: TenantPrincipal = Depends(_staff)):
     rows = await tp.repos().knowledge.find({}, sort=[("sort", 1), ("updated_at", -1)], limit=1000)
-    from core.tools.knowledge import fits_inline
+    from core.tools.knowledge import KB_INLINE_MAX_CHARS, KB_INLINE_MAX_ITEMS, fits_inline, kb_chars
 
     active = [r for r in rows if r.get("active") is not False]
-    return {"items": [_clean(r) for r in rows], "inline": fits_inline(active), "count": len(active)}
+    return {"items": [_clean(r) for r in rows], "inline": fits_inline(active), "count": len(active),
+            "chars": kb_chars(active), "max_items": KB_INLINE_MAX_ITEMS, "max_chars": KB_INLINE_MAX_CHARS}
+
+
+@tenant_router.get("/knowledge/suggestions")
+async def knowledge_suggestions(tp: TenantPrincipal = Depends(_staff)):
+    """Questions callers commonly ask this kind of business that have no saved answer yet."""
+    from core.services.knowledge_suggestions import suggestions_for
+
+    rows = await tp.repos().knowledge.find({}, limit=1000, projection={"question": 1, "tags": 1, "active": 1})
+    return {"suggestions": suggestions_for(tp.tenant.vertical, tp.tenant.country, rows)}
+
+
+class KnowledgeTestBody(BaseModel):
+    question: str = Field(min_length=2, max_length=500)
+
+
+@tenant_router.post("/knowledge/test")
+async def test_knowledge(body: KnowledgeTestBody, tp: TenantPrincipal = Depends(_staff)):
+    """Which saved answers a caller's question would find. Nothing is logged."""
+    from core.tools.knowledge import fits_inline, rank_scored
+
+    rows = await tp.repos().knowledge.find({"active": {"$ne": False}}, limit=1000)
+    hits = rank_scored(rows, body.question)
+    top = hits[0][0] if hits else 0
+    return {"inline": fits_inline(rows),
+            "matches": [{**_clean(it), "strength": "strong" if score >= max(2, top) else "weak"}
+                        for score, it in hits]}
 
 
 @tenant_router.post("/knowledge")
 async def create_knowledge(body: KnowledgeBody, request: Request, tp: TenantPrincipal = Depends(_admin)):
-    doc = {"_id": new_id("kb"), **body.model_dump(), "source": "dashboard", "updated_at": utcnow()}
+    doc = {"_id": new_id("kb"), **body.model_dump(), "updated_at": utcnow()}
     await tp.repos().knowledge.insert_one(doc)
     await _audit(tp, request, "knowledge.create", "knowledge_item", doc["_id"], {"question": body.question})
     return _clean(doc)
@@ -521,35 +598,69 @@ async def delete_knowledge(item_id: str, request: Request, tp: TenantPrincipal =
 @tenant_router.get("/unanswered")
 async def list_unanswered(status: str = Query("open", pattern="^(open|answered|dismissed)$"),
                           tp: TenantPrincipal = Depends(_staff)):
-    rows = await tp.repos().unanswered.find({"status": status}, sort=[("created_at", -1)], limit=200)
-    return {"items": [_clean(r) for r in rows]}
+    from core.tools.knowledge import question_key
+
+    rows = await tp.repos().unanswered.find({"status": status}, sort=[("created_at", -1)], limit=500)
+    groups: Dict[str, Dict[str, Any]] = {}
+    for r in rows:                               # newest first, so the first row of a group is the latest ask
+        key = r.get("qkey") or question_key(r.get("question", "")) or str(r["_id"])
+        g = groups.get(key)
+        if g is None:
+            groups[key] = {**_clean(r), "count": 1, "call_ids": [r["call_id"]] if r.get("call_id") else [],
+                           "first_asked_at": to_jsonable(r.get("created_at"))}
+        else:
+            g["count"] += 1
+            g["first_asked_at"] = to_jsonable(r.get("created_at"))
+            if r.get("call_id") and r["call_id"] not in g["call_ids"]:
+                g["call_ids"].append(r["call_id"])
+    items = list(groups.values())
+    if status == "open":
+        items.sort(key=lambda g: -g["count"])     # stable: ties stay newest first
+    return {"items": items[:200], "total": len(rows)}
+
+
+async def _same_question_ids(repos: Any, row: Dict[str, Any]) -> List[Any]:
+    """Every open row asking the same thing as `row` (grouped in the list), so one answer clears them all."""
+    from core.tools.knowledge import question_key
+
+    key = row.get("qkey") or question_key(row.get("question", ""))
+    if not key:
+        return [row["_id"]]
+    rows = await repos.unanswered.find({"status": "open"}, limit=1000, projection={"question": 1, "qkey": 1})
+    ids = [r["_id"] for r in rows if (r.get("qkey") or question_key(r.get("question", ""))) == key]
+    return ids or [row["_id"]]
 
 
 class AnswerBody(BaseModel):
     answer: str = Field(min_length=1, max_length=1500)
     question: Optional[str] = Field(default=None, max_length=300)
+    tags: List[str] = Field(default_factory=list)
 
 
 @tenant_router.post("/unanswered/{item_id}/answer")
 async def answer_unanswered(item_id: str, body: AnswerBody, request: Request, tp: TenantPrincipal = Depends(_admin)):
     repos = tp.repos()
-    row = await repos.unanswered.find_one({"_id": item_id})
+    row = await repos.unanswered.find_one(_by_id(item_id))
     if not row:
         raise _not_found()
     kb = {"_id": new_id("kb"), "question": (body.question or row["question"])[:300], "answer": body.answer,
-          "tags": [], "active": True, "source": "unanswered", "updated_at": utcnow()}
+          "tags": body.tags, "active": True, "source": "unanswered", "updated_at": utcnow()}
     await repos.knowledge.insert_one(kb)
-    await repos.unanswered.update_one({"_id": item_id}, {"$set": {"status": "answered", "knowledge_id": kb["_id"],
-                                                                  "answered_at": utcnow()}})
+    ids = await _same_question_ids(repos, row)
+    await repos.unanswered.update_many({"_id": {"$in": ids}}, {"$set": {"status": "answered", "knowledge_id": kb["_id"],
+                                                                         "answered_at": utcnow()}})
     await _audit(tp, request, "knowledge.create", "knowledge_item", kb["_id"], {"from_unanswered": item_id})
     return {"success": True, "item": _clean(kb)}
 
 
 @tenant_router.post("/unanswered/{item_id}/dismiss")
 async def dismiss_unanswered(item_id: str, tp: TenantPrincipal = Depends(_admin)):
-    res = await tp.repos().unanswered.update_one({"_id": item_id}, {"$set": {"status": "dismissed"}})
-    if res.matched_count == 0:
+    repos = tp.repos()
+    row = await repos.unanswered.find_one(_by_id(item_id))
+    if not row:
         raise _not_found()
+    ids = await _same_question_ids(repos, row)
+    await repos.unanswered.update_many({"_id": {"$in": ids}}, {"$set": {"status": "dismissed", "dismissed_at": utcnow()}})
     return {"success": True}
 
 
@@ -559,43 +670,28 @@ class ImportBody(BaseModel):
 
 def _public_http_url(url: str) -> str:
     """Only fetch public http(s) hosts — never the server's own network (SSRF)."""
-    if not re.match(r"^https?://", url, re.I):
-        url = "https://" + url
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise HTTPException(422, "Enter a website address like https://example.com")
     try:
-        infos = socket.getaddrinfo(parsed.hostname, None)
-    except OSError:
-        raise HTTPException(422, "That website couldn't be found")
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            raise HTTPException(422, "That address isn't a public website")
-    return url
+        return site_import.public_url(url)
+    except site_import.SiteImportError as e:
+        raise HTTPException(e.status, str(e))
 
 
-def _page_text(html: str) -> str:
-    html = re.sub(r"(?is)<(script|style|noscript|svg).*?</\1>", " ", html)
-    text = re.sub(r"(?s)<[^>]+>", " ", html)
-    text = re.sub(r"&nbsp;|&#160;", " ", text)
-    return re.sub(r"\s+", " ", text).strip()[:12000]
+async def _crawl_or_http(url: str, *, max_pages: int) -> Dict[str, Any]:
+    try:
+        return await site_import.crawl(_public_http_url(url), max_pages=max_pages)
+    except site_import.SiteImportError as e:
+        raise HTTPException(e.status, str(e))
 
 
 @tenant_router.post("/knowledge/import")
 async def import_knowledge(body: ImportBody, tp: TenantPrincipal = Depends(_admin)):
-    """Draft Q&A pairs from the business's website. Nothing is saved: the owner approves each."""
+    """Draft Q&A pairs from the business's website (homepage + its FAQ / contact / services pages).
+    Nothing is saved: the owner approves each."""
     if not settings.OPENAI_API_KEY:
         raise HTTPException(503, "Website import needs OPENAI_API_KEY")
-    url = _public_http_url(body.url)
-    try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers={"User-Agent": "ReceptionistBot/1.0"}) as client:
-            resp = await client.get(url)
-    except httpx.HTTPError:
-        raise HTTPException(502, "Couldn't load that website")
-    if resp.status_code >= 400 or "html" not in resp.headers.get("content-type", "html"):
-        raise HTTPException(502, f"The website answered with HTTP {resp.status_code}")
-    text = _page_text(resp.text[:500_000])
+    crawled = await _crawl_or_http(body.url, max_pages=4)
+    url = crawled["url"]
+    text = "\n\n".join(p["text"] for p in crawled["pages"])[:20000]
     if len(text) < 100:
         raise HTTPException(422, "Not enough text on that page to draft answers")
 
@@ -664,15 +760,22 @@ async def list_appointments(date_from: Optional[date] = None, date_to: Optional[
 
 @tenant_router.get("/slots")
 async def slots(service_id: Optional[str] = None, day: Optional[date] = None, resource_id: Optional[str] = None,
-                tp: TenantPrincipal = Depends(_staff)):
+                days: int = Query(1, ge=1, le=14), tp: TenantPrincipal = Depends(_staff)):
+    """Open times from `day` for `days` business-local days (one resource per time)."""
     svc = _scheduler(tp)
     service = await tp.repos().services.find_one({"_id": service_id}) if service_id else None
     resource = await tp.repos().resources.find_one({"_id": resource_id}) if resource_id else None
-    found = await svc.find_slots(service=service, day_from=day or _today(tp), resource=resource, limit=200)
+    day_from = day or _today(tp)
+    try:
+        found = await svc.find_slots(service=service, day_from=day_from, day_to=day_from + timedelta(days=days - 1),
+                                     resource=resource, limit=2000)
+    except SchedulingError as e:
+        raise HTTPException(409, e.message)
     found.sort(key=lambda s: (s.start, s.resource_id))
     names = {r["_id"]: r.get("name") for r in await svc.resources()}
     return {"slots": [{"slot_id": s.slot_id, "start": to_jsonable(s.start), "end": to_jsonable(s.end),
-                       "resource_id": s.resource_id, "resource": names.get(s.resource_id)} for s in found]}
+                       "resource_id": s.resource_id, "resource": names.get(s.resource_id)} for s in found],
+            "timezone": tp.tenant.timezone}
 
 
 @tenant_router.post("/appointments")
@@ -756,10 +859,11 @@ async def list_contacts(q: Optional[str] = None, page: int = Query(1, ge=1), lim
 @tenant_router.get("/contacts/{contact_id}")
 async def get_contact(contact_id: str, tp: TenantPrincipal = Depends(_staff)):
     repos = tp.repos()
-    c = await repos.contacts.find_one({"_id": contact_id})
+    c = await repos.contacts.find_one(_by_id(contact_id))
     if not c:
         raise _not_found("Contact not found")
-    appts = await repos.appointments.find({"contact_id": contact_id}, sort=[("start", -1)], limit=50)
+    appts = await repos.appointments.find({"contact_id": {"$in": [c["_id"], str(c["_id"])]}},
+                                          sort=[("start", -1)], limit=50)
     calls = await repos.calls.find({"caller_phone": c.get("phone")}, sort=[("started_at", -1)], limit=20,
                                    projection={"transcript": 0, "turns": 0})
     msgs = await repos.messages.find({"$or": [{"caller_phone": c.get("phone")}, {"callback_number": c.get("phone")}]},
@@ -774,11 +878,101 @@ async def update_contact(contact_id: str, body: ContactPatch, request: Request, 
     if not sets:
         raise HTTPException(400, "Nothing to update")
     sets["updated_at"] = utcnow()
-    res = await tp.repos().contacts.update_one({"_id": contact_id}, {"$set": sets})
+    res = await tp.repos().contacts.update_one(_by_id(contact_id), {"$set": sets})
     if res.matched_count == 0:
         raise _not_found("Contact not found")
     await _audit(tp, request, "contact.update", "contact", contact_id, sets)
-    return _clean(await tp.repos().contacts.find_one({"_id": contact_id}))
+    return _clean(await tp.repos().contacts.find_one(_by_id(contact_id)))
+
+
+# ─────────────────────────────────────────────
+# WHATSAPP (staff → patient, from the patient profile)
+# ─────────────────────────────────────────────
+
+@tenant_router.get("/whatsapp/status")
+async def whatsapp_status(tp: TenantPrincipal = Depends(_staff)):
+    sender = wa_outbox.tenant_sender(tp.tenant)
+    return {"configured": sender["configured"], "own_number": sender["own_number"],
+            "templates_configured": bool(wa_api.account_id(sender["waba_id"]))}
+
+
+@tenant_router.get("/whatsapp/templates")
+async def whatsapp_templates(fresh: bool = False, tp: TenantPrincipal = Depends(_staff)):
+    try:
+        return {"templates": await wa_api.list_templates(wa_outbox.tenant_sender(tp.tenant)["waba_id"], fresh=fresh)}
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+async def _contact_or_404(tp: TenantPrincipal, contact_id: str) -> Dict[str, Any]:
+    c = await tp.repos().contacts.find_one(_by_id(contact_id))
+    if not c:
+        raise _not_found("Contact not found")
+    return c
+
+
+@tenant_router.get("/contacts/{contact_id}/whatsapp")
+async def contact_whatsapp(contact_id: str, tp: TenantPrincipal = Depends(_staff)):
+    c = await _contact_or_404(tp, contact_id)
+    rows = await tp.repos().wa_outbox.find({"contact_id": c["_id"]}, sort=[("created_at", -1)], limit=10)
+    return {"window": to_jsonable(wa_outbox.window(c)), "do_not_contact": bool(c.get("do_not_contact")),
+            "messages": [_clean(r) for r in rows]}
+
+
+class WhatsAppBody(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=4000)
+    template: Optional[str] = Field(default=None, max_length=512)
+    language: Optional[str] = Field(default=None, max_length=15)
+    params: List[str] = Field(default_factory=list, max_length=20)
+
+
+@tenant_router.post("/contacts/{contact_id}/whatsapp")
+async def send_contact_whatsapp(contact_id: str, body: WhatsAppBody, request: Request,
+                                tp: TenantPrincipal = Depends(_staff)):
+    c = await _contact_or_404(tp, contact_id)
+    if c.get("do_not_contact"):
+        raise HTTPException(409, "This patient is marked do-not-contact.")
+    sender = wa_outbox.tenant_sender(tp.tenant)
+    if not sender["configured"]:
+        raise HTTPException(503, "WhatsApp isn't set up for this practice yet.")
+    if not await ratelimit.allow_fixed(f"wa-send:{tp.tenant.id}", 60, 60):
+        raise HTTPException(429, "Too many WhatsApp messages in a minute. Try again shortly.")
+    to = "+" + digits(c.get("phone"))
+    repos = tp.repos()
+
+    if body.template:
+        if not body.language:
+            raise HTTPException(422, "Choose the template's language.")
+        params = [p.strip()[:1000] for p in body.params]
+        if any(not p for p in params):
+            raise HTTPException(422, "Fill in every field of the template.")
+        try:
+            known = await wa_api.list_templates(sender["waba_id"])
+        except RuntimeError:
+            known = []
+        tpl = next((t for t in known if t["name"] == body.template and t["language"] == body.language), None)
+        if tpl and len(params) != tpl["params"]:
+            raise HTTPException(422, f"This template needs {tpl['params']} value(s).")
+        result = await wa_api.send_template(to, body.template, body.language, params, sender["phone_number_id"])
+        preview = wa_outbox.fill_template(tpl["body"], params) if tpl else f"[{body.template}] " + " · ".join(params)
+        kind = "template"
+    else:
+        text = (body.text or "").strip()
+        if not text:
+            raise HTTPException(422, "Type a message or choose a template.")
+        if not wa_outbox.window(c)["open"]:
+            raise HTTPException(409, "This patient hasn't messaged you in the last 24 hours, so WhatsApp only "
+                                     "allows an approved template.")
+        result = await wa_api.send_text_result(to, text, sender["phone_number_id"])
+        preview, kind = text, "text"
+
+    row = await wa_outbox.record_send(repos, contact=c, to=to, kind=kind, body=preview, result=result,
+                                      template=body.template, sent_by=tp.user.user_id)
+    await _audit(tp, request, "whatsapp.send", "contact", str(c["_id"]),
+                 {"kind": kind, "template": body.template, "ok": result.ok, "error_code": result.error_code})
+    if not result.ok:
+        raise HTTPException(502, result.error or "WhatsApp send failed.")
+    return {"success": True, "message": _clean(row)}
 
 
 # ─────────────────────────────────────────────
@@ -1278,7 +1472,8 @@ async def voices(provider: str = Query("elevenlabs", max_length=20), tp: TenantP
                 "note": "Voice previews are available for ElevenLabs voices. Enter the voice ID for other providers."}
     if not elevenlabs.configured():
         return {"provider": provider, "available": False, "voices": [],
-                "note": "ElevenLabs isn't set up on this server (ELEVENLABS_API_KEY)."}
+                "note": "Voice previews aren't available yet, so calls use the standard voice. "
+                        "Paste an ElevenLabs voice ID to choose a different one."}
     return {"provider": provider, "available": True, "voices": await elevenlabs.list_voices(),
             "default_voice_id": settings.ELEVENLABS_VOICE_ID or None}
 

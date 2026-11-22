@@ -1,110 +1,198 @@
 ---
 /**
- * "Built around real clinic hours": a 24-hour strip (desktop) / stepped list (mobile) of how the
- * assistant works alongside reception through a split-shift day.
+ * "Built around real clinic hours": a 24-hour scrubber over a split-shift day. Choosing a phase
+ * (tabs below the bar, or pointing at the bar) previews what callers hear, the diary rule and the
+ * text-back status for that part of the day. clinic-day.ts runs it; without JavaScript the first
+ * phase shows and the tabs still read as a list of the four phases.
  */
-const DAY_START = 7; // the strip runs 07:00 → 07:00 next day
+import R from './R.astro';
+import SectionRule from './SectionRule.astro';
+import { both } from '../data/regions';
+
+const DAY_START = 7; // the bar runs 07:00 → 07:00 next day
 const pct = (h: number) => (((h - DAY_START + 24) % 24) / 24) * 100;
+const name = both((_, f) => f.practice.name);
+const emergency = both((_, f) => f.emergency.number);
 
 const phases = [
   {
+    id: 'morning',
     from: '09:00',
     to: '12:50',
     start: 9,
     end: 12 + 50 / 60,
     title: 'Busy overflow',
-    body: 'Your team answers. Calls forward only when every line is busy or nobody picks up after four rings.',
     tone: 'overflow',
+    forwarding: 'When every line is busy, or after 4 rings',
+    greeting: both((_, f) => `Thanks for calling ${f.practice.name}. The team is on another line, so I'm the practice's AI assistant. I can book you in or take a message.`),
+    diary: 'Books into open slots only. Appointments reception is holding are left alone.',
+    sms: 'Armed: a caller who hangs up before the greeting ends gets a text within 15 seconds.',
   },
   {
+    id: 'lunch',
     from: '12:50',
     to: '13:50',
     start: 12 + 50 / 60,
     end: 13 + 50 / 60,
     title: 'Lunch break cover',
-    body: 'Forwarding switches on for the hour. Callers hear a lunch greeting, and lunch slots stay out of the diary.',
     tone: 'lunch',
+    forwarding: 'All calls, for the hour',
+    greeting: both((_, f) => `Hi, you've reached ${f.practice.name}. The team is on their lunch break until 1:50, and I'm the practice's AI assistant. How can I help?`),
+    diary: '12:50–13:50 stays blocked in the diary. The first slot offered is 13:50 or later.',
+    sms: 'Armed, with a lunch-break wording that says when the desk reopens.',
   },
   {
+    id: 'afternoon',
     from: '13:50',
     to: '17:30',
     start: 13 + 50 / 60,
     end: 17.5,
     title: 'Busy overflow',
-    body: 'Back to overflow only. Reception keeps the phones; the assistant catches what they can’t.',
     tone: 'overflow',
+    forwarding: 'When every line is busy, or after 4 rings',
+    greeting: both((_, f) => `Thanks for calling ${f.practice.name}. The team is on another line, so I'm the practice's AI assistant. I can book you in or take a message.`),
+    diary: 'Back to overflow only. Same-day gaps are offered first, then the next open slot.',
+    sms: 'Armed: one text per caller per 24 hours, and STOP is always honoured.',
   },
   {
+    id: 'evening',
     from: '17:30',
     to: '09:00',
     start: 17.5,
     end: 9 + 24,
     title: 'After hours and weekends',
-    body: 'Every call answered, consults booked, emergencies directed, and a text sent to anyone who hangs up.',
     tone: 'after',
+    forwarding: 'All calls, until the desk opens',
+    greeting: both((_, f) => `You've reached ${f.practice.name}. We're closed for the evening, and I'm the practice's AI assistant. I can book you in or help with an urgent problem.`),
+    diary: 'Books tomorrow and weekend sessions. Urgent problems get the earliest same-day slot.',
+    sms: both((_, f) => `Armed. Red-flag symptoms are told to call ${f.emergency.number} first${f.emergency.extra ? `, and other urgent problems are pointed to ${f.emergency.extra}` : ''}.`),
   },
 ] as const;
 
-const toneClass = {
-  overflow: 'bg-teal-wash',
-  lunch: 'bg-champagne/35',
+const fill = {
+  overflow: 'hatch-teal bg-teal-wash/70',
+  lunch: 'hatch bg-[#efe3cf]',
   after: 'bg-teal',
-};
+} as const;
 const ticks = [9, 12, 15, 18, 21, 0, 3, 6];
+const toR = (v: string | { au: string; uk: string }) => (typeof v === 'string' ? { au: v, uk: v } : v);
 ---
-<section id="how-it-works" class="section" aria-labelledby="day-title">
-  <div class="container-page">
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
-      <h2 id="day-title" class="h2 text-ink lg:col-span-5">Built around real clinic hours</h2>
-      <p class="lede lg:col-span-6 lg:col-start-7 lg:pt-2">
-        It works alongside your receptionists, not instead of them. Set your hours and lunch break once; the greeting and the forwarding follow
-        the clock.
+<section id="how-it-works" data-tone="light" data-orb="light" data-slide-over class="tone-light bg-bone" aria-labelledby="day-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="04" label="How it works">Your hours, your rules</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+      <h2 id="day-title" class="h2 lg:col-span-8">Built around real clinic hours. <span class="hl">Set them once.</span></h2>
+      <p class="lede lg:col-span-4">
+        It works alongside your receptionists, not instead of them. The greeting, the forwarding and the diary rules follow the clock.
       </p>
     </div>
 
-    <!-- Desktop: 24-hour strip -->
-    <div class="mt-16 hidden md:block" aria-hidden="true">
-      <div class="relative h-14 overflow-hidden rounded-[var(--radius-panel)] border border-hairline bg-surface">
-        {
-          phases.map((p) => {
-            const left = pct(p.start);
-            const width = ((p.end - p.start) / 24) * 100;
-            return <span class:list={['absolute inset-y-0', toneClass[p.tone]]} style={`left:${left}%;width:${width}%`} />;
-          })
-        }
-        <span class="absolute inset-y-0 left-0 bg-teal" style={`width:${pct(9)}%`}></span>
-      </div>
-      <div class="relative mt-2 h-5">
-        {
-          ticks.map((h) => (
-            <span class="absolute -translate-x-1/2 font-mono text-[0.75rem] text-slate tnum" style={`left:${pct(h)}%`}>
-              {String(h).padStart(2, '0')}:00
-            </span>
-          ))
-        }
-      </div>
-    </div>
+    <div class="card mt-[max(3rem,4.5vw)] p-2" data-clinic-day>
+      <div class="well px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-[0.9375rem] tracking-[-0.01em] text-ink"><R v={name} />, a split-shift weekday</p>
+          <p class="meta" aria-hidden="true">pointer at <span class="text-ink tnum" data-scrub-time>09:00</span></p>
+        </div>
 
-    <ol class="mt-10 grid grid-cols-1 gap-0 md:mt-12 md:grid-cols-4 md:gap-8">
+        <!-- The 24-hour bar: pointer scrubbing is a shortcut; the tabs below are the accessible control. -->
+        <div class="relative mt-5 select-none" aria-hidden="true">
+          <div class="relative h-16 overflow-hidden rounded-[2px] border border-[var(--line-strong)] bg-surface" data-scrub-bar>
+            <span class="scrub-seg absolute inset-y-0 left-0 bg-teal" style={`width:${pct(9)}%`} data-seg="evening"></span>
+            {
+              phases.map((p) => {
+                const left = pct(p.start);
+                const width = ((p.end - p.start) / 24) * 100;
+                return (
+                  <span
+                    class:list={['scrub-seg absolute inset-y-0 border-l border-white/60 transition-[filter] duration-300', fill[p.tone]]}
+                    style={`left:${left}%;width:${width}%`}
+                    data-seg={p.id}
+                  />
+                );
+              })
+            }
+            <span class="scrub-needle pointer-events-none absolute inset-y-0 w-px bg-ink" style={`left:${pct(9)}%`} data-scrub-needle>
+              <span class="absolute -top-px left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-ink"></span>
+            </span>
+          </div>
+          <div class="relative mt-2 h-4">
+            {
+              ticks.map((h, i) => (
+                <span class:list={['absolute -translate-x-1/2 font-mono text-[0.6875rem] text-slate tnum', i % 2 === 1 && 'hidden sm:block']} style={`left:${pct(h)}%`}>
+                  {String(h).padStart(2, '0')}:00
+                </span>
+              ))
+            }
+          </div>
+        </div>
+
+        <div role="tablist" aria-label="Parts of the day" class="mt-5 grid grid-cols-2 gap-2 md:grid-cols-4" data-day-tabs>
+          {
+            phases.map((p, i) => (
+              <button
+                type="button"
+                role="tab"
+                id={`day-tab-${p.id}`}
+                aria-controls={`day-panel-${p.id}`}
+                aria-selected={i === 0}
+                tabindex={i === 0 ? 0 : -1}
+                data-phase={p.id}
+                data-start={p.start}
+                data-end={p.end}
+                class="group flex items-center gap-3 rounded-[2px] border border-[var(--line)] bg-surface/60 px-3 py-3 text-left transition-[border-color,background-color,box-shadow] duration-300 hover:border-[var(--line-strong)] aria-selected:border-ink/30 aria-selected:bg-surface"
+              >
+                <span class:list={['h-7 w-2 shrink-0 rounded-[1px]', fill[p.tone]]} aria-hidden="true" />
+                <span class="min-w-0">
+                  <span class="block font-mono text-[0.75rem] text-slate tnum">{p.from}–{p.to}</span>
+                  <span class="block text-[0.875rem] leading-snug tracking-[-0.01em] text-ink">{p.title}</span>
+                </span>
+              </button>
+            ))
+          }
+        </div>
+      </div>
+
       {
         phases.map((p, i) => (
-          <li class="relative border-l border-hairline-strong pb-10 pl-6 last:pb-0 md:border-l-0 md:border-t md:pb-0 md:pl-0 md:pt-6">
-            <span
-              class:list={['absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full md:-top-[5px] md:left-0', toneClass[p.tone], p.tone !== 'after' && 'ring-1 ring-hairline-strong']}
-              aria-hidden="true"
-            />
-            <p class="font-mono text-sm text-slate tnum">
-              <span class="sr-only">Step {i + 1}: </span>
-              {p.from}–{p.to}
-            </p>
-            <h3 class="mt-2 text-lg text-ink">{p.title}</h3>
-            <p class="mt-2 text-[0.9375rem] text-slate">{p.body}</p>
-          </li>
+          <div role="tabpanel" id={`day-panel-${p.id}`} aria-labelledby={`day-tab-${p.id}`} hidden={i !== 0} class="grid grid-cols-1 gap-px overflow-hidden lg:grid-cols-12">
+            <div class="px-4 py-6 sm:px-6 lg:col-span-6 lg:py-7">
+              <p class="text-[0.8125rem] text-slate">What callers hear</p>
+              <blockquote class="mt-3 text-[1.1875rem] leading-[1.45] tracking-[-0.02em] text-ink sm:text-[1.3125rem]">
+                “<R v={p.greeting} />”
+              </blockquote>
+              <p class="mt-4 flex flex-wrap gap-1.5">
+                <span class="chip !h-auto !whitespace-normal py-1 leading-snug">forwarding: {p.forwarding.toLowerCase()}</span>
+              </p>
+            </div>
+            <dl class="grid grid-cols-1 border-t border-[var(--line)] sm:grid-cols-2 lg:col-span-6 lg:border-l lg:border-t-0">
+              <div class="px-4 py-6 sm:px-6 lg:py-7">
+                <dt class="flex items-center gap-2 text-[0.8125rem] text-slate">
+                  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="2.5" width="11" height="10" rx="1" fill="none" stroke="currentColor" /><path d="M1.5 5.5h11M4.5 1v3M9.5 1v3" stroke="currentColor" /></svg>
+                  Diary rule
+                </dt>
+                <dd class="mt-2.5 text-[0.9375rem] leading-relaxed text-ink">{p.diary}</dd>
+              </div>
+              <div class="border-t border-[var(--line)] px-4 py-6 sm:border-l sm:border-t-0 sm:px-6 lg:py-7">
+                <dt class="flex items-center gap-2 text-[0.8125rem] text-slate">
+                  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" /></svg>
+                  Text-back
+                </dt>
+                <dd class="mt-2.5 text-[0.9375rem] leading-relaxed text-ink"><R v={toR(p.sms)} /></dd>
+              </div>
+            </dl>
+          </div>
         ))
       }
-    </ol>
-    <p class="mt-10 max-w-[64ch] text-sm text-slate">
-      Times shown are an example split shift. You set your own hours, including half-day Fridays and Saturday sessions.
+    </div>
+
+    <p class="mt-6 max-w-[70ch] text-[0.875rem] text-slate">
+      Times shown are an example split shift. You set your own hours, including half-day Fridays and Saturday sessions. Emergency guidance
+      always points to <R v={emergency} /> first.
     </p>
   </div>
 </section>
+
+<script>
+  import { initClinicDay } from '../scripts/clinic-day';
+  initClinicDay();
+</script>

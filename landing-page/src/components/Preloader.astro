@@ -1,0 +1,21 @@
+---
+/**
+ * Short preloader (motion/preloader.ts). Decorative: hidden from assistive tech, never shown without
+ * JavaScript, with reduced motion, or on a repeat visit in the same session (region-init.js).
+ */
+import { BRAND } from '../data/site';
+---
+<div class="preloader" aria-hidden="true">
+  <div class="container-page flex items-start justify-between pt-[max(1.5rem,1.8vw)] ord-label text-mist-faint">
+    <span>Connecting the line</span>
+    <span class="tnum text-aqua-light" data-loader-count>000</span>
+  </div>
+  <div class="container-page pb-[max(2rem,4vw)]">
+    <p class="display lowercase leading-[0.95]">
+      <span class="loader-mask"><span data-loader-text>{BRAND.toLowerCase()}</span></span>
+    </p>
+    <div class="mt-[max(1rem,1.6vw)] h-px bg-[rgb(230_236_228/0.14)]">
+      <div class="h-px origin-left scale-x-0 bg-aqua" data-loader-bar></div>
+    </div>
+  </div>
+</div>

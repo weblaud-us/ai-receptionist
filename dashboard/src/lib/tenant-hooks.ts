@@ -1,11 +1,15 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '@receptionist/shared/lib/api'
+import { api, ApiError } from '@receptionist/shared/lib/api'
+import type { SiteDraft } from '@receptionist/shared/lib/site-import'
 import type {
   Appointment,
   Contact,
   ContactDetail,
   ForwardingRow,
   KnowledgeItem,
+  KnowledgeList,
+  KnowledgeSuggestion,
+  KnowledgeTestResult,
   Lead,
   Overview,
   PhoneNumberInfo,
@@ -20,6 +24,10 @@ import type {
   VerticalInfo,
   VoiceCatalogue,
   WebhookEndpoint,
+  WhatsAppStatus,
+  WhatsAppTemplate,
+  ContactWhatsApp,
+  WhatsAppOutboxItem,
 } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
@@ -59,15 +67,18 @@ export const useAppointments = (params: Params) =>
 export const useSlots = (params: Params, enabled: boolean) =>
   useQuery({
     queryKey: ['t-slots', params],
-    queryFn: () => api<{ slots: Slot[] }>('/t/slots', { params }),
+    queryFn: () => api<{ slots: Slot[]; timezone?: string }>('/t/slots', { params }),
     enabled,
     staleTime: 0,
+    // One network blip (e.g. the API restarting) shouldn't leave the picker blank.
+    retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
   })
 
-export const useContacts = (params: Params) =>
+export const useContacts = (params: Params, enabled = true) =>
   useQuery({
     queryKey: ['t-contacts', params],
     queryFn: () => api<{ contacts: Contact[]; total: number; page: number; pages: number }>('/t/contacts', { params }),
+    enabled,
     placeholderData: keepPreviousData,
   })
 
@@ -95,7 +106,18 @@ export const useLeads = (status?: string) =>
 export const useKnowledge = () =>
   useQuery({
     queryKey: ['t-knowledge'],
-    queryFn: () => api<{ items: KnowledgeItem[]; inline: boolean; count: number }>('/t/knowledge'),
+    queryFn: () => api<KnowledgeList>('/t/knowledge'),
+  })
+
+export const useKnowledgeSuggestions = () =>
+  useQuery({
+    queryKey: ['t-knowledge', 'suggestions'],
+    queryFn: () => api<{ suggestions: KnowledgeSuggestion[] }>('/t/knowledge/suggestions'),
+  })
+
+export const useTestKnowledge = () =>
+  useMutation({
+    mutationFn: (question: string) => api<KnowledgeTestResult>('/t/knowledge/test', { method: 'POST', body: { question } }),
   })
 
 export const useUnanswered = (status = 'open') =>
@@ -148,6 +170,22 @@ export function useOnboarding() {
     step: useMutation({
       mutationFn: (body: { step: string; completed?: boolean }) => api('/t/onboarding/step', { method: 'POST', body }),
       onSuccess: done,
+    }),
+  }
+}
+
+/** "Start from your website": draft the setup from the site (nothing saved), then save what the owner kept. */
+export function useSiteImport() {
+  const qc = useQueryClient()
+  return {
+    fetch: useMutation({
+      mutationFn: (url: string) => api<{ draft: SiteDraft }>('/t/onboarding/site-import', { method: 'POST', body: { url } }),
+    }),
+    apply: useMutation({
+      mutationFn: (body: Record<string, unknown>) =>
+        api<{ added: { services: number; knowledge: number } }>('/t/onboarding/apply-import', { method: 'POST', body }),
+      // Wait for the refetch so the next step already sees the imported type and details.
+      onSuccess: () => Promise.all(['context', 't-services', 't-knowledge', 't-overview'].map((k) => qc.invalidateQueries({ queryKey: [k] }))),
     }),
   }
 }
@@ -215,8 +253,8 @@ export function useUnansweredMutations() {
   const done = useInvalidate('t-unanswered', 't-knowledge', 't-overview')
   return {
     answer: useMutation({
-      mutationFn: ({ id, answer, question }: { id: string; answer: string; question?: string }) =>
-        api(`/t/unanswered/${id}/answer`, { method: 'POST', body: { answer, question } }),
+      mutationFn: ({ id, answer, question, tags }: { id: string; answer: string; question?: string; tags?: string[] }) =>
+        api(`/t/unanswered/${id}/answer`, { method: 'POST', body: { answer, question, tags } }),
       onSuccess: done,
     }),
     dismiss: useMutation({
@@ -351,3 +389,33 @@ export const useVoices = (provider: string) =>
 
 export const useRecordingUrl = () =>
   useMutation({ mutationFn: (callId: string) => api<{ url: string; expires_in: number }>(`/t/calls/${callId}/recording`) })
+
+export const useWhatsAppStatus = () =>
+  useQuery({ queryKey: ['t-wa-status'], queryFn: () => api<WhatsAppStatus>('/t/whatsapp/status'), staleTime: 60_000 })
+
+export const useWhatsAppTemplates = (enabled: boolean) =>
+  useQuery({
+    queryKey: ['t-wa-templates'],
+    queryFn: () => api<{ templates: WhatsAppTemplate[] }>('/t/whatsapp/templates'),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+
+export const useContactWhatsApp = (id: string | null, enabled = true) =>
+  useQuery({
+    queryKey: ['t-contact-wa', id],
+    queryFn: () => api<ContactWhatsApp>(`/t/contacts/${id}/whatsapp`),
+    enabled: !!id && enabled,
+    refetchInterval: 15_000, // delivery receipts arrive by webhook
+  })
+
+export function useSendContactWhatsApp(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { text: string } | { template: string; language: string; params: string[] }) =>
+      api<{ success: boolean; message: WhatsAppOutboxItem }>(`/t/contacts/${id}/whatsapp`, { method: 'POST', body }),
+    // Failed sends are recorded too, so refresh either way.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['t-contact-wa', id] }),
+  })
+}

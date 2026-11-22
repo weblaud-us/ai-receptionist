@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="__LANG__">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hotel AI Receptionist — Live Call</title>
+  <title>__TITLE__</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -13,7 +13,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      background: radial-gradient(circle at 50% 0%, rgba(var(--glow),0.18), transparent 60%),
+                  linear-gradient(135deg, #0b1220, #172033, #0f172a);
       padding: 20px;
       color: #f0f0f0;
     }
@@ -31,17 +32,17 @@
       box-shadow: 0 25px 60px rgba(0,0,0,0.5);
     }
 
-    .hotel-logo {
+    .logo {
       width: 72px;
       height: 72px;
-      background: linear-gradient(135deg, #f7971e, #ffd200);
+      background: linear-gradient(135deg, var(--a1), var(--a2));
       border-radius: 50%;
       margin: 0 auto 18px;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 32px;
-      box-shadow: 0 8px 24px rgba(247,151,30,0.4);
+      box-shadow: 0 8px 24px rgba(var(--glow),0.4);
     }
 
     h1 {
@@ -70,7 +71,7 @@
 
     .bar {
       width: 5px;
-      background: linear-gradient(to top, #f7971e, #ffd200);
+      background: linear-gradient(to top, var(--a1), var(--a2));
       border-radius: 3px;
       animation: none;
       height: 6px;
@@ -139,13 +140,13 @@
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .btn-join {
-      background: linear-gradient(135deg, #f7971e, #ffd200);
-      color: #1a1a1a;
-      box-shadow: 0 6px 20px rgba(247,151,30,0.45);
+      background: linear-gradient(135deg, var(--a1), var(--a2));
+      color: var(--on-accent);
+      box-shadow: 0 6px 20px rgba(var(--glow),0.45);
     }
     .btn-join:hover:not(:disabled) {
       transform: translateY(-2px);
-      box-shadow: 0 10px 28px rgba(247,151,30,0.55);
+      box-shadow: 0 10px 28px rgba(var(--glow),0.55);
     }
 
     .btn-leave {
@@ -198,12 +199,13 @@
       text-align: left;
     }
   </style>
+  __THEME__
 </head>
 <body>
 <div class="card">
-  <div class="hotel-logo">🏨</div>
-  <h1 id="hotelName">Hotel AI Receptionist</h1>
-  <p class="subtitle" id="subtitle">Live voice call with our AI front desk</p>
+  <div class="logo" aria-hidden="true">__ICON__</div>
+  <h1 id="bizName">__NAME__</h1>
+  <p class="subtitle" id="subtitle">__SUBTITLE__</p>
 
   <!-- Audio visualiser bars -->
   <div class="visualiser" id="visualiser">
@@ -223,7 +225,7 @@
   <!-- Live levels: show which direction is broken (your mic, or the receptionist's voice) -->
   <div class="meters" id="meters">
     <div class="meter-row"><span>🎙️ Your microphone</span><div class="meter"><div class="meter-fill" id="micFill"></div></div></div>
-    <div class="meter-row"><span>🔊 Receptionist</span><div class="meter"><div class="meter-fill agent" id="agentFill"></div></div></div>
+    <div class="meter-row"><span>🔊 __AGENT__</span><div class="meter"><div class="meter-fill agent" id="agentFill"></div></div></div>
     <select class="mic-select" id="micSelect" title="Choose your microphone"></select>
   </div>
 
@@ -232,7 +234,7 @@
     <button class="btn btn-leave" id="leaveBtn">📵 Leave</button>
   </div>
 
-  <p class="tip" id="tip">Allow microphone access when prompted. Speak naturally after connecting.</p>
+  <p class="tip" id="tip">__TIP__</p>
   <div class="error-box" id="errorBox"></div>
 </div>
 
@@ -242,12 +244,17 @@
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.24.0/dist/livekit-client.umd.min.js"
         integrity="sha384-Hl+KHTfsO7AqyofjkXnR+WrOR0RM4MGeruUR9Rulz3adxJKuh0LQUYWvVwgKm0m+"
         crossorigin="anonymous"></script>
+<script id="brand" type="application/json">__BRAND_JSON__</script>
 <script>
   const LK = window.LivekitClient;
+  // Filled in by the server for the business this link belongs to (routers/livekit.py).
+  const BRAND = JSON.parse(document.getElementById("brand").textContent);
+  const READY_TIP = document.getElementById("tip").textContent;
+  const LIVE_TIP = `You're live. ${BRAND.agent} can hear you.`;
   const $ = id => document.getElementById(id);
 
   // UI refs
-  const hotelNameEl = $("hotelName");
+  const bizNameEl   = $("bizName");
   const subtitleEl  = $("subtitle");
   const dotEl       = $("dot");
   const statusEl    = $("statusText");
@@ -353,7 +360,7 @@
         if (micWarned && micPeak >= 0.015) {
           micWarned = false;
           tipEl.classList.remove("warn");
-          tipEl.textContent = "You are live. The receptionist can hear you.";
+          tipEl.textContent = LIVE_TIP;
         }
       }
       agentFill.style.width = agentAnalyser ? Math.min(100, rmsOf(agentAnalyser, agentBuf) * 500) + "%" : "0%";
@@ -419,22 +426,24 @@
       const qs = pathParts[0] === "talk"
         ? new URLSearchParams({ perm: link.get("k") || "", t: pathParts[1] || "default" })
         : new URLSearchParams({ room: roomId, exp: link.get("exp") || "", sig: link.get("sig") || "" });
+      // The signature covers the business too, so a link made for one (?t=…) must send it back.
+      if (pathParts[0] !== "talk" && link.get("t")) qs.set("t", link.get("t"));
       const resp = await fetch(`/livekit/token?${qs.toString()}`, { cache: "no-store" });
       if (!resp.ok) {
         let msg = "Token request failed (" + resp.status + ")";
         try { msg = (await resp.json()).detail || msg; } catch (_) {}
         if (resp.status === 403) msg = "This call link is invalid or has expired. Please ask for a new link.";
-        if (resp.status === 429) msg = "The receptionist is busy right now. Please try again in a little while.";
+        if (resp.status === 429) msg = `${BRAND.agent} is busy right now. Please try again in a little while.`;
         throw new Error(msg);
       }
       const data = await resp.json();
 
-      // Show hotel name from API
-      if (data.hotel_name) {
-        hotelNameEl.textContent = data.hotel_name;
-        document.title = data.hotel_name + " — Live Call";
-        subtitleEl.textContent = `Speaking with ${data.receptionist_name || "AI Receptionist"}`;
+      const business = data.business_name || data.hotel_name;
+      if (business) {
+        bizNameEl.textContent = business;
+        document.title = business + " — Live Call";
       }
+      if (data.receptionist_name) subtitleEl.textContent = `Speaking with ${data.receptionist_name}`;
 
       setStatus("Joining room…", "yellow");
       room = new LK.Room({ adaptiveStream: true, dynacast: true });
@@ -462,7 +471,7 @@
       // If the browser blocks sound until the page is clicked, say so instead of staying silent.
       room.on(LK.RoomEvent.AudioPlaybackStatusChanged, () => {
         if (room && !room.canPlaybackAudio) {
-          tipEl.textContent = "Your browser blocked sound. Click anywhere on this page to hear the receptionist.";
+          tipEl.textContent = `Your browser blocked sound. Click anywhere on this page to hear ${BRAND.agent}.`;
           document.addEventListener("click", () => { if (room) room.startAudio().catch(() => {}); }, { once: true });
         }
       });
@@ -499,7 +508,7 @@
       await loadMics();
 
       setStatus("Connected — speak now", "green");
-      tipEl.textContent = "You are live. The receptionist can hear you.";
+      tipEl.textContent = LIVE_TIP;
       joinBtn.style.display = "none";
       liveControls.style.display = "flex";
       muteBtn.textContent = "🔇 Mute";
@@ -510,7 +519,7 @@
       console.error(err);
       showError(err.message || "Failed to connect.");
       joinBtn.disabled = false;
-      tipEl.textContent = "Allow microphone access when prompted. Speak naturally after connecting.";
+      tipEl.textContent = READY_TIP;
     }
   }
 
@@ -547,6 +556,13 @@
   }
 
   // ── Event listeners ───────────────────────────────────────────────────────
+
+  // A bad or expired link: say so now, rather than after the caller presses Join.
+  if (BRAND.problem) {
+    showError(BRAND.problem);
+    joinBtn.disabled = true;
+    tipEl.textContent = "";
+  }
 
   joinBtn.addEventListener("click", joinCall);
   muteBtn.addEventListener("click", toggleMute);

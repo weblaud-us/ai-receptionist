@@ -1,43 +1,86 @@
 ---
+/**
+ * Where high-value calls go missing, as an Ordin-style pinned scene: a stream of missed-call moments
+ * lights up chip by chip as you scroll (scenes.ts), above the three gaps that cause most of it.
+ * Without the scene (mobile, reduced motion, no JS) it is an ordinary band with every chip lit.
+ */
 import R from './R.astro';
+import SectionRule from './SectionRule.astro';
+import { BRAND } from '../data/site';
 
-const pms = { au: 'Cliniko', uk: 'Dentally or Cliniko' };
 const busy = { au: 'HICAPS claims', uk: 'payments' };
+// Illustrative moments in a practice day (not statistics).
+const stream = [
+  { t: '08:02', w: 'Line busy' },
+  { t: '08:31', w: 'Invisalign enquiry' },
+  { t: '09:14', w: 'Rang out after 6 rings' },
+  { t: '10:47', w: 'Veneers, new patient' },
+  { t: '11:20', w: 'Desk on another call' },
+  { t: '12:52', w: 'Implant consult' },
+  { t: '13:07', w: 'Lunch, voicemail' },
+  { t: '13:31', w: 'Whitening question' },
+  { t: '15:40', w: 'Chipped crown' },
+  { t: '16:58', w: 'Hung up before greeting' },
+  { t: '17:46', w: 'All-on-4 enquiry' },
+  { t: '18:20', w: 'After hours, voicemail' },
+  { t: '19:05', w: 'Composite bonding' },
+  { t: '21:12', w: 'Swelling, urgent' },
+];
+const gaps = [
+  {
+    when: '12:50–1:50 and after 5:30',
+    title: 'Lunch and after hours',
+    body: {
+      au: 'The desk closes for lunch and again in the evening, just when people ring after clicking your Google ad. Every unanswered call is a patient deciding somewhere else.',
+      uk: 'The desk closes for lunch and again in the evening, just when people ring after clicking your Google ad. Every unanswered call is a patient deciding somewhere else.',
+    },
+  },
+  { when: '4 rings, then handover', title: 'A busy front desk', body: null },
+  { when: 'Voice to diary, directly', title: 'Messages nobody actions', body: null },
+];
 ---
-<section class="border-y border-hairline bg-surface" aria-labelledby="leak-title">
-  <div class="container-page section">
-    <div class="max-w-3xl">
-      <h2 id="leak-title" class="h2 text-ink">Where high-value calls go missing</h2>
-      <p class="lede mt-4">
-        Implant, Invisalign and veneer enquiries rarely leave a voicemail. They ring the next practice on the map. Three gaps cause most of it.
-      </p>
-    </div>
+<section data-tone="dark" data-orb="leak" data-scene class="tone-dark glow [--scene-h:230vh]" aria-labelledby="leak-title">
+  <div data-pin>
+    <div class="container-page flex h-full flex-col justify-center py-[max(5rem,8vw)] lg:py-[6vw]" data-steps>
+      <SectionRule idx="01" label="The leak">Where calls go</SectionRule>
 
-    <div class="mt-14 grid grid-cols-1 gap-12 md:grid-cols-3 md:gap-0">
-      <article class="md:border-r md:border-hairline md:pr-10">
-        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink tnum">12:50–1:50</p>
-        <h3 class="mt-5 text-lg text-ink">Lunch and after hours</h3>
-        <p class="mt-2 text-slate">
-          The front desk closes for lunch and again at 5:30, just when people ring after clicking your Google ad. Every unanswered call is a
-          patient deciding somewhere else.
-        </p>
-      </article>
-      <article class="md:border-r md:border-hairline md:px-10">
-        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink">4 rings</p>
-        <h3 class="mt-5 text-lg text-ink">A busy front desk</h3>
-        <p class="mt-2 text-slate">
-          Check-ins, <R v={busy} /> and chairside cover all land at once. When the lines stack up, the call that would have booked an implant
-          consult rings out.
-        </p>
-      </article>
-      <article class="md:pl-10">
-        <p class="font-display text-[clamp(2.5rem,4.5vw,3.5rem)] leading-none text-ink">No re-typing</p>
-        <h3 class="mt-5 text-lg text-ink">Messages nobody actions</h3>
-        <p class="mt-2 text-slate">
-          Call centres email notes that sit unread until the patient has moved on. Bookings should land in <R v={pms} />, with the notes
-          attached.
-        </p>
-      </article>
+      <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+        <h2 id="leak-title" class="h2 lg:col-span-8">Every missed call starts as a voicemail. <span class="hl">Not a booking.</span></h2>
+        <p class="lede lg:col-span-4">Implant, Invisalign and veneer enquiries rarely leave a voicemail. They ring the next practice on the map.</p>
+      </div>
+
+      <ul class="mt-[max(2rem,3vw)] flex flex-wrap gap-[max(0.5rem,0.6vw)]" aria-hidden="true">
+        {stream.map((c) => (
+          <li class="ord-chip" data-scene-item data-on="true"><span class="ord-label tnum">{c.t}</span>{c.w}</li>
+        ))}
+      </ul>
+
+      <ol class="mt-[max(2.5rem,3.5vw)] grid grid-cols-1 border-t border-[var(--line-strong)] md:grid-cols-3">
+        {gaps.map((g, i) => (
+          <li class:list={['py-[max(1.25rem,1.6vw)] md:pr-[2vw]', i > 0 && 'border-t border-[var(--line)] md:border-l md:border-t-0 md:pl-[2vw]']}>
+            <p class="flex items-baseline justify-between gap-4 ord-label">
+              <span class="text-aqua-light">{String(i + 1).padStart(2, '0')}</span>
+              <span class="text-[var(--fg-3)]">{g.when}</span>
+            </p>
+            <h3 class="t-30 mt-3 text-[var(--fg)]">{g.title}</h3>
+            <p class="mt-2.5 max-w-[46ch] text-[0.9375rem] leading-relaxed text-[var(--fg-2)]">
+              {i === 0 && <R v={g.body!} />}
+              {i === 1 && (
+                <Fragment>
+                  Check-ins, <R v={busy} /> and chairside cover all land at once. When the lines stack up, the call that would have booked an implant
+                  consult rings out.
+                </Fragment>
+              )}
+              {i === 2 && (
+                <Fragment>
+                  Call centres email notes that sit unread until the patient has moved on. {BRAND} books into{' '}
+                  <R v={{ au: 'Cliniko', uk: 'Dentally or Cliniko' }} /> with the notes attached.
+                </Fragment>
+              )}
+            </p>
+          </li>
+        ))}
+      </ol>
     </div>
   </div>
 </section>

@@ -1,0 +1,13 @@
+---
+/** Ordin-style section header rule: "(02)  Sample calls" on a hairline, with an optional note on the right. */
+interface Props {
+  idx: string;
+  label: string;
+  class?: string;
+}
+const { idx, label, class: className = '' } = Astro.props;
+---
+<div class:list={['sec-rule ord-label', className]}>
+  <span><span class="idx">({idx})</span>&ensp;{label}</span>
+  {Astro.slots.has('default') && <span class="hidden text-right sm:block"><slot /></span>}
+</div>

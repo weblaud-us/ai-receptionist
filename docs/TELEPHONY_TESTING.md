@@ -495,17 +495,36 @@ It prints the outbound trunk id:
 LIVEKIT_SIP_OUTBOUND_TRUNK_ID=ST_xxxxxxxx   ← set this in your env
 ```
 
-Copy that into your production env and restart the worker. **Add a number later:** assign it to its
-business (below), then re-run `setup_telephony` so it joins the inbound trunk.
+Copy that into your production env and restart the worker.
 
-## 2.5 Route the number to a business
+## 2.5 Give a business a number (automatic)
 
-Dashboard → **Phone numbers**, or as a platform admin:
+Turn on automatic numbers once:
+
+```ini
+NUMBER_PROVISIONING_ENABLED=true
+TWILIO_SIP_TRUNK_SID=TK...                # Twilio → Elastic SIP Trunking → your trunk → Trunk SID
+LIVEKIT_SIP_INBOUND_TRUNK_ID=ST_...       # the inbound trunk id setup_telephony printed above
+```
+
+Then, in the platform admin, use **New business** (or a business's **Numbers → Add number**) and either
+pick a number already in your Twilio account or search and buy one. The order then runs by itself:
+attach to the Twilio trunk → add to the LiveKit inbound trunk (through the API) → route to the business
+→ test call. Progress shows on the business's Numbers tab, with **Retry** if a step fails. You don't
+need to re-run `setup_telephony` for new numbers.
+
+Outside the US and Canada, a number you *buy* waits for a Twilio regulatory bundle (approve it on the
+**Numbers** page). A number you already own skips that.
+
+**Manual fallback** (a number you've wired up yourself): Numbers → Add number → **Assign only**, or
 
 ```
 POST /platform/phone-numbers
 { "e164": "+1...", "tenant_id": "<id>", "provider": "twilio" }
 ```
+
+then re-run `setup_telephony` **inside the API container** (`docker compose exec api python -m
+scripts.setup_telephony`), so it reads the same database as the dashboard.
 
 ## 2.6 First real call
 

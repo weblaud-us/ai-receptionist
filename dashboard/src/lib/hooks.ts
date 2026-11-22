@@ -263,12 +263,6 @@ export function useUpdateGuest() {
   })
 }
 
-export const useOutboundCall = () =>
-  useMutation({
-    mutationFn: (body: { to_phone: string; message: string }) =>
-      api<{ success: boolean; call_sid: string }>('/voice/outbound', { method: 'POST', body }),
-  })
-
 export const useSendWhatsApp = () =>
   useMutation({
     mutationFn: (body: { to: string; message: string }) =>

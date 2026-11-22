@@ -396,3 +396,23 @@ async def test_api_connects_and_never_returns_the_key(db, client, pms, monkeypat
     assert client.post("/t/integrations/pms/sync", headers=h).status_code == 200
     assert client.delete("/t/integrations/pms", headers=h).status_code == 200
     assert client.get("/t/integrations", headers=h).json()["pms"]["connected"] is False
+
+
+async def test_dashboard_slots_turn_a_pms_refusal_into_a_409_not_a_500(db, client, pms, monkeypatch):
+    from config import settings
+    from core.auth import service as auth_service
+
+    monkeypatch.setattr(settings, "COOKIE_SECURE", False)
+    auth_service.reset_rate_limits()
+    await create_tenant(name="Harbour Smiles", vertical="dental", timezone=SYD, country="AU", tenant_id="ten_api",
+                        seed_template=False)
+    await auth_service.create_user(email="owner@hs.au", password="correct horse battery", tenant_id="ten_api",
+                                   role="owner")
+    token = client.post("/auth/login", json={"email": "owner@hs.au", "password": "correct horse battery"}).json()
+    h = {"Authorization": f"Bearer {token['access_token']}"}
+    assert client.put("/t/integrations/pms", headers=h, json={"provider": "cliniko", "api_key": KEY}).status_code == 200
+    await Repos(db, "ten_api").services.insert_one({"_id": "svc_local", "name": "Whitening", "duration_min": 60,
+                                                    "active": True, "ai_bookable": True})
+    r = client.get("/t/slots", headers=h, params={"service_id": "svc_local", "day": "2026-11-24"})
+    assert r.status_code == 409, r.text
+    assert "can't be booked automatically" in r.json()["detail"]

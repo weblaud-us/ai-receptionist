@@ -1,85 +1,112 @@
 ---
+/** Prices come only from src/data/plans.ts (checked against the backend by npm run check:prices). */
 import Button from './Button.astro';
 import R from './R.astro';
+import SectionRule from './SectionRule.astro';
 import { ANNUAL_MONTHS_CHARGED, OVERAGE_PER_MIN, PLANS, TRIAL } from '../data/plans';
-import { both, money } from '../data/regions';
+import { REGION, both, money } from '../data/regions';
 import { LINKS } from '../data/site';
 
 const tax = { au: 'GST', uk: 'VAT' };
 const pms = { au: 'Cliniko connection', uk: 'diary connection' };
 const overage = both((r) => money(r, OVERAGE_PER_MIN[r], { cents: true }));
 const freeMonths = 12 - ANNUAL_MONTHS_CHARGED;
+/** "1 booked implant covers N+ months": the hero console's consult value over the plan price. */
+const anchor = (monthly: { au: number; uk: number }) =>
+  both((r) => `One booked implant case (about ${money(r, REGION[r].consoleValue)}) covers ${Math.floor(REGION[r].consoleValue / monthly[r])}+ months of the plan.`);
+const featureText = (f: string) =>
+  f === 'Books into Cliniko or Dentally' ? { au: 'Books into Cliniko (Dentally in early access)', uk: 'Books into Dentally (early access) or Cliniko' } : { au: f, uk: f };
 ---
-<section id="pricing" class="section" aria-labelledby="pricing-title">
-  <div class="container-page">
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
-      <h2 id="pricing-title" class="h2 text-ink lg:col-span-6">Clear pricing, in <R v={{ au: 'Australian dollars', uk: 'pounds sterling' }} /></h2>
-      <p class="lede lg:col-span-5 lg:col-start-8 lg:pt-2">A monthly retainer and a one-time onboarding fee. No per-booking commission, and you can cancel from the billing page.</p>
+<section id="pricing" data-tone="light" data-orb="light" class="tone-light bg-paper" aria-labelledby="pricing-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="07" label="Pricing">Monthly retainer</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+      <h2 id="pricing-title" class="h2 lg:col-span-8">A monthly retainer. <span class="hl">Priced in <R v={{ au: 'Australian dollars', uk: 'pounds sterling' }} />.</span></h2>
+      <p class="lede lg:col-span-4">Plus a one-time onboarding fee. No per-booking commission, and you can cancel from the billing page.</p>
     </div>
 
     <!-- Pilot -->
-    <div class="mt-14 grid grid-cols-1 gap-8 rounded-[var(--radius-console)] border border-teal/25 bg-teal-wash px-6 py-8 sm:px-10 lg:grid-cols-12 lg:items-center lg:gap-12">
-      <div class="lg:col-span-7">
-        <h3 class="font-display text-[1.875rem] font-normal leading-tight text-ink">Start with a {TRIAL.days}-day after-hours and lunch pilot</h3>
-        <p class="mt-3 max-w-[58ch] text-slate">
-          Cover lunch breaks and evenings for two weeks without touching daytime reception. Forwarding goes on your existing number, your team stays
-          on the front desk, and you see every call and booking in the dashboard.
+    <div class="card mt-[max(3rem,4.5vw)] grid grid-cols-1 gap-8 p-6 sm:p-8 lg:grid-cols-12 lg:items-center lg:gap-12 lg:p-10">
+      <div class="lg:col-span-6">
+        <p class="chip border-teal/30 bg-teal-wash text-teal">{TRIAL.days}-day after-hours pilot</p>
+        <h3 class="mt-4 text-[clamp(1.625rem,1.2rem+1.2vw,2.125rem)] leading-[1.15] tracking-[-0.04em]">Start with lunch breaks and evenings only.</h3>
+        <p class="mt-3 max-w-[56ch] text-[0.9375rem] text-slate">
+          Cover lunch and after hours for two weeks without touching daytime reception. Forwarding goes on your existing number, your team stays on the
+          front desk, and you see every call and booking in the dashboard.
         </p>
       </div>
-      <div class="lg:col-span-5">
-        <ul class="space-y-2 text-[0.9375rem] text-ink">
-          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>{TRIAL.days} days, with your first {TRIAL.minutes} minutes included</li>
-          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>Card required; the monthly plan starts on day {TRIAL.days + 1}</li>
-          <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden="true"></span>Cancel during the pilot and the monthly fee is never charged</li>
-        </ul>
+      <ul class="space-y-3 text-[0.9375rem] text-ink lg:col-span-4">
+        <li class="flex gap-3 border-t border-[var(--line)] pt-3"><svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#087259" stroke-width="1.5" /></svg>{TRIAL.days} days, with your first {TRIAL.minutes} minutes included</li>
+        <li class="flex gap-3 border-t border-[var(--line)] pt-3"><svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#087259" stroke-width="1.5" /></svg>Card required; the monthly plan starts on day {TRIAL.days + 1}</li>
+        <li class="flex gap-3 border-t border-[var(--line)] pt-3"><svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#087259" stroke-width="1.5" /></svg>Cancel during the pilot and the monthly fee is never charged</li>
+      </ul>
+      <div class="lg:col-span-2 lg:text-right">
+        <Button signup="dental_essentials" variant="ink" class="w-full lg:w-auto">Start pilot</Button>
       </div>
     </div>
 
     <!-- Plans -->
-    <div class="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+    <div class="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
       {
-        PLANS.map((plan) => (
-          <article
-            class:list={[
-              'flex flex-col rounded-[var(--radius-panel)] border bg-surface p-6 sm:p-8',
-              plan.recommended ? 'border-ink/25' : 'border-hairline',
-            ]}
-            aria-labelledby={`plan-${plan.key}`}
-          >
-            <div class="flex items-start justify-between gap-4">
-              <h3 id={`plan-${plan.key}`} class="text-xl text-ink">{plan.name}</h3>
-              {plan.recommended && <span class="rounded-full bg-ink px-2.5 py-1 text-[0.75rem] font-medium text-white">Recommended</span>}
-            </div>
-            <p class="mt-1.5 text-[0.9375rem] text-slate">{plan.tagline}</p>
+        PLANS.map((plan) =>
+          plan.recommended ? (
+            <article class="tone-dark card glow relative flex flex-col overflow-hidden !border-aqua/35 !bg-night p-6 sm:p-8" aria-labelledby={`plan-${plan.key}`}>
+              <span class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-aqua to-transparent" aria-hidden="true" />
+              <div class="flex items-start justify-between gap-4">
+                <h3 id={`plan-${plan.key}`} class="h3 !text-[1.5rem]">{plan.name}</h3>
+                <span class="rounded-[2px] bg-aqua px-2.5 py-1 text-[0.75rem] font-medium text-night">Recommended</span>
+              </div>
+              <p class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">{plan.tagline}</p>
 
-            <p class="mt-7 flex items-baseline gap-1.5">
-              <span class="font-display text-[3rem] leading-none text-ink tnum">
-                <R v={both((r) => money(r, plan.monthly[r]))} />
-              </span>
-              <span class="text-slate">a month</span>
-            </p>
-            <p class="mt-2 text-[0.9375rem] text-slate">
-              plus <span class="text-ink tnum"><R v={both((r) => money(r, plan.setupFee[r]))} /></span> one-time onboarding
-            </p>
+              <p class="mt-8 flex items-baseline gap-2">
+                <span class="text-[max(3rem,5vw)] leading-none tracking-[-0.05em] text-[var(--fg)] tnum" data-count><R v={both((r) => money(r, plan.monthly[r]))} /></span>
+                <span class="text-[var(--fg-2)]">a month</span>
+              </p>
+              <p class="mt-2 text-[0.9375rem] text-[var(--fg-2)]">
+                plus <span class="text-[var(--fg)] tnum"><R v={both((r) => money(r, plan.setupFee[r]))} /></span> one-time onboarding
+              </p>
+              <p class="mt-5 rounded-[2px] border border-champagne/30 bg-champagne/[0.07] px-3.5 py-2.5 text-[0.875rem] text-champagne"><R v={anchor(plan.monthly)} /></p>
 
-            <ul class="mt-7 space-y-2.5 border-t border-hairline pt-6 text-[0.9375rem] text-ink">
-              {plan.features.map((f) => (
-                <li class="flex gap-3">
-                  <svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                    <path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#0F766E" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  {f === 'Books into Cliniko or Dentally' ? <R v={{ au: 'Books into Cliniko (Dentally in early access)', uk: 'Books into Dentally (early access) or Cliniko' }} /> : f}
-                </li>
-              ))}
-            </ul>
+              <ul class="mt-7 space-y-2.5 border-t border-[var(--line)] pt-6 text-[0.9375rem] text-[var(--fg)]">
+                {plan.features.map((f) => (
+                  <li class="flex gap-3">
+                    <svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#34E8A6" stroke-width="1.5" /></svg>
+                    <R v={featureText(f)} />
+                  </li>
+                ))}
+              </ul>
+              <div class="mt-auto pt-8">
+                <Button signup={plan.key} size="lg" class="w-full">Start pilot on {plan.name.replace('Dental ', '')}</Button>
+              </div>
+            </article>
+          ) : (
+            <article class="card flex flex-col p-6 sm:p-8" aria-labelledby={`plan-${plan.key}`}>
+              <h3 id={`plan-${plan.key}`} class="h3 !text-[1.5rem]">{plan.name}</h3>
+              <p class="mt-1.5 text-[0.9375rem] text-slate">{plan.tagline}</p>
 
-            <div class="mt-auto pt-8">
-              <Button signup={plan.key} variant={plan.recommended ? 'primary' : 'secondary'} size="lg" class="w-full">
-                Start pilot on {plan.name.replace('Dental ', '')}
-              </Button>
-            </div>
-          </article>
-        ))
+              <p class="mt-8 flex items-baseline gap-2">
+                <span class="text-[max(3rem,5vw)] leading-none tracking-[-0.05em] text-ink tnum" data-count><R v={both((r) => money(r, plan.monthly[r]))} /></span>
+                <span class="text-slate">a month</span>
+              </p>
+              <p class="mt-2 text-[0.9375rem] text-slate">
+                plus <span class="text-ink tnum"><R v={both((r) => money(r, plan.setupFee[r]))} /></span> one-time onboarding
+              </p>
+              <p class="mt-5 rounded-[2px] border border-[var(--line)] bg-paper px-3.5 py-2.5 text-[0.875rem] text-champagne-ink"><R v={anchor(plan.monthly)} /></p>
+
+              <ul class="mt-7 space-y-2.5 border-t border-[var(--line)] pt-6 text-[0.9375rem] text-ink">
+                {plan.features.map((f) => (
+                  <li class="flex gap-3">
+                    <svg class="mt-[5px] shrink-0" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M2.5 7.5 5.5 10.5 11.5 3.5" fill="none" stroke="#087259" stroke-width="1.5" /></svg>
+                    <R v={featureText(f)} />
+                  </li>
+                ))}
+              </ul>
+              <div class="mt-auto pt-8">
+                <Button signup={plan.key} variant="outline" size="lg" class="w-full">Start pilot on {plan.name.replace('Dental ', '')}</Button>
+              </div>
+            </article>
+          ),
+        )
       }
     </div>
 

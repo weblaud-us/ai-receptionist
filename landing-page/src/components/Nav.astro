@@ -1,51 +1,67 @@
 ---
+/**
+ * Fixed header (Ordin: transparent, generous vw padding, glass once scrolled). nav.ts sets
+ * `data-tone` to match the band underneath and `data-scrolled` once the page moves.
+ */
 import Button from './Button.astro';
 import Logo from './Logo.astro';
 import RegionToggle from './RegionToggle.astro';
 import { LINKS, NAV } from '../data/site';
 ---
-<header class="sticky top-0 z-50 border-b border-hairline bg-porcelain/85 backdrop-blur-md supports-[not(backdrop-filter:blur(1px))]:bg-porcelain">
-  <div class="container-page flex h-[72px] items-center gap-6">
-    <a href="#top" class="shrink-0 rounded-sm" aria-label="Front page"><Logo /></a>
+<header id="site-header" data-tone="dark" class="site-header tone-dark fixed inset-x-0 top-0 z-50">
+  <div class="container-page flex items-center gap-6 py-[max(0.875rem,1.3vw)]">
+    <a href="#top" class="shrink-0" aria-label="Front page"><Logo /></a>
 
-    <nav aria-label="Main" class="hidden flex-1 justify-center lg:flex">
-      <ul class="flex items-center gap-7">
+    <nav aria-label="Main" class="hidden flex-1 justify-center xl:flex">
+      <ul class="flex items-center gap-[2.6vw]">
         {NAV.map((item) => (
-          <li><a href={item.href} class="text-[0.9375rem] text-slate transition-colors hover:text-ink">{item.label}</a></li>
+          <li>
+            <a href={item.href} class="inline-block py-1 text-[max(0.9375rem,1.05vw)] tracking-[-0.01em] text-[var(--fg)] transition-colors duration-300 hover:text-[var(--accent)]">
+              <span data-scramble>{item.label}</span>
+            </a>
+          </li>
         ))}
       </ul>
     </nav>
 
-    <div class="ml-auto flex items-center gap-2 sm:gap-3 lg:ml-0">
+    <div class="ml-auto flex items-center gap-2 sm:gap-3 xl:ml-0">
       <RegionToggle />
-      <a href={LINKS.login} class="hidden px-2 text-[0.9375rem] text-slate transition-colors hover:text-ink md:inline">Sign in</a>
+      <a href={LINKS.login} class="hidden px-2 py-1 md:inline-block text-[max(0.9375rem,1.05vw)] text-[var(--fg-2)] transition-colors duration-300 hover:text-[var(--fg)]"><span data-scramble>Sign in</span></a>
       <div class="hidden md:block"><Button signup="dental_essentials">Start 14-day pilot</Button></div>
       <button
         type="button"
         id="menu-button"
-        class="inline-flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] border border-hairline-strong bg-surface lg:hidden"
+        class="inline-flex aspect-square h-[clamp(2.75rem,5.6vh,3.5rem)] items-center justify-center border border-[var(--line-strong)] text-[var(--fg)] transition-colors duration-300 hover:border-[var(--fg-2)] xl:hidden"
         aria-expanded="false"
         aria-controls="mobile-menu"
       >
         <span class="sr-only">Menu</span>
-        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-          <path class="menu-open" d="M2 5h14M2 9h14M2 13h14"></path>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3">
+          <path class="menu-bars" d="M2 6h14M2 12h14"></path>
+          <path class="menu-x" d="M4 4l10 10M14 4 4 14"></path>
         </svg>
       </button>
     </div>
   </div>
 
-  <div id="mobile-menu" hidden class="border-t border-hairline bg-porcelain lg:hidden">
-    <div class="container-page flex flex-col gap-1 pb-8 pt-4">
+  <div id="mobile-menu" hidden class="mobile-menu xl:hidden" data-lenis-prevent>
+    <div class="container-page flex min-h-[calc(100dvh-80px)] flex-col pb-8 pt-4">
       <nav aria-label="Main, mobile">
         <ul class="flex flex-col">
-          {NAV.map((item) => (
-            <li><a href={item.href} data-menu-link class="block border-b border-hairline py-3.5 text-lg text-ink">{item.label}</a></li>
+          {NAV.map((item, i) => (
+            <li>
+              <a href={item.href} data-menu-link class="flex items-baseline gap-4 border-b border-[var(--line)] py-4 text-[max(1.75rem,6vw)] leading-tight tracking-[-0.05em] text-[var(--fg)]">
+                <span class="ord-label w-8 shrink-0 text-[var(--accent)]">{String(i + 1).padStart(2, '0')}</span>
+                {item.label}
+              </a>
+            </li>
           ))}
         </ul>
       </nav>
-      <a href={LINKS.login} class="mt-5 self-start text-[0.9375rem] text-slate underline underline-offset-4">Sign in</a>
-      <Button signup="dental_essentials" size="lg" class="mt-5 w-full">Start 14-day pilot</Button>
+      <div class="mt-auto pt-8">
+        <a href={LINKS.login} class="inline-block py-2 text-[0.9375rem] text-[var(--fg-2)] underline underline-offset-4">Sign in</a>
+        <Button signup="dental_essentials" size="lg" class="mt-4 w-full">Start 14-day pilot</Button>
+      </div>
     </div>
   </div>
   <p id="region-status" class="sr-only" role="status" aria-live="polite"></p>

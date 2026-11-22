@@ -261,8 +261,52 @@ class CallRecorder:
             logger.debug("Period usage refresh failed for %s", tenant_id, exc_info=True)
 
 
+_LEAD_LABEL = {"dental_emergency": "dental emergency", "cosmetic_consult": "cosmetic consultation enquiry"}
+_UPCOMING = ["pending", "confirmed"]
+_OPEN_LEADS = ["new", "contacted"]
+
+
+def _aware(dt: Any) -> Optional[datetime]:
+    if not isinstance(dt, datetime):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _ago(dt: Any, now: datetime) -> str:
+    dt = _aware(dt)
+    if dt is None:
+        return "recently"
+    days = (now.date() - dt.date()).days
+    if days <= 0:
+        return "earlier today"
+    if days == 1:
+        return "yesterday"
+    if days < 14:
+        return f"{days} days ago"
+    if days < 60:
+        return f"{days // 7} weeks ago"
+    return f"{days // 30} months ago"
+
+
+def _clip(text: Any, n: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _appt_line(a: dict[str, Any], tz: str, today: Any) -> str:
+    start = _aware(a.get("start"))
+    when = av.spoken(start, tz, today=today) if start else "?"
+    who = f" with {a['resource_name']}" if a.get("resource_name") else ""
+    return f"{a.get('service_name') or 'appointment'}{who}, {when}"
+
+
 async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
-    """Returning-caller context: name and a one-line history. Two round trips, in parallel."""
+    """Returning-caller context, looked up by caller ID before the agent's first reply.
+
+    Everything is fetched in one parallel round trip (bounded by the worker's timeout). Only what the
+    agent needs to sound informed goes in — never clinical free text: a phone may be shared, and the
+    agent must confirm who it's talking to before using any of it.
+    """
     if not state.caller_phone:
         return None
     tenant = state.profile.tenant
@@ -270,20 +314,50 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
     if tenant.vertical == "hotel":
         return await _load_hotel_guest(state, variants)
     repos = Repos(get_db(), tenant.id)
-    contact, appts = await asyncio.gather(
-        repos.contacts.find_one({"phone": {"$in": variants}}, {"name": 1, "notes": 1, "do_not_contact": 1}),
-        repos.appointments.find({"phone": {"$in": variants}}, sort=[("start", -1)], limit=3,
+    now = datetime.now(timezone.utc)
+    today = business_now(tenant.timezone, now).date()
+    by_phone = {"phone": {"$in": variants}}
+    contact, upcoming, past, calls, msgs, leads = await asyncio.gather(
+        repos.contacts.find_one(by_phone, {"name": 1, "notes": 1, "tags": 1, "do_not_contact": 1, "stats": 1}),
+        repos.appointments.find({**by_phone, "start": {"$gte": now}, "status": {"$in": _UPCOMING}},
+                                sort=[("start", 1)], limit=2,
                                 projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
+        repos.appointments.find({**by_phone, "start": {"$lt": now}}, sort=[("start", -1)], limit=3,
+                                projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
+        repos.calls.find({"caller_phone": {"$in": variants}, "call_id": {"$ne": state.call_id},
+                          "summary": {"$nin": [None, ""]}},
+                         sort=[("started_at", -1)], limit=2, projection={"summary": 1, "started_at": 1}),
+        repos.messages.find({"$or": [{"caller_phone": {"$in": variants}}, {"callback_number": {"$in": variants}}],
+                             "status": "new"}, sort=[("created_at", -1)], limit=2,
+                            projection={"message": 1, "created_at": 1}),
+        repos.leads.find({**by_phone, "status": {"$in": _OPEN_LEADS}}, sort=[("created_at", -1)], limit=2,
+                         projection={"kind": 1, "urgency": 1, "created_at": 1}),   # never the sealed problem text
     )
-    if not contact and not appts:
+    if not (contact or upcoming or past or calls or msgs or leads):
         return None
-    parts = []
-    for a in appts:
-        when = av.spoken(a["start"], tenant.timezone) if isinstance(a.get("start"), datetime) else "?"
-        who = f" with {a['resource_name']}" if a.get("resource_name") else ""
-        parts.append(f"{a.get('service_name') or 'appointment'}{who} {when} ({a.get('status')})")
-    logger.info("Returning caller %s (%d recent appointments)", mask_phone(state.caller_phone), len(appts))
-    return {"name": (contact or {}).get("name"), "summary": "; ".join(parts)}
+    contact = contact or {}
+    tz = tenant.timezone
+    enquiries = []
+    for lead in leads:
+        label = _LEAD_LABEL.get(lead.get("kind") or "", "job request" if lead.get("urgency") else "enquiry")
+        if lead.get("urgency"):
+            label += f" ({str(lead['urgency']).replace('_', ' ')})"
+        enquiries.append(f"{label}, {_ago(lead.get('created_at'), now)}")
+    history = {
+        "name": contact.get("name"),
+        "upcoming": [_appt_line(a, tz, today) for a in upcoming],
+        "past": [f"{_appt_line(a, tz, today)} ({a.get('status')})" for a in past],
+        "recent_calls": [f"{_ago(c.get('started_at'), now)}: {_clip(c.get('summary'), 200)}" for c in calls],
+        "open_messages": [f"{_ago(m.get('created_at'), now)}: {_clip(m.get('message'), 150)}" for m in msgs],
+        "open_enquiries": enquiries,
+        "notes": _clip(contact.get("notes"), 400),
+        "tags": [str(t) for t in (contact.get("tags") or [])][:8],
+        "do_not_contact": bool(contact.get("do_not_contact")),
+        "no_shows": int(((contact.get("stats") or {}).get("no_shows")) or 0),
+    }
+    logger.info("Returning caller %s (%d upcoming, %d past, %d calls, %d open messages)",
+                mask_phone(state.caller_phone), len(upcoming), len(past), len(calls), len(msgs))
+    return history
 
 
 async def _load_hotel_guest(state: CallState, variants: list[str]) -> Optional[dict[str, Any]]:

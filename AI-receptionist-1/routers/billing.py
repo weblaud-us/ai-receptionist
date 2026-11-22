@@ -27,7 +27,6 @@ POST  /platform/tenants/{id}/cancel     cancel now (data kept CANCEL_RETENTION_D
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import secrets
 from datetime import timedelta
@@ -261,17 +260,7 @@ class NumberOrderBody(BaseModel):
 
 
 async def _run_order_in_background(order_id: str) -> None:
-    from jobs.queue import enqueue
-
-    if await enqueue("provision_number", order_id, job_id=f"provision:{order_id}"):
-        return
-
-    async def run() -> None:
-        try:
-            await number_service.run_order(get_db(), order_id)
-        except Exception:
-            logger.warning("Number order %s failed (in-process run)", order_id)
-    asyncio.create_task(run())
+    await number_service.run_order_in_background(order_id)
 
 
 @billing_router.post("/numbers")

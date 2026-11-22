@@ -1,37 +1,25 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { toast } from 'sonner'
-import { Check, History, Inbox, Loader2, MessageCircle, Phone, PhoneCall, PhoneOutgoing, RotateCcw, Send } from 'lucide-react'
-import { EmptyState, ErrorBanner, Field, PageHeader, Pagination } from '@receptionist/shared/components/blocks'
+import { Check, History, Inbox, Loader2, Phone, PhoneCall, RotateCcw } from 'lucide-react'
+import { EmptyState, ErrorBanner, PageHeader, Pagination } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { Button } from '@receptionist/shared/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
-import { Input } from '@receptionist/shared/components/ui/input'
+import { Card, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
-import { Textarea } from '@receptionist/shared/components/ui/textarea'
-import { dateTime, duration, isValidPhone, normalizePhone, timeAgo, titleCase } from '@receptionist/shared/lib/format'
+import { dateTime, duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { OUTCOME_LABEL, zoneDateTime } from '@/lib/tenant-format'
 import { useRecordingUrl, useTenantCall, useTenantCalls } from '@/lib/tenant-hooks'
 import { OutcomeBadge } from './TenantOverview'
-import {
-  useCallerMessages,
-  useLiveCalls,
-  useOutboundCall,
-  useSendWhatsApp,
-  useSystem,
-  useUpdateMessage,
-} from '@/lib/hooks'
+import { useCallerMessages, useLiveCalls, useUpdateMessage } from '@/lib/hooks'
 
 export default function Calls() {
   const live = useLiveCalls()
-  const system = useSystem()
-  const integrations = system.data?.integrations
 
   return (
     <>
-      <PageHeader title="Calls & Messages" description="Watch calls as they happen, read transcripts, and reply to messages callers left." />
+      <PageHeader title="Calls & Messages" description="Watch calls as they happen, read transcripts, and follow up on messages callers left. To WhatsApp a patient, open them under Patients." />
 
       <div className="space-y-4">
         <Card className="gap-0 py-0">
@@ -92,100 +80,8 @@ export default function Calls() {
         <CallerMessages />
         <RecentCalls />
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* One-way announcement calls exist only on the old Twilio path (removed after the SIP cutover). */}
-          {system.data?.features?.legacy_twilio_voice === true && (
-            <OutboundCall enabled={integrations?.twilio_voice !== false} />
-          )}
-          <WhatsAppForm enabled={integrations?.meta_whatsapp !== false} />
-        </div>
       </div>
     </>
-  )
-}
-
-function OutboundCall({ enabled }: { enabled: boolean }) {
-  const call = useOutboundCall()
-  const [phone, setPhone] = useState('')
-  const [message, setMessage] = useState('')
-  const to = normalizePhone(phone)
-  const ok = isValidPhone(to)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <PhoneOutgoing className="size-4" /> Outbound call
-        </CardTitle>
-        <CardDescription>
-          Places a call that reads your message aloud. It is a one-way announcement — the guest cannot talk to the AI on this call.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!enabled && <ErrorBanner error={new Error('Twilio voice is not configured on the server (TWILIO_* settings).')} />}
-        <Field label="Phone (with country code)" hint={phone && !ok ? 'Use international format, e.g. +8801712345678' : undefined}>
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+8801712345678" aria-invalid={!!phone && !ok} />
-        </Field>
-        <Field label="Message" hint="Leave empty for the default greeting.">
-          <Textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Your booking is confirmed for tomorrow at 2 PM…" />
-        </Field>
-        <Button
-          disabled={!ok || !enabled || call.isPending}
-          onClick={() =>
-            call.mutate(
-              { to_phone: to, message },
-              { onSuccess: (r) => toast.success(`Calling ${to}… (${r.call_sid})`) },
-            )
-          }
-        >
-          {call.isPending ? <Loader2 className="animate-spin" /> : <PhoneOutgoing />} Place call
-        </Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-function WhatsAppForm({ enabled }: { enabled: boolean }) {
-  const send = useSendWhatsApp()
-  const [phone, setPhone] = useState('')
-  const [message, setMessage] = useState('')
-  const to = normalizePhone(phone)
-  const ok = isValidPhone(to)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MessageCircle className="size-4" /> WhatsApp message
-        </CardTitle>
-        <CardDescription>Free-form text. WhatsApp only delivers it within 24 hours of the guest's last message to the hotel.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!enabled && <ErrorBanner error={new Error('Meta WhatsApp is not configured on the server (META_WA_* settings).')} />}
-        <Field label="Phone (with country code)" hint={phone && !ok ? 'Use international format, e.g. +8801712345678' : undefined}>
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+8801712345678" aria-invalid={!!phone && !ok} />
-        </Field>
-        <Field label="Message">
-          <Textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} />
-        </Field>
-        <Button
-          disabled={!ok || !message.trim() || !enabled || send.isPending}
-          onClick={() =>
-            send.mutate(
-              { to, message: message.trim() },
-              {
-                onSuccess: () => {
-                  toast.success(`Message sent to ${to}`)
-                  setMessage('')
-                },
-              },
-            )
-          }
-        >
-          {send.isPending ? <Loader2 className="animate-spin" /> : <Send />} Send
-        </Button>
-      </CardContent>
-    </Card>
   )
 }
 

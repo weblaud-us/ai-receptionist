@@ -171,7 +171,7 @@ export function Field({
 }) {
   return (
     <div className={cn('space-y-1.5', className)}>
-      <label className="text-sm font-medium">{label}</label>
+      <label className="block text-sm font-medium">{label}</label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>

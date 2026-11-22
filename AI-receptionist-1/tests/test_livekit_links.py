@@ -56,3 +56,64 @@ def test_built_link_verifies():
 def test_send_whatsapp_endpoint_removed(client):
     r = client.post("/livekit/send-whatsapp", json={"to": "+15550001111", "message": "spam"})
     assert r.status_code in (404, 405)
+
+
+# ── The call page is branded for the link's business ─────────────────────────────────────────
+
+def _dental(name="Bilby Dental"):
+    from core.tenancy.models import AgentConfig, TenantConfig
+    return TenantConfig(_id="ten_dental1", name=name, slug="bilby", vertical="dental", locale="en-AU",
+                        agent=AgentConfig(name="Aria"))
+
+
+def test_call_page_shows_the_business_not_a_hotel(client, monkeypatch):
+    import routers.livekit as lk
+
+    async def fake(tid):
+        return _dental() if tid == "ten_dental1" else None
+    monkeypatch.setattr(lk, "resolve_by_id", fake)
+    exp, sig = sign_call_room("test_abc", tenant_id="ten_dental1")
+    page = client.get(f"/call/test_abc?exp={exp}&sig={sig}&t=ten_dental1").text
+    assert "Bilby Dental" in page and "Aria" in page and "🦷" in page and 'lang="en-AU"' in page
+    assert "Hotel" not in page and "🏨" not in page
+    assert '"problem": ""' in page
+
+
+def test_business_name_cannot_break_out_of_the_page(client, monkeypatch):
+    import routers.livekit as lk
+
+    async def fake(_tid):
+        return _dental('Evil</script><script>alert(1)</script>')
+    monkeypatch.setattr(lk, "resolve_by_id", fake)
+    exp, sig = sign_call_room("test_abc", tenant_id="ten_dental1")
+    page = client.get(f"/call/test_abc?exp={exp}&sig={sig}&t=ten_dental1").text
+    assert "<script>alert(1)" not in page
+
+
+def test_expired_link_page_says_so_and_names_no_business(client, monkeypatch):
+    import routers.livekit as lk
+
+    async def fake(_tid):
+        raise AssertionError("a bad link must not look up the business")
+    monkeypatch.setattr(lk, "resolve_by_id", fake)
+    exp, sig = sign_call_room("test_abc", now=time.time() - 3600, tenant_id="ten_dental1")
+    page = client.get(f"/call/test_abc?exp={exp}&sig={sig}&t=ten_dental1").text
+    assert "invalid or has expired" in page and "Bilby" not in page and "Hotel" not in page
+
+
+def test_call_page_sends_the_business_id_with_the_token_request():
+    """Dashboard test links are signed for a business (?t=…); without it the token check always failed."""
+    from routers.livekit import CALL_HTML_PATH
+    assert 'qs.set("t", link.get("t"))' in CALL_HTML_PATH.read_text(encoding="utf-8")
+
+
+def test_a_link_signed_for_a_business_gets_a_token_with_its_id(client, monkeypatch):
+    import routers.livekit as lk
+
+    async def fake(_tid):
+        return _dental()
+    monkeypatch.setattr(lk, "resolve_by_id", fake)
+    exp, sig = sign_call_room("test_abc", tenant_id="ten_dental1")
+    assert client.get(f"/livekit/token?room=test_abc&exp={exp}&sig={sig}").status_code == 403
+    r = client.get(f"/livekit/token?room=test_abc&exp={exp}&sig={sig}&t=ten_dental1")
+    assert r.status_code == 200 and r.json()["business_name"] == "Bilby Dental"

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { ArrowLeft, ArrowRight, Check, Loader2, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Globe, Loader2, Plus, Trash2 } from 'lucide-react'
 import { ErrorBanner, Field, PageHeader } from '@receptionist/shared/components/blocks'
-import { HoursEditor } from '@/components/app/hours-editor'
+import { HoursEditor } from '@receptionist/shared/components/hours-editor'
+import { SiteDraftReview } from '@receptionist/shared/components/site-draft-review'
+import { draftForApi, type SiteDraft } from '@receptionist/shared/lib/site-import'
 import { NumberPicker } from '@/components/app/number-picker'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { VoicePicker } from '@/components/app/voice-picker'
@@ -14,15 +16,15 @@ import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { isValidPhone, normalizePhone } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { TIMEZONES } from '@/lib/tenant-format'
-import { useOnboarding, useServiceMutations, useServices, useUpdateSettings, useVerticals } from '@/lib/tenant-hooks'
+import { useOnboarding, useServiceMutations, useServices, useSiteImport, useUpdateSettings, useVerticals } from '@/lib/tenant-hooks'
 import type { HoursEntry } from '@/lib/tenant-types'
 import { cn } from '@receptionist/shared/lib/utils'
 import { TestCallButton } from './Assistant'
 
-const STEPS = ['type', 'basics', 'hours', 'services', 'handoff', 'voice', 'test', 'number'] as const
+const STEPS = ['website', 'type', 'basics', 'hours', 'services', 'handoff', 'voice', 'test', 'number'] as const
 type Step = (typeof STEPS)[number]
 const TITLES: Record<Step, string> = {
-  type: 'What kind of business?', basics: 'The basics', hours: 'Opening hours', services: 'What callers can book',
+  website: 'Start from your website', type: 'What kind of business?', basics: 'The basics', hours: 'Opening hours', services: 'What callers can book',
   handoff: 'Transfers and alerts', voice: 'Voice and greeting', test: 'Call your assistant', number: 'Get a phone number',
 }
 
@@ -34,7 +36,7 @@ export default function Onboarding() {
   const save = useUpdateSettings()
   const steps = STEPS.filter((s) => s !== 'services' || ctx.vertical.uses_scheduling)
   const saved = ctx.tenant.onboarding?.step as Step | undefined
-  const [step, setStep] = useState<Step>(saved && steps.includes(saved) ? saved : 'type')
+  const [step, setStep] = useState<Step>(saved && steps.includes(saved) ? saved : 'website')
   const i = steps.indexOf(step)
   const busy = ob.template.isPending || ob.step.isPending || save.isPending
 
@@ -74,6 +76,7 @@ export default function Onboarding() {
       <Card className="max-w-3xl">
         <CardHeader><CardTitle>{TITLES[step]}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+          {step === 'website' && <WebsiteStep onNext={() => go(steps[i + 1])} />}
           {step === 'type' && <TypeStep onNext={() => go(steps[i + 1])} />}
           {step === 'basics' && <BasicsStep onSave={(changes) => save.mutate(changes, { onSuccess: () => go(steps[i + 1]) })} />}
           {step === 'hours' && <HoursStep onSave={(hours) => save.mutate({ hours }, { onSuccess: () => go(steps[i + 1]) })} />}
@@ -106,6 +109,62 @@ export default function Onboarding() {
           </div>
         </CardContent>
       </Card>
+    </>
+  )
+}
+
+/** Optional first step: read the business's website and pre-fill everything, for the owner to check. */
+function WebsiteStep({ onNext }: { onNext: () => void }) {
+  const ctx = useCtx()
+  const verticals = useVerticals()
+  const site = useSiteImport()
+  const [url, setUrl] = useState(ctx.tenant.website ?? '')
+  const [draft, setDraft] = useState<SiteDraft | null>(null)
+  if (!draft) {
+    return (
+      <>
+        <CardDescription>
+          Enter your website and we'll read it — your hours, services, prices and common questions — so you only check
+          and correct. Nothing is saved until you say so.
+        </CardDescription>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input value={url} placeholder="yourbusiness.com" disabled={site.fetch.isPending} onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && url.trim().length > 3) site.fetch.mutate(url, { onSuccess: (r) => setDraft(r.draft) }) }} />
+          <Button disabled={url.trim().length < 4 || site.fetch.isPending}
+            onClick={() => site.fetch.mutate(url, { onSuccess: (r) => setDraft(r.draft) })}>
+            {site.fetch.isPending ? <Loader2 className="animate-spin" /> : <Globe />} Read my website
+          </Button>
+        </div>
+        {site.fetch.isPending && <p className="text-sm text-muted-foreground">Reading your website. This usually takes 15–40 seconds…</p>}
+        <Button variant="link" className="px-0" disabled={site.fetch.isPending} onClick={onNext}>No website? Skip this step <ArrowRight /></Button>
+      </>
+    )
+  }
+  const save = () => {
+    const p = draft.profile
+    site.apply.mutate({
+      profile: { name: p.name, description: p.description, vertical: p.vertical, phone: p.phone, website: p.website,
+        address: p.address, timezone: p.timezone, country: p.country, currency: p.currency },
+      ...draftForApi(draft),
+    }, {
+      onSuccess: (r) => {
+        toast.success(r.added.services || r.added.knowledge
+          ? `Saved, with ${r.added.services} services and ${r.added.knowledge} answers from your website`
+          : 'Saved your details')
+        onNext()
+      },
+    })
+  }
+  return (
+    <>
+      <SiteDraftReview draft={draft} onChange={setDraft} showServices={draft.profile.vertical !== 'hotel'}
+        verticals={(verticals.data?.verticals ?? []).map((v) => ({ key: v.key, label: v.label }))} />
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={!draft.profile.name.trim() || site.apply.isPending} onClick={save}>
+          {site.apply.isPending && <Loader2 className="animate-spin" />} Use these details <ArrowRight />
+        </Button>
+        <Button variant="ghost" disabled={site.apply.isPending} onClick={() => setDraft(null)}>Try another address</Button>
+      </div>
     </>
   )
 }

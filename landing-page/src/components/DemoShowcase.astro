@@ -1,139 +1,193 @@
 ---
+/**
+ * Sample calls: a scenario selector driving a two-pane player. Left, the call (waveform, seek,
+ * timed transcript); right, the agent's tool calls in step with it. demo-player.ts runs it; without
+ * JavaScript every transcript and trace is still fully readable.
+ */
 import Regional from './Regional.astro';
+import SectionRule from './SectionRule.astro';
 import Wave from './Wave.astro';
 import { REGIONS } from '../data/regions';
 import { SCENARIOS, SPEAKER_LABEL } from '../data/scenarios';
 import { LINKS } from '../data/site';
 
-const fmt = (s: number) => `00:${String(s).padStart(2, '0')}`;
+const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const stamp = (s: number) => `+${s.toFixed(1).padStart(4, '0')}s`;
 const phone = LINKS.demoPhone;
 const hasLive = Boolean(LINKS.demoCall || phone.au || phone.uk);
 const tel = (n: string) => `tel:${n.replace(/[^\d+]/g, '')}`;
+const statusLabel = { ok: 'ok', blocked: 'blocked', alert: 'alert' } as const;
+const statusClass = {
+  ok: 'border-aqua/25 text-aqua',
+  blocked: 'border-champagne/35 text-champagne',
+  alert: 'border-alert-light/40 text-alert-light',
+} as const;
 ---
-<section id="demo" class="on-dark bg-night text-mist" aria-labelledby="demo-title">
-  <div class="container-page section">
-    <div class="grid grid-cols-1 gap-12 lg:grid-cols-12">
-      <div class="lg:col-span-4">
-        <h2 id="demo-title" class="h2 text-white">Hear it handle real dental calls</h2>
-        <p class="lede mt-4">Four calls practices worry about most. Each one follows the rules your team would: no guessing at prices, no diagnosis.</p>
+<section id="demo" data-tone="dark" data-orb="demo" class="tone-dark overflow-hidden" aria-labelledby="demo-title">
+  <div class="container-page section-pad">
+    <SectionRule idx="02" label="Sample calls">Four scenarios · one rulebook</SectionRule>
+    <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
+      <h2 id="demo-title" class="h2 lg:col-span-8">Hear it handle real dental calls. <span class="hl">Then see every step it took.</span></h2>
+      <p class="lede lg:col-span-4">
+        Four calls practices worry about most. Each follows the rules your team would: no guessing at prices, no diagnosis, emergencies first.
+      </p>
+    </div>
 
-        <div role="tablist" aria-label="Sample calls" aria-orientation="vertical" class="mt-10 flex flex-col border-t border-hairline-dark" data-demo-tabs>
-          {
-            SCENARIOS.map((s, i) => (
-              <button
-                type="button"
-                role="tab"
-                id={`tab-${s.id}`}
-                aria-controls={`panel-${s.id}`}
-                aria-selected={i === 0}
-                tabindex={i === 0 ? 0 : -1}
-                class="group flex items-center justify-between gap-4 border-b border-hairline-dark py-4 text-left text-[1.0625rem] text-mist-muted transition-colors hover:text-mist aria-selected:text-white"
-              >
-                <span>
-                  {s.tab.au === s.tab.uk ? s.tab.au : <Fragment><span class="r-au">{s.tab.au}</span><span class="r-uk">{s.tab.uk}</span></Fragment>}
-                </span>
-                <span class="h-1.5 w-1.5 rounded-full bg-teal-light opacity-0 transition-opacity group-aria-selected:opacity-100" aria-hidden="true" />
-              </button>
-            ))
-          }
-        </div>
-      </div>
+    <div role="tablist" aria-label="Sample calls" class="mt-[max(3rem,4.5vw)] grid grid-cols-2 border-l border-t border-[var(--line)] lg:grid-cols-4" data-demo-tabs>
+      {
+        SCENARIOS.map((s, i) => (
+          <button
+            type="button"
+            role="tab"
+            id={`tab-${s.id}`}
+            aria-controls={`panel-${s.id}`}
+            aria-selected={i === 0}
+            tabindex={i === 0 ? 0 : -1}
+            class="demo-tab group relative flex min-h-[max(8rem,11vw)] flex-col justify-between gap-6 border-b border-r border-[var(--line)] px-[max(1rem,1.3vw)] py-[max(1rem,1.2vw)] text-left transition-colors duration-500 hover:bg-[rgb(230_236_228/0.03)] aria-selected:bg-[rgb(52_232_166/0.06)]"
+          >
+            <span class="absolute inset-x-0 top-0 h-px bg-aqua opacity-0 transition-opacity duration-300 group-aria-selected:opacity-100" aria-hidden="true" />
+            <span class="flex items-center justify-between gap-2 ord-label">
+              <span class="text-[var(--fg-3)] transition-colors group-aria-selected:text-aqua-light">{String(i + 1).padStart(2, '0')}</span>
+              <span class="text-[var(--fg-3)] tnum">{fmt(s.script.au.duration)}</span>
+            </span>
+            <span class="t-24 text-[var(--fg-2)] transition-colors group-aria-selected:text-[var(--fg)]">
+              {s.tab.au === s.tab.uk ? s.tab.au : <Fragment><span class="r-au">{s.tab.au}</span><span class="r-uk">{s.tab.uk}</span></Fragment>}
+            </span>
+          </button>
+        ))
+      }
+    </div>
 
-      <div class="lg:col-span-8">
-        {
-          SCENARIOS.map((s, i) => (
-            <div role="tabpanel" id={`panel-${s.id}`} aria-labelledby={`tab-${s.id}`} hidden={i !== 0} tabindex="0" class="rounded-[var(--radius-console)] border border-hairline-dark bg-night-raised">
-              {REGIONS.map((r) => {
-                const sc = s.script[r];
-                return (
-                  <div class={`r-${r}`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>
-                    <div class="border-b border-hairline-dark px-5 py-5 sm:px-7">
-                      <h3 class="text-xl text-white">{sc.title}</h3>
-                      <p class="mt-1 text-[0.9375rem] text-mist-muted">{sc.context}</p>
-                      <div class="mt-5 flex items-center gap-4">
+    <div class="mt-[max(1rem,1.2vw)]">
+      {
+        SCENARIOS.map((s, i) => (
+          <div role="tabpanel" id={`panel-${s.id}`} aria-labelledby={`tab-${s.id}`} hidden={i !== 0} tabindex="0">
+            {REGIONS.map((r) => {
+              const sc = s.script[r];
+              const tid = `transcript-${s.id}-${r}`;
+              return (
+                <div class={`r-${r} card grid grid-cols-1 overflow-hidden lg:grid-cols-12`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>
+                  {/* Left pane: the call */}
+                  <div class="flex min-w-0 flex-col lg:col-span-7 lg:border-r lg:border-[var(--line)]">
+                    <div class="border-b border-[var(--line)] px-5 pb-5 pt-6 sm:px-7">
+                      <p class="ord-label text-[var(--fg-3)]">call_{s.id} · report</p>
+                      <h3 class="h3 mt-2">{sc.title}</h3>
+                      <p class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">{sc.context}</p>
+
+                      <div class="mt-6 flex items-center gap-4">
                         <button
                           type="button"
                           data-play
                           aria-label={`Play sample call: ${sc.title}`}
-                          class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-teal-light text-night transition-colors hover:bg-[#7ccac1]"
+                          class="btn btn-primary !h-12 !w-12 shrink-0 !justify-center !gap-0 !p-0"
                         >
                           <svg data-icon-play width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M3 1.5v11l9-5.5z" fill="currentColor" /></svg>
                           <svg data-icon-pause class="hidden" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M3 1.5h3v11H3zM8 1.5h3v11H8z" fill="currentColor" /></svg>
                         </button>
-                        <Wave class="h-7 min-w-0 flex-1 overflow-hidden text-teal-light/80" bars={40} seed={i * 13 + (r === 'uk' ? 5 : 1)} />
-                        <span class="shrink-0 font-mono text-[0.8125rem] text-mist-muted tnum" data-time>{fmt(0)} / {fmt(sc.duration)}</span>
+                        <div class="demo-scrub relative h-12 min-w-0 flex-1">
+                          <div class="well absolute inset-0 flex items-center overflow-hidden px-3" aria-hidden="true">
+                            <Wave class="h-8 w-full justify-between text-[var(--fg-3)]" bars={56} seed={i * 13 + (r === 'uk' ? 5 : 1)} />
+                            <div class="demo-progress absolute inset-0 flex items-center px-3">
+                              <Wave class="h-8 w-full justify-between text-aqua" bars={56} seed={i * 13 + (r === 'uk' ? 5 : 1)} />
+                            </div>
+                          </div>
+                          <input
+                            type="range"
+                            data-seek
+                            min="0"
+                            max={sc.duration}
+                            step="0.1"
+                            value="0"
+                            aria-label={`Seek: ${sc.title}`}
+                            aria-valuetext={`0 seconds of ${sc.duration}`}
+                            class="demo-seek absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          />
+                        </div>
+                        <span class="hidden shrink-0 font-mono text-[0.75rem] text-[var(--fg-2)] tnum sm:block" data-time>{fmt(0)} / {fmt(sc.duration)}</span>
                       </div>
                       {sc.audio ? (
                         // The full transcript is printed beside the player and linked with aria-describedby.
                         // eslint-disable-next-line astro/jsx-a11y/media-has-caption
-                        <audio preload="none" src={sc.audio} aria-describedby={`transcript-${s.id}-${r}`} />
-                      ) : <p class="mt-3 text-[0.8125rem] text-mist-muted">Simulated playback with a timed transcript. Recorded audio coming soon.</p>}
+                        <audio preload="none" src={sc.audio} aria-describedby={tid} />
+                      ) : (
+                        <p class="mt-3 text-[0.8125rem] text-[var(--fg-3)]">Simulated playback with a timed transcript. Recorded audio coming soon.</p>
+                      )}
                     </div>
 
-                    <ol id={`transcript-${s.id}-${r}`} class="space-y-4 px-5 py-6 sm:px-7" aria-label="Transcript">
+                    <ol id={tid} data-transcript class="max-h-[380px] flex-1 space-y-1 overflow-y-auto px-3 py-4 sm:px-5" aria-label="Transcript">
                       {sc.lines.map((l) => (
-                        <li class="line grid grid-cols-1 gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-4" data-at={l.at}>
-                          <span class:list={['text-[0.8125rem] font-medium', l.who === 'assistant' ? 'text-teal-light' : 'text-mist-muted']}>
+                        <li class="line grid grid-cols-1 gap-1 rounded-[2px] px-2 py-2.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-4 sm:px-2.5" data-at={l.at}>
+                          <span class:list={['text-[0.75rem] font-medium', l.who === 'assistant' ? 'text-aqua' : 'text-[var(--fg-2)]']}>
                             {SPEAKER_LABEL[l.who]}
+                            <span class="ml-1.5 font-mono font-normal text-[var(--fg-3)] tnum sm:ml-0 sm:block">{fmt(l.at)}</span>
                           </span>
-                          <span class:list={['line-text min-w-0 text-[0.9375rem] leading-relaxed text-mist/85 [overflow-wrap:anywhere]', l.who === 'system' && 'font-mono text-[0.8125rem]']}>{l.text}</span>
+                          <span class:list={['min-w-0 text-[0.9375rem] leading-relaxed text-[var(--fg)] [overflow-wrap:anywhere]', l.who === 'system' && 'font-mono text-[0.8125rem]']}>{l.text}</span>
                         </li>
                       ))}
                     </ol>
+                  </div>
 
-                    <div class="mx-5 mb-6 rounded-[var(--radius-panel)] border border-hairline-dark px-5 py-4 sm:mx-7">
-                      <p class="text-[0.8125rem] font-medium text-white">What happened</p>
-                      <ul class="mt-2 space-y-1.5">
+                  {/* Right pane: the agent trace */}
+                  <div class="flex min-w-0 flex-col border-t border-[var(--line)] bg-[rgb(0_0_0/0.22)] lg:col-span-5 lg:border-t-0">
+                    <div class="flex items-center justify-between border-b border-[var(--line)] px-5 py-4 sm:px-6">
+                      <p class="ord-label text-[var(--fg)]">Agent trace</p>
+                      <span class="chip" data-trace-state>idle</span>
+                    </div>
+                    <ol class="flex-1 space-y-0.5 px-2 py-3 font-mono text-[0.75rem] sm:px-3" aria-label="Agent tool calls">
+                      {sc.trace.map((t) => (
+                        <li class="trace-row grid grid-cols-[3.75rem_minmax(0,1fr)] gap-x-3 rounded-[2px] px-2 py-2" data-at={t.at}>
+                          <span class="text-[var(--fg-3)] tnum">{stamp(t.at)}</span>
+                          <span class="min-w-0">
+                            <span class="flex items-start justify-between gap-2">
+                              <span class="min-w-0 text-[var(--fg)] [overflow-wrap:anywhere]">{t.fn}</span>
+                              <span class:list={['shrink-0 rounded-[2px] border px-1.5 text-[0.625rem] leading-[18px]', statusClass[t.status]]}>{statusLabel[t.status]}</span>
+                            </span>
+                            <span class="mt-0.5 block text-[var(--fg-2)] [overflow-wrap:anywhere]">→ {t.result}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                    <div class="border-t border-[var(--line)] px-5 py-5 sm:px-6">
+                      <p class="ord-label text-[var(--fg-3)]">What happened</p>
+                      <ul class="mt-2.5 space-y-2">
                         {sc.outcome.map((o) => (
-                          <li class="flex gap-2.5 text-[0.9375rem] text-mist">
-                            <svg class="mt-[7px] shrink-0" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><circle cx="5" cy="5" r="4" fill="#5FB8AE" /></svg>
+                          <li class="flex gap-2.5 text-[0.875rem] leading-snug text-[var(--fg)]">
+                            <svg class="mt-[3px] shrink-0" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><rect width="12" height="12" rx="1.5" fill="rgb(52 232 166 / .16)" /><path d="M3.25 6.25 5.25 8.25 8.75 4" fill="none" stroke="#34E8A6" stroke-width="1.3" /></svg>
                             {o}
                           </li>
                         ))}
                       </ul>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          ))
-        }
-
-        {
-          hasLive && (
-            <div class="mt-6 flex flex-col gap-4 rounded-[var(--radius-panel)] border border-hairline-dark px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-              <div>
-                <p class="font-medium text-white">Try it yourself</p>
-                <p class="mt-1 text-[0.9375rem] text-mist-muted">Ring the demo practice and ask what your patients ask.</p>
-              </div>
-              <div class="flex flex-wrap items-center gap-3">
-                <Regional as="span" class="contents">
-                  <Fragment slot="au">
-                    {phone.au && (
-                      <a href={tel(phone.au)} class="inline-flex h-11 items-center rounded-[var(--radius-control)] bg-teal-light px-5 font-mono text-[0.9375rem] font-medium text-night tnum hover:bg-[#7ccac1]">
-                        {phone.au}
-                      </a>
-                    )}
-                  </Fragment>
-                  <Fragment slot="uk">
-                    {phone.uk && (
-                      <a href={tel(phone.uk)} class="inline-flex h-11 items-center rounded-[var(--radius-control)] bg-teal-light px-5 font-mono text-[0.9375rem] font-medium text-night tnum hover:bg-[#7ccac1]">
-                        {phone.uk}
-                      </a>
-                    )}
-                  </Fragment>
-                </Regional>
-                {LINKS.demoCall && (
-                  <a href={LINKS.demoCall} target="_blank" rel="noopener" class="inline-flex h-11 items-center rounded-[var(--radius-control)] border border-hairline-dark px-5 text-[0.9375rem] text-mist hover:border-mist/40">
-                    Call from your browser
-                  </a>
-                )}
-              </div>
-            </div>
-          )
-        }
-      </div>
+                </div>
+              );
+            })}
+          </div>
+        ))
+      }
     </div>
+
+    {
+      hasLive && (
+        <div class="mt-6 flex flex-col gap-4 border border-[var(--line)] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+          <div>
+            <p class="text-[var(--fg)]">Try it yourself</p>
+            <p class="mt-1 text-[0.9375rem] text-[var(--fg-2)]">Ring the demo practice and ask what your patients ask.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <Regional as="span" class="contents">
+              <Fragment slot="au">{phone.au && <a href={tel(phone.au)} class="btn btn-primary font-mono tnum">{phone.au}</a>}</Fragment>
+              <Fragment slot="uk">{phone.uk && <a href={tel(phone.uk)} class="btn btn-primary font-mono tnum">{phone.uk}</a>}</Fragment>
+            </Regional>
+            {LINKS.demoCall && (
+              <a href={LINKS.demoCall} target="_blank" rel="noopener" class="btn btn-outline">
+                Call from your browser
+              </a>
+            )}
+          </div>
+        </div>
+      )
+    }
   </div>
 </section>
 

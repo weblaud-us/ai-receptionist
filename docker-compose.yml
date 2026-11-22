@@ -56,10 +56,10 @@ services:
     <<: *backend
     command: python -m jobs
 
-  # The two frontends are npm workspaces (dashboard/, platform-dashboard/, packages/shared/), so
-  # they mount the repo root. Every node_modules folder is a volume: Linux binaries and the Vite
+  # The frontends are npm workspaces (dashboard/, platform-dashboard/, landing-page/, packages/shared/),
+  # so they mount the repo root. Every node_modules folder is a volume: Linux binaries and the Vite
   # cache stay apart from the host copy. frontend-deps installs once (only when package-lock.json
-  # changed), then both dev servers start from that install.
+  # changed), then every dev server starts from that install.
   frontend-deps:
     <<: &frontend
       image: node:22-alpine
@@ -79,6 +79,7 @@ services:
         - dashboard_app_node_modules:/repo/dashboard/node_modules
         - platform_app_node_modules:/repo/platform-dashboard/node_modules
         - shared_node_modules:/repo/packages/shared/node_modules
+        - landing_app_node_modules:/repo/landing-page/node_modules
     command:
       - sh
       - -c
@@ -101,6 +102,20 @@ services:
     <<: *frontend
     command: npm run dev -w platform-dashboard -- --host 0.0.0.0
     ports: ["5174:5174"]
+    depends_on:
+      frontend-deps: { condition: service_completed_successfully }
+
+  # Public landing page (Astro). Its signup and sign-in buttons point at the local client dashboard.
+  landing:
+    <<: *frontend
+    command: npm run dev -w landing-page -- --host 0.0.0.0 --port 4321
+    ports: ["4321:4321"]
+    environment:
+      VITE_SITE_URL: http://localhost:4321
+      VITE_DASHBOARD_SIGNUP_URL: http://localhost:5173/signup
+      VITE_DASHBOARD_LOGIN_URL: http://localhost:5173/login
+      DEV_WATCH_POLLING: "true"
+      ASTRO_TELEMETRY_DISABLED: "1"
     depends_on:
       frontend-deps: { condition: service_completed_successfully }
 
@@ -139,3 +154,4 @@ volumes:
   dashboard_app_node_modules:
   platform_app_node_modules:
   shared_node_modules:
+  landing_app_node_modules:

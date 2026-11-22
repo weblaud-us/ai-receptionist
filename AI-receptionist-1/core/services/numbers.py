@@ -74,6 +74,23 @@ def mode() -> str:
     return "off"
 
 
+def setup_problems() -> List[str]:
+    """What's missing for automatic numbers, in words the platform page can show. Empty = ready."""
+    problems: List[str] = []
+    if not settings.NUMBER_PROVISIONING_ENABLED:
+        problems.append("Set NUMBER_PROVISIONING_ENABLED=true")
+    if settings.telephony_provider == "twilio":
+        if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN):
+            problems.append("Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN")
+        if not settings.TWILIO_SIP_TRUNK_SID:
+            problems.append("Set TWILIO_SIP_TRUNK_SID (Twilio → Elastic SIP Trunking → your trunk → Trunk SID, TK…)")
+        if not settings.LIVEKIT_SIP_INBOUND_TRUNK_ID:
+            problems.append("Set LIVEKIT_SIP_INBOUND_TRUNK_ID (the ST_… id setup_telephony prints for the inbound trunk)")
+    elif settings.telephony_provider not in ("softphone",):
+        problems.append(f"Automatic numbers need Twilio (TELEPHONY_PROVIDER is {settings.telephony_provider})")
+    return problems
+
+
 def e164(raw: str) -> str:
     d = digits(raw)
     if len(d) < 8:
@@ -126,6 +143,57 @@ async def search(country: str, *, area_code: str = "", contains: str = "", limit
             for n in (resp.json() or {}).get("available_phone_numbers") or [] if n.get("phone_number")]
 
 
+async def list_owned(db: Any, *, limit: int = 500) -> List[Dict[str, Any]]:
+    """Numbers already in our Twilio account that no business is using (platform "use a number I own").
+    Development (fake mode): the softphone test numbers."""
+    m = mode()
+    if m == "off":
+        raise ProvisioningError("Number provisioning is off. Set NUMBER_PROVISIONING_ENABLED=true.", status=503)
+    rows: List[Dict[str, Any]] = []
+    if m == "fake":
+        rows = [{"e164": n, "friendly_name": "Softphone test number", "sid": "fake", "country": "US"}
+                for n in settings.softphone_numbers]
+    else:
+        url: Optional[str] = (f"{TWILIO_API.format(base=settings.twilio_api_base, sid=settings.TWILIO_ACCOUNT_SID)}"
+                              "/IncomingPhoneNumbers.json?PageSize=100")
+        while url and len(rows) < limit:
+            try:
+                resp = await _twilio("GET", url)
+            except httpx.HTTPError as exc:
+                raise ProvisioningError("Twilio is unavailable right now. Try again in a minute.", status=502) from exc
+            if resp.status_code >= 400:
+                raise ProvisioningError(f"Twilio number list failed (HTTP {resp.status_code})", status=502)
+            body = resp.json() or {}
+            for n in body.get("incoming_phone_numbers") or []:
+                if n.get("phone_number") and (n.get("capabilities") or {}).get("voice", True):
+                    rows.append({"e164": n["phone_number"], "friendly_name": n.get("friendly_name") or "",
+                                 "sid": n.get("sid"), "country": _country_of(n["phone_number"])})
+            nxt = body.get("next_page_uri")
+            url = f"{settings.twilio_api_base}{nxt}" if nxt else None
+    taken = {r["e164"] async for r in db.phone_numbers.find({"status": {"$ne": "released"}}, {"e164": 1})}
+    taken |= {o["e164"] async for o in db.number_orders.find({"status": {"$in": list(OPEN_STATUSES)}}, {"e164": 1})}
+    return [r for r in rows if r["e164"] not in taken][:limit]
+
+
+async def run_order_in_background(order_id: str) -> None:
+    """Queue the order on the job worker (retries with backoff); without Redis, run it in-process."""
+    import asyncio
+
+    from jobs.queue import enqueue
+
+    if await enqueue("provision_number", order_id, job_id=f"provision:{order_id}"):
+        return
+
+    async def run() -> None:
+        try:
+            from database.mongodb import get_db
+
+            await run_order(get_db(), order_id)
+        except Exception:
+            logger.warning("Number order %s failed (in-process run)", order_id)
+    asyncio.create_task(run())
+
+
 # ── Orders ───────────────────────────────────────────────────────────────────
 
 async def active_number_count(db: Any, tenant_id: str) -> int:
@@ -136,18 +204,25 @@ async def active_number_count(db: Any, tenant_id: str) -> int:
 
 
 async def start_order(db: Any, tenant: TenantConfig, number: str, *, requested_by: str,
-                      documents: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                      documents: Optional[Dict[str, Any]] = None, enforce_limits: bool = True,
+                      owned: bool = False) -> Dict[str, Any]:
+    """`enforce_limits=False` (platform admin): skip the subscription and plan-limit checks.
+    `owned=True`: a number already in our Twilio account — nothing is bought, and it never waits for a
+    regulatory bundle (it passed the carrier's checks when it was bought)."""
     if mode() == "off":
         raise ProvisioningError("Self-serve numbers aren't available yet.", status=503)
-    if tenant.status not in ("trial", "active"):
+    if enforce_limits and tenant.status not in ("trial", "active"):
         raise ProvisioningError("Your subscription needs to be active to add a number.", status=402)
     number = e164(number)
-    if tenant.limits.max_numbers and await active_number_count(db, tenant.id) >= tenant.limits.max_numbers:
+    if enforce_limits and tenant.limits.max_numbers and \
+            await active_number_count(db, tenant.id) >= tenant.limits.max_numbers:
         raise ProvisioningError(f"Your plan includes {tenant.limits.max_numbers} number(s). Upgrade to add more.",
                                 status=402)
     existing = await PhoneNumbersStore(db).get(number)
-    if existing and existing.get("status") != "released":
+    if existing and existing.get("status") != "released" and not (owned and existing.get("tenant_id") == tenant.id):
         raise ProvisioningError("That number is already in use.", status=409)
+    if owned and mode() == "twilio" and not await _find_owned(number):
+        raise ProvisioningError("That number isn't in your Twilio account.", status=404)
     if await db.number_orders.find_one({"e164": number, "status": {"$in": list(OPEN_STATUSES)}}):
         raise ProvisioningError("That number is already being set up.", status=409)
     country = _country_of(number)
@@ -155,9 +230,9 @@ async def start_order(db: Any, tenant: TenantConfig, number: str, *, requested_b
         "_id": new_id("nmo"), "tenant_id": tenant.id, "e164": number, "country": country,
         "provider": "fake" if mode() == "fake" else "twilio", "steps": {}, "attempts": 0,
         "requested_by": requested_by, "created_at": utcnow(), "updated_at": utcnow(), "error": "",
-        "status": "pending",
+        "status": "pending", "source": "owned" if owned else "buy",
     }
-    if order["provider"] == "twilio" and country not in settings.number_instant_countries:
+    if order["provider"] == "twilio" and not owned and country not in settings.number_instant_countries:
         order["status"] = "needs_documents"
         order["documents"] = documents or {}
         # AU (+61) and UK (+44) bundles name the registered business: ABN / Companies House number.
