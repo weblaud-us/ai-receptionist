@@ -5,6 +5,9 @@ environment. Releases are git tags; GitHub Actions builds the images and runs
 [deploy.sh](deploy.sh) on the host over SSH. This replaces the systemd setup in
 `AI-receptionist-1/DEPLOY_GUIDE.md` (kept only for the existing VPS until it is moved).
 
+For a **dev server** (one host that builds straight from a clone, no registry, no tags), see
+[Dev server](#dev-server-build-from-a-clone) at the end.
+
 ## One-time host setup
 
 On a fresh Ubuntu 24.04 host (≥ 4 vCPU / 8 GB for the first ~20 concurrent calls; in the same
@@ -158,3 +161,43 @@ Per stack:
 
 Speech and language models are processed where each vendor runs them (see the sub-processor list),
 whatever the stack's region. The region keeps stored data local, not every API call.
+
+## Dev server (build from a clone)
+
+[docker-compose.dev-server.yml](docker-compose.dev-server.yml) builds every image on the host from
+the checked-out code and runs one of each service behind Caddy with automatic HTTPS. MongoDB is
+Atlas. It is for development and demos, not customers' calls: one voice worker, so a rebuild
+waits for live calls to end before replacing it.
+
+**1. DNS.** Point DNS at the server: A records for `laudline.weblaud.com` and `*.laudline.weblaud.com` (or `api.`, `app.` and `admin.laudline.weblaud.com`).
+Open ports 80 and 443 (`sudo ufw allow 80,443/tcp`).
+
+**2. Clone and configure.**
+
+```bash
+git clone https://github.com/weblaud-us/ai-receptionist.git receptionist && cd receptionist
+cp deploy/dev-server.env.example deploy/dev-server.env       # domains + REDIS_PASSWORD
+cp AI-receptionist-1/.env.example AI-receptionist-1/.env     # Atlas MONGODB_URI, LiveKit, OpenAI, …
+```
+
+The compose file sets everything that depends on the domains itself (`APP_ENV=staging`,
+`REDIS_URL`, `WEBHOOK_BASE_URL`, `CALL_BASE_URL`, `DASHBOARD_URL`, `CORS_ORIGINS`,
+`COOKIE_SECURE`), so those lines in `AI-receptionist-1/.env` are ignored. Allow the server's IP in
+Atlas → Network Access.
+
+**3. Start.**
+
+```bash
+./deploy/dev-server.sh                 # git pull, build, start, status (first build ~10 min)
+./deploy/dev-server.sh logs api        # follow one service; no name = all
+./deploy/dev-server.sh ps | restart worker | down
+./deploy/dev-server.sh up --profile dialer                        # plus the outbound sales dialer
+./deploy/dev-server.sh exec api python -m scripts.seed_web_demo   # demo practices for the landing page
+```
+
+To update, push to `main` and run `./deploy/dev-server.sh` on the server again. Frontend
+`VITE_*` values are baked in at build time, so a change in `deploy/dev-server.env` needs that
+rebuild too.
+
+**4. Point the providers at it.** LiveKit, Twilio, Meta and Google OAuth callbacks use
+`https://<API_DOMAIN>/…`, the same paths as in [docs/TELEPHONY_TESTING.md](../docs/TELEPHONY_TESTING.md).

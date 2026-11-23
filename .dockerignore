@@ -10,3 +10,7 @@ docs
 *.md
 !packages/shared/README.md
 **/.astro
+# Secrets never go into an image
+**/.env
+**/.env.*
+!**/.env.example

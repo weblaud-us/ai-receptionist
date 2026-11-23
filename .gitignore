@@ -28,3 +28,6 @@ dist/
 Thumbs.db
 desktop.ini
 .idea/
+
+# Dev server settings (deploy/dev-server.env.example is the template)
+deploy/dev-server.env

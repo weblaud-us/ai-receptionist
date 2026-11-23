@@ -1,0 +1,162 @@
+# Dev server: the whole product built from this clone and run on one Docker host. Not production
+# (that is docker-compose.prod.yml, pre-built images and two of everything). Run it with:
+#
+#   ./deploy/dev-server.sh            # git pull, build, start, status
+#
+# which is shorthand for
+#
+#   docker compose -p receptionist-dev --env-file deploy/dev-server.env \
+#     -f deploy/docker-compose.dev-server.yml up -d --build --remove-orphans
+#
+#   Caddy (TLS, ports 80/443) ─┬─ api                  API_DOMAIN
+#                              ├─ dashboard            APP_DOMAIN
+#                              ├─ platform-dashboard   ADMIN_DOMAIN
+#                              └─ landing              SITE_DOMAIN
+#   worker      LiveKit voice worker (outbound connections only)
+#   jobs        reminders, digests, calendar sync, WhatsApp replies
+#   redis       shared state + job queue (password from dev-server.env)
+#   MongoDB is Atlas: MONGODB_URI in AI-receptionist-1/.env.
+#
+# Settings: deploy/dev-server.env (domains, Redis password, frontend build values; copy
+# dev-server.env.example) and AI-receptionist-1/.env (every backend secret; copy its .env.example).
+# The values below that depend on the domains override the backend .env.
+
+name: receptionist-dev
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+x-backend: &backend
+  env_file: ../AI-receptionist-1/.env
+  environment:
+    APP_ENV: staging
+    REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/dev-server.env}
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    WEBHOOK_BASE_URL: https://${API_DOMAIN:?set API_DOMAIN}
+    CALL_BASE_URL: https://${API_DOMAIN}
+    DASHBOARD_URL: https://${APP_DOMAIN:?set APP_DOMAIN}
+    CORS_ORIGINS: https://${APP_DOMAIN},https://${ADMIN_DOMAIN:?set ADMIN_DOMAIN},https://${SITE_DOMAIN:?set SITE_DOMAIN}
+    COOKIE_SECURE: "true"
+  restart: unless-stopped
+  depends_on:
+    redis: { condition: service_healthy }
+  logging: *logging
+
+x-frontend-args: &frontend-args
+  VITE_API_URL: https://${API_DOMAIN}
+  VITE_CLIENT_URL: https://${APP_DOMAIN}
+  VITE_PLATFORM_URL: https://${ADMIN_DOMAIN}
+  VITE_APP_ENV: staging
+  VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+
+services:
+  api:
+    <<: *backend
+    build: { context: ../AI-receptionist-1, target: api }
+    image: receptionist-dev-api
+    stop_grace_period: 30s
+    networks:
+      default:
+        aliases: [api-a, api-b]       # deploy/Caddyfile balances over two replicas; here both are this one
+
+  worker:
+    <<: *backend
+    build: { context: ../AI-receptionist-1, target: worker }
+    image: receptionist-dev-worker
+    # Longer than LIVEKIT_DRAIN_TIMEOUT (default 900 s), so a rebuild lets live calls finish.
+    stop_grace_period: 16m
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+
+  # Outbound sales dialer. Off unless asked for:  ./deploy/dev-server.sh up --profile dialer
+  sales-worker:
+    <<: *backend
+    image: receptionist-dev-worker
+    command: ["python", "-m", "agent.sales_worker", "start"]
+    stop_grace_period: 12m
+    profiles: ["dialer"]
+    depends_on:
+      redis: { condition: service_healthy }
+      worker: { condition: service_started }     # builds the shared worker image first
+
+  jobs:
+    <<: *backend
+    build: { context: ../AI-receptionist-1, target: jobs }
+    image: receptionist-dev-jobs
+    stop_grace_period: 60s
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+      args: *frontend-args
+    image: receptionist-dev-dashboard
+    environment:
+      CSP_CONNECT_SRC: https://${API_DOMAIN} ${CSP_EXTRA_CONNECT_SRC:-}
+    restart: unless-stopped
+    logging: *logging
+
+  platform-dashboard:
+    build:
+      context: ..
+      dockerfile: platform-dashboard/Dockerfile
+      args: *frontend-args
+    image: receptionist-dev-platform-dashboard
+    environment:
+      CSP_CONNECT_SRC: https://${API_DOMAIN} ${LIVEKIT_WSS_URL:-} ${CSP_EXTRA_CONNECT_SRC:-}
+    restart: unless-stopped
+    logging: *logging
+
+  landing:
+    build:
+      context: ..
+      dockerfile: landing-page/Dockerfile
+      args:
+        VITE_SITE_URL: https://${SITE_DOMAIN}
+        VITE_DASHBOARD_SIGNUP_URL: https://${APP_DOMAIN}/signup
+        VITE_DASHBOARD_LOGIN_URL: https://${APP_DOMAIN}/login
+        VITE_API_URL: https://${API_DOMAIN}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_WEB_DEMO: ${VITE_WEB_DEMO:-false}
+    image: receptionist-dev-landing
+    environment:
+      API_ORIGIN: https://${API_DOMAIN}
+      LIVEKIT_CSP: wss://*.livekit.cloud https://*.livekit.cloud ${LIVEKIT_WSS_URL:-}
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      SITE_DOMAIN: ${SITE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, dashboard, platform-dashboard, landing]
+    restart: unless-stopped
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction --requirepass \"$${REDIS_PASSWORD}\""]
+    volumes: [redis_data:/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:
