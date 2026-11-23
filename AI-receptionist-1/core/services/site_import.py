@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urldefrag, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
+import httpcore
 import httpx
 
 from config import settings
@@ -106,6 +107,52 @@ def _host_is_public(hostname: str) -> bool:
     except OSError:
         raise SiteImportError("That website couldn't be found")
     return all(_ip_is_public(str(info[4][0])) for info in infos)
+
+
+def resolve_public(host: str, port: int) -> str:
+    """Resolve once and return the address to connect to; every answer must be public."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        raise SiteImportError("That website couldn't be found")
+    ips = [str(info[4][0]) for info in infos]
+    if not ips or not all(_ip_is_public(ip) for ip in ips):
+        raise SiteImportError("That address isn't a public website")
+    return ips[0]
+
+
+class _PublicOnlyBackend(httpcore.AsyncNetworkBackend):
+    """Audit P0-02 (DNS rebinding): the name is resolved and checked here, at connect time, and the
+    socket goes to exactly that checked address. TLS still uses the hostname (SNI + certificate),
+    and so does the Host header. Nothing can swap the address between the check and the connect."""
+
+    def __init__(self) -> None:
+        self._inner = httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host: str, port: int, timeout: Optional[float] = None,
+                          local_address: Optional[str] = None, socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        if port not in (80, 443):
+            raise SiteImportError("That address isn't a public website")
+        ip = await asyncio.to_thread(resolve_public, host, port)
+        return await self._inner.connect_tcp(ip, port, timeout=timeout, local_address=local_address,
+                                             socket_options=socket_options)
+
+    async def connect_unix_socket(self, path: str, timeout: Optional[float] = None,
+                                  socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        raise SiteImportError("That address isn't a public website")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def pinned_transport() -> httpx.AsyncHTTPTransport:
+    """An httpx transport whose connections only ever reach checked public addresses. No proxy
+    (trust_env=False): a proxy would do its own DNS lookup."""
+    transport = httpx.AsyncHTTPTransport(trust_env=False, retries=0)
+    transport._pool = httpcore.AsyncConnectionPool(           # same pool httpx builds, plus our backend
+        ssl_context=httpx.create_ssl_context(), max_connections=10, max_keepalive_connections=5,
+        keepalive_expiry=5.0, network_backend=_PublicOnlyBackend())
+    return transport
 
 
 def _peer_ip(resp: httpx.Response) -> Optional[str]:
@@ -335,7 +382,8 @@ async def crawl(url: str, *, max_pages: int = MAX_PAGES,
                 client: Optional[httpx.AsyncClient] = None) -> Dict[str, Any]:
     """Homepage + the best same-site pages: {"url", "pages": [{"url", "text"}], "hints"}."""
     own = client is None
-    client = client or httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False,
+    client = client or httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False, trust_env=False,
+                                         transport=pinned_transport(),
                                          headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*;q=0.5"})
     try:
         try:

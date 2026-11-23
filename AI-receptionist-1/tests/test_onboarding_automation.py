@@ -334,3 +334,60 @@ async def test_a_rebound_address_is_refused_after_connecting(monkeypatch):
         with pytest.raises(si.SiteImportError, match="public website"):
             await si.fetch(client, "http://rebind.example/")
     assert not si._ip_is_public("::ffff:10.0.0.1") and si._ip_is_public("1.1.1.1")
+
+
+def test_every_dns_answer_must_be_public(monkeypatch):
+    import socket
+
+    from core.services import site_import as si
+
+    def answers(*ips):
+        return lambda host, port, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)) for ip in ips]
+
+    monkeypatch.setattr(socket, "getaddrinfo", answers("93.184.216.34", "10.0.0.5"))
+    with pytest.raises(si.SiteImportError, match="public website"):
+        si.resolve_public("mixed.example", 443)
+    monkeypatch.setattr(socket, "getaddrinfo", answers("93.184.216.34"))
+    assert si.resolve_public("ok.example", 443) == "93.184.216.34"
+
+
+async def test_the_connection_goes_to_the_address_that_was_checked(monkeypatch):
+    import socket
+
+    import httpx
+
+    from core.services import site_import as si
+
+    lookups = iter(["93.184.216.34", "127.0.0.1"])     # a rebinding DNS: public first, then internal
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(lookups), port))])
+    dialled = []
+
+    async def fake_connect(self, host, port, **kw):
+        dialled.append((host, port))
+        raise httpx.ConnectError("stop here")          # never touch the network in tests
+
+    monkeypatch.setattr(si.httpcore.AnyIOBackend, "connect_tcp", fake_connect)
+    async with httpx.AsyncClient(transport=si.pinned_transport()) as client:
+        with pytest.raises(Exception):
+            await client.get("https://rebind.example/")
+    assert dialled == [("93.184.216.34", 443)]          # one lookup, and that exact address was dialled
+
+
+async def test_a_name_that_resolves_inside_is_never_dialled(monkeypatch):
+    import socket
+
+    import httpx
+
+    from core.services import site_import as si
+
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port))])
+
+    async def no_connect(self, host, port, **kw):
+        raise AssertionError("an internal address must not be dialled")
+
+    monkeypatch.setattr(si.httpcore.AnyIOBackend, "connect_tcp", no_connect)
+    async with httpx.AsyncClient(transport=si.pinned_transport()) as client:
+        with pytest.raises(si.SiteImportError, match="public website"):
+            await client.get("http://metadata.example/")

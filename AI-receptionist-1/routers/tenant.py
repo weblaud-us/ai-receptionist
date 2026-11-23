@@ -838,6 +838,26 @@ class ReassignBody(BaseModel):
     resource_id: str = Field(min_length=1, max_length=60)
 
 
+@tenant_router.get("/appointments/{appointment_id}/free-practitioners")
+async def free_practitioners(appointment_id: str, tp: TenantPrincipal = Depends(_staff)):
+    """Who else could see this patient at the same time (the "Change dentist" dialog)."""
+    svc = _scheduler(tp)
+    repos = tp.repos()
+    appt = await repos.appointments.find_one({"appointment_id": appointment_id})
+    if not appt or appt.get("status") not in ("pending", "confirmed"):
+        raise _not_found("No active appointment with that ID")
+    start = appt["start"] if appt["start"].tzinfo else appt["start"].replace(tzinfo=timezone.utc)
+    service = await repos.services.find_one({"_id": appt["service_id"]}) if appt.get("service_id") else None
+    try:
+        slots = await svc.find_slots(service=service, day_from=start.astimezone(svc.zone).date(),
+                                     requested_at=start, limit=200, fresh=True)
+    except SchedulingError as e:
+        raise HTTPException(503, e.message)
+    free = {s.resource_id for s in slots if s.start == start and s.resource_id not in ("any", appt.get("resource_id"))}
+    rows = [r for r in await svc.resources() if r["_id"] in free]
+    return {"practitioners": [{"_id": r["_id"], "name": r.get("name")} for r in rows]}
+
+
 @tenant_router.post("/appointments/{appointment_id}/reassign")
 async def reassign_appointment(appointment_id: str, body: ReassignBody, request: Request,
                                tp: TenantPrincipal = Depends(_staff)):

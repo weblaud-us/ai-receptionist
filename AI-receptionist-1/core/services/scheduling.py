@@ -17,6 +17,8 @@ to take a callback instead.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -24,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
+from config import settings
 from core.integrations import webhooks
 from core.repositories import Repos
 from core.repositories.base import utcnow
@@ -47,6 +50,13 @@ PMS_UNMAPPED = ("That appointment type can't be booked automatically. Take their
                 "team can book it.")
 PMS_NOT_SYNCED = ("No dentists are set up for online booking yet. Take their details with take_message so the team "
                   "can book it.")
+
+
+def dob_fingerprint(tenant_id: str, dob: date) -> str:
+    """HMAC of tenant + date of birth. Proves a caller knows the DOB without storing it: a database
+    leak alone doesn't reveal it (the key is SECRET_KEY, not in the database)."""
+    msg = f"dob:{tenant_id}:{dob.isoformat()}".encode()
+    return hmac.new(settings.SECRET_KEY.encode(), msg, hashlib.sha256).hexdigest()
 
 
 class SchedulingError(Exception):
@@ -274,7 +284,8 @@ class SchedulingService:
         date_of_birth: Optional[date] = None,
     ) -> Dict[str, Any]:
         """Claim the slot (unique index) then write the appointment. Raises SchedulingError('taken').
-        `date_of_birth` only goes to the practice diary, to find the right patient; it isn't stored here."""
+        `date_of_birth` goes to the practice diary to find the right patient. Here only a keyed
+        fingerprint is kept (`dob_check`), so a later caller can prove it's their booking (SEC-06)."""
         now = _aware(now or utcnow())
         start = _aware(start)
         sched = self.tenant.scheduling
@@ -285,9 +296,6 @@ class SchedulingService:
 
         # Is the slot still inside opening hours / not blocked? Re-run availability for that day.
         resource_doc = None
-        if resource_id == "any" and self.pms is not None:
-            # "any" only exists for a business with no staff model; a PMS booking needs a real dentist.
-            raise SchedulingError("unknown_resource", "Pick one of the times from check_availability, then book it.")
         if resource_id != "any":
             resource_doc = await self.repos.resources.find_one({"_id": resource_id})
             if not resource_doc:
@@ -296,6 +304,16 @@ class SchedulingService:
         open_slots = await self.find_slots(service=service, day_from=local_day, resource=resource_doc,
                                            requested_at=start, now=now, limit=50, party_size=party_size,
                                            fresh=True)
+        if resource_id == "any":
+            # "Anyone" (P0-16): resolve to a real person free at that start BEFORE locking, so the lock
+            # covers their chair. Plain "any" remains only for a business with no staff at all, and a
+            # practice diary (PMS) always needs a real dentist.
+            match = next((s for s in open_slots if s.start == start and s.resource_id != "any"), None)
+            if match is not None:
+                resource_id = match.resource_id
+                resource_doc = await self.repos.resources.find_one({"_id": resource_id})
+            elif self.pms is not None:
+                raise SchedulingError("unknown_resource", "Pick one of the times from check_availability, then book it.")
         if not any(s.start == start and s.resource_id == resource_id for s in open_slots):
             await self._diary_changed()             # what we offered was stale: don't offer it again
             raise SchedulingError("taken", "That time was just taken or isn't available. Offer the next slot.")
@@ -342,6 +360,7 @@ class SchedulingService:
             "party_size": party_size,
             "price": (service or {}).get("price"),
             "external": external,
+            "dob_check": dob_fingerprint(self.tenant.id, date_of_birth) if date_of_birth else None,
             "reminders": {"day_before": {"sent_at": None}, "hour_before": {"sent_at": None}},
             "cancelled_at": None, "cancel_reason": None,
         }
@@ -414,13 +433,20 @@ class SchedulingService:
             except Exception as e:                          # noqa: BLE001 — any failure: retry, then alert
                 logger.error("PMS rollback attempt %d failed for %s (%s): %s", attempt, self.tenant.id,
                              external.get("id"), e)
+        from core.services import pms_compensation
+
+        try:     # keep trying in the background for a day (tenant jobs tick); the owner is told now
+            await pms_compensation.record(self.repos, external, start)
+        except Exception:
+            logger.error("Couldn't queue the PMS rollback for %s", self.tenant.id, exc_info=True)
         from core.notifications import fire, notify_owner
 
         when = start.astimezone(self.zone).strftime("%a %d %b %H:%M")
         fire(notify_owner(self.tenant, "on_new_booking",
                           f"Please check your practice diary: a booking for {name} ({phone}) at {when} was made in "
-                          f"{self.pms.name} but couldn't be saved here, and undoing it failed. Cancel it in "
-                          f"{self.pms.name} if the patient doesn't expect it.",
+                          f"{self.pms.name} but couldn't be saved here, and undoing it failed. We'll keep trying to "
+                          f"cancel it for 24 hours; cancel it in {self.pms.name} yourself if the patient "
+                          "doesn't expect it.",
                           subject="Diary needs checking", urgent=True))
 
     @staticmethod

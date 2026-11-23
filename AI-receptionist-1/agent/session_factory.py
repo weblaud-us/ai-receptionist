@@ -188,6 +188,24 @@ def turn_detector_version() -> str:
     return settings.VOICE_TURN_DETECTOR
 
 
+def interruption_mode() -> str:
+    """The adaptive barge-in model (stops for "wait", talks through "mm-hmm") runs on LiveKit's
+    inference service and needs the key pair. Without it, say so once and use plain VAD barge-in
+    rather than let LiveKit drop the setting quietly. LiveKit also falls back to VAD by itself if
+    the detector fails mid-call."""
+    mode = settings.VOICE_INTERRUPT_MODE
+    if mode == "adaptive" and not (settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET):
+        global _warned_interrupt
+        if not _warned_interrupt:
+            logger.warning("VOICE_INTERRUPT_MODE=adaptive needs LIVEKIT_API_KEY/SECRET; using VAD barge-in")
+            _warned_interrupt = True
+        return "vad"
+    return mode
+
+
+_warned_interrupt = False
+
+
 def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
     return {
         # Explicit version: left unset, `start` on our own hosts silently uses the smaller local model.
@@ -198,7 +216,7 @@ def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
         "interruption": {
             "enabled": True,
             # Explicit too: unset, production mode turns the adaptive detector off.
-            "mode": settings.VOICE_INTERRUPT_MODE,
+            "mode": interruption_mode(),
             "min_duration": settings.VOICE_INTERRUPT_MIN_DURATION,   # a short "wait!" must stop the agent
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,  # a cough or "mm-hmm" doesn't kill the sentence

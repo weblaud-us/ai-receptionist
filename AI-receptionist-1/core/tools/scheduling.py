@@ -5,10 +5,15 @@ return spoken-friendly text plus machine IDs the model passes back.
 
 Ownership (Task 0.9): a caller may see, move or cancel an appointment only if it was booked
 with their phone number, or they give its ID and the name on it.
+
+Dental practices (health records, audit SEC-06): caller ID alone is never enough, because families
+share one phone. The caller gives the patient's name and date of birth; it must match the booking's
+DOB fingerprint, or, for a booking made without a DOB, the name plus the number it was booked with.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -16,8 +21,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from core.notifications import fire, notify_contact, notify_owner
 from core.phone import phones_match
 from core.services import availability as av
-from core.services.scheduling import SchedulingError, SchedulingService
-from core.tools.hotel import _names_match, phone_variants
+from core.services.scheduling import ACTIVE_STATUSES, SchedulingError, SchedulingService, dob_fingerprint
+from core.tools.hotel import _names_match, _norm_name, phone_variants
 
 if TYPE_CHECKING:
     from core.tools.registry import ToolContext
@@ -53,15 +58,20 @@ SCHEDULING_TOOLS: List[Dict[str, Any]] = [
         }, "required": ["slot_id", "name"]}}},
     {"type": "function", "function": {
         "name": "find_my_appointments",
-        "description": "The caller's upcoming appointments, found by their phone number.",
-        "parameters": {"type": "object", "properties": {}}}},
+        "description": ("The caller's upcoming appointments. Found by their phone number; dental practices "
+                        "also need the patient's name and date of birth."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Patient's full name (dental: always ask)"},
+            "date_of_birth": {"type": "string", "description": "YYYY-MM-DD. Dental: always ask, to confirm it's their booking"},
+        }}}},
     {"type": "function", "function": {
         "name": "reschedule_appointment",
         "description": "Move an appointment to a new slot_id from check_availability. Confirm the new time first.",
         "parameters": {"type": "object", "properties": {
             "appointment_id": {"type": "string"},
             "new_slot_id": {"type": "string"},
-            "name": {"type": "string", "description": "Name on the appointment, when calling from another number"},
+            "name": {"type": "string", "description": "Patient's full name (dental: always ask)"},
+            "date_of_birth": {"type": "string", "description": "YYYY-MM-DD. Dental: always ask, to confirm it's their booking"},
         }, "required": ["appointment_id", "new_slot_id"]}}},
     {"type": "function", "function": {
         "name": "cancel_appointment",
@@ -69,13 +79,42 @@ SCHEDULING_TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {
             "appointment_id": {"type": "string"},
             "reason": {"type": "string"},
-            "name": {"type": "string", "description": "Name on the appointment, when calling from another number"},
+            "name": {"type": "string", "description": "Patient's full name (dental: always ask)"},
+            "date_of_birth": {"type": "string", "description": "YYYY-MM-DD. Dental: always ask, to confirm it's their booking"},
         }, "required": ["appointment_id"]}}},
 ]
 
 NOT_FOUND = {"error": "not_found",
              "message": ("No matching appointment. If they're calling from a different number, ask for "
                          "the appointment ID and the name it was booked under.")}
+
+
+IDENTITY_REQUIRED = {"error": "identity_required",
+                     "message": "First ask for the patient's full name and date of birth, then try again with both."}
+NOT_VERIFIED = {"error": "not_verified",
+                "message": ("No booking matches those details. Don't guess, and don't say what is or isn't on file. "
+                            "Offer take_message so the front desk can call them back.")}
+
+
+def _identity_checked(ctx: "ToolContext") -> bool:
+    """Health practices protect bookings with name + DOB, not caller ID (SEC-06)."""
+    return ctx.tenant_cfg.vertical == "dental"
+
+
+def _name_overlaps(a: Optional[str], b: Optional[str]) -> bool:
+    """First name or surname in common: speech-to-text often hears 'Jon' for 'John' on one of them."""
+    ta = {w for w in _norm_name(a) if len(w) > 1}
+    return bool(ta & {w for w in _norm_name(b) if len(w) > 1})
+
+
+def _verified(appt: Dict[str, Any], ctx: "ToolContext", name: Optional[str], dob: Optional[date]) -> bool:
+    if not _name_overlaps(appt.get("name"), name):
+        return False
+    fp = appt.get("dob_check")
+    if fp:
+        return dob is not None and hmac.compare_digest(str(fp), dob_fingerprint(ctx.tenant_cfg.id, dob))
+    # Booked without a DOB (from the dashboard, or before DOBs were asked): name + the booking's number.
+    return bool(ctx.caller_phone) and phones_match(appt.get("phone"), ctx.caller_phone)
 
 
 def _service(ctx: "ToolContext") -> SchedulingService:
@@ -209,6 +248,8 @@ async def book_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str
 
 
 async def find_my_appointments(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
+    if _identity_checked(ctx):
+        return await _find_verified(ctx, args)
     if not ctx.caller_phone:
         return {"found": False, "message": "The caller's number is unknown. Ask for the appointment ID and the name on it."}
     svc = _service(ctx)
@@ -220,17 +261,55 @@ async def find_my_appointments(ctx: "ToolContext", args: Dict[str, Any]) -> Dict
         {"appointment_id": a["appointment_id"], "say": _say(svc, a, today), "status": a.get("status")} for a in rows]}
 
 
-async def _load_owned(ctx: "ToolContext", appointment_id: str, name: Optional[str]) -> Optional[Dict[str, Any]]:
+async def _find_verified(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(args.get("name") or "").strip()
+    if not name or not args.get("date_of_birth"):
+        return IDENTITY_REQUIRED
+    dob = _parse_dob(args.get("date_of_birth"), ctx.now)
+    if dob is None:
+        return {"error": "bad_date_of_birth", "message": "Ask for the date of birth again: day, month and year."}
+    svc = _service(ctx)
+    now = ctx.now or utcnow()
+    rows = await ctx.repos().appointments.find(      # booked with this DOB, from any number (a parent's phone)
+        {"dob_check": dob_fingerprint(ctx.tenant_cfg.id, dob), "status": {"$in": ACTIVE_STATUSES},
+         "end": {"$gte": now}},
+        sort=[("start", 1)], limit=5)
+    if ctx.caller_phone:
+        rows += await svc.upcoming_for_phone(phone_variants(ctx.caller_phone), now=ctx.now)
+    seen: set = set()
+    mine = []
+    for a in sorted(rows, key=lambda r: r["start"]):
+        if a["appointment_id"] not in seen and _verified(a, ctx, name, dob):
+            seen.add(a["appointment_id"])
+            mine.append(a)
+    if not mine:
+        return {"found": False, **NOT_VERIFIED}
+    today = svc.local_today(ctx.now)
+    return {"found": True, "appointments": [
+        {"appointment_id": a["appointment_id"], "say": _say(svc, a, today), "status": a.get("status")}
+        for a in mine[:5]]}
+
+
+async def _load_owned(ctx: "ToolContext", appointment_id: str, name: Optional[str],
+                      dob_raw: Any = None) -> Optional[Dict[str, Any]]:
     appt = await ctx.repos().appointments.find_one({"appointment_id": (appointment_id or "").strip()})
-    if not appt or not _owned(appt, ctx, name):
+    if not appt:
         return None
-    return appt
+    if _identity_checked(ctx):
+        return appt if _verified(appt, ctx, name, _parse_dob(dob_raw, ctx.now)) else None
+    return appt if _owned(appt, ctx, name) else None
+
+
+def _not_owned(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
+    if not _identity_checked(ctx):
+        return NOT_FOUND
+    return IDENTITY_REQUIRED if not (args.get("name") and args.get("date_of_birth")) else NOT_VERIFIED
 
 
 async def reschedule_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
-    appt = await _load_owned(ctx, str(args.get("appointment_id") or ""), args.get("name"))
+    appt = await _load_owned(ctx, str(args.get("appointment_id") or ""), args.get("name"), args.get("date_of_birth"))
     if not appt:
-        return NOT_FOUND
+        return _not_owned(ctx, args)
     decoded = av.decode_slot_id(str(args.get("new_slot_id") or ""))
     if not decoded:
         return {"error": "bad_slot", "message": "Use a slot_id from check_availability."}
@@ -251,9 +330,9 @@ async def reschedule_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Di
 
 
 async def cancel_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
-    appt = await _load_owned(ctx, str(args.get("appointment_id") or ""), args.get("name"))
+    appt = await _load_owned(ctx, str(args.get("appointment_id") or ""), args.get("name"), args.get("date_of_birth"))
     if not appt:
-        return NOT_FOUND
+        return _not_owned(ctx, args)
     svc = _service(ctx)
     try:
         await svc.cancel(appt["appointment_id"], args.get("reason"))

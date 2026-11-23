@@ -39,7 +39,7 @@ from config import settings
 from core import ratelimit
 from core.auth import Principal, TenantPrincipal, require_platform_admin, require_tenant
 from core.billing import costs, lifecycle, plans, stripe_api, usage
-from core.integrations.sms import send_sms
+from core.integrations import voice_code
 from core.phone import digits, mask_phone
 from core.repositories.repos import UsersStore
 from core.services import numbers as number_service
@@ -187,6 +187,17 @@ class CodeBody(BaseModel):
     code: str = Field(min_length=6, max_length=6)
 
 
+def _number_in_country(number: str, country: str) -> bool:
+    """By calling code, not number validity: +1 counts for US and CA, +44 for GB. Unparseable = no."""
+    try:
+        import phonenumbers
+
+        regions = phonenumbers.region_codes_for_country_code(phonenumbers.parse(number, None).country_code)
+        return country in regions
+    except Exception:
+        return False
+
+
 @billing_router.post("/billing/verify-phone")
 async def verify_phone_start(body: PhoneBody, tp: TenantPrincipal = Depends(_owner_any)):
     number = "+" + digits(body.phone)
@@ -194,8 +205,15 @@ async def verify_phone_start(body: PhoneBody, tp: TenantPrincipal = Depends(_own
         raise HTTPException(422, "Use international format, e.g. +15125551234")
     if any(number.startswith(p) for p in settings.transfer_blocked_prefixes):
         raise HTTPException(422, "Premium-rate numbers can't be used")
+    # The code is read out by a (paid) phone call, so keep it to the practice's own country and a
+    # few calls a day per number: this endpoint must not become a way to ring strangers.
+    country = (tp.tenant.country or "").upper()
+    if country and not _number_in_country(number, country):
+        raise HTTPException(422, "Use a phone number in the same country as your business.")
     if not await ratelimit.allow_fixed(f"phoneverify:{tp.tenant.id}", 5, 3600):
         raise HTTPException(429, "Too many codes requested. Try again in an hour.")
+    if not await ratelimit.allow_fixed(f"phoneverify:to:{digits(number)}", 3, 86400):
+        raise HTTPException(429, "That number has had several codes today. Try again tomorrow.")
     code = f"{secrets.randbelow(1_000_000):06d}"
     from core.auth.tokens import token_hash
     from core.billing.usage import utcnow
@@ -204,15 +222,16 @@ async def verify_phone_start(body: PhoneBody, tp: TenantPrincipal = Depends(_own
         {"_id": tp.tenant.id},
         {"_id": tp.tenant.id, "phone": number, "code_hash": token_hash(code), "tries": 0,
          "expires_at": utcnow() + PHONE_CODE_TTL}, upsert=True)
-    sent = await send_sms(number, f"Your verification code is {code}. It expires in 10 minutes.")
+    # No SMS on this platform: we call the number and read the code out (core/integrations/voice_code).
+    sent = bool(await voice_code.call_with_code(number, code, country))
     if not sent and not settings.is_development:
-        if not settings.SMS_ENABLED:
-            raise HTTPException(503, "Verifying a number by text isn't available. Contact support and we'll "
-                                     "verify your transfer number for you, or choose a paid plan.")
-        raise HTTPException(502, "We couldn't text that number. Check it and try again.")
-    out: Dict[str, Any] = {"success": True, "sent": sent}
+        if not voice_code.configured():
+            raise HTTPException(503, "Verifying a number by phone call isn't available yet. Contact support and "
+                                     "we'll verify your transfer number for you.")
+        raise HTTPException(502, "We couldn't call that number. Check it and try again.")
+    out: Dict[str, Any] = {"success": True, "sent": sent, "channel": "call"}
     if not sent:
-        out["dev_code"] = code               # development without Twilio SMS only
+        out["dev_code"] = code               # development without Twilio voice only
     return out
 
 

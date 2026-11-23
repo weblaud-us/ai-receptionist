@@ -183,6 +183,23 @@ async def test_reassigning_keeps_the_time_and_needs_the_new_dentist_free(db, cli
                        headers=dentist).status_code == 403
 
 
+async def test_change_dentist_lists_only_dentists_free_at_that_time(db, client):
+    await _practice(db)
+    owner = _login(client, "owner@hs.au")
+    start = _today_at(11) + timedelta(days=2)
+    a = client.post("/t/appointments", json={"service_id": "svc_chk", "resource_id": "res_ava", "start": start.isoformat(),
+                                             "name": "Sam Smith", "phone": "+61412345678"}, headers=owner).json()
+    free = client.get(f"/t/appointments/{a['appointment_id']}/free-practitioners", headers=owner).json()
+    assert [p["_id"] for p in free["practitioners"]] == ["res_ben"]          # never the current dentist
+    client.post("/t/appointments", json={"service_id": "svc_chk", "resource_id": "res_ben", "start": start.isoformat(),
+                                         "name": "Lee Kim", "phone": "+61400000003"}, headers=owner)
+    busy = client.get(f"/t/appointments/{a['appointment_id']}/free-practitioners", headers=owner).json()
+    assert busy["practitioners"] == []
+    dentist = _login(client, "ava@hs.au")
+    assert client.get(f"/t/appointments/{a['appointment_id']}/free-practitioners",
+                      headers=dentist).status_code == 403
+
+
 async def test_a_regular_dentist_is_validated(db, client):
     t = await _practice(db)
     await Repos(db, t.id).contacts.insert_one({"_id": "con_1", "phone": "+61412345678", "name": "Mia"})

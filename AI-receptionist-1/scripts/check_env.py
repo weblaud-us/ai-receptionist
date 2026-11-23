@@ -108,6 +108,19 @@ def check_voice_choice() -> Result:
     return "OK", f"order: {order}" + ("" if len(usable) > 1 else " (no fallback configured)")
 
 
+def check_turn_taking() -> Result:
+    """The cloud turn detector (v1) and adaptive barge-in both run on LiveKit inference."""
+    keys = bool(settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET)
+    wants = [name for name, on in (("VOICE_TURN_DETECTOR=v1", settings.VOICE_TURN_DETECTOR == "v1"),
+                                   ("VOICE_INTERRUPT_MODE=adaptive", settings.VOICE_INTERRUPT_MODE == "adaptive")) if on]
+    if wants and not keys:
+        return "WARN", (f"{' and '.join(wants)} need LIVEKIT_API_KEY/SECRET; falling back to the local "
+                        "v1-mini detector and VAD barge-in")
+    return "OK", (f"turn detector {settings.VOICE_TURN_DETECTOR}, barge-in {settings.VOICE_INTERRUPT_MODE} "
+                  f"(min {settings.VOICE_INTERRUPT_MIN_DURATION}s), preemptive TTS "
+                  f"{'on' if settings.VOICE_PREEMPTIVE_TTS else 'off'}")
+
+
 async def check_kokoro(c: httpx.AsyncClient) -> Result:
     if not settings.KOKORO_BASE_URL:
         return "WARN", "off (KOKORO_BASE_URL empty). Optional local fallback voice, see docs/TELEPHONY_TESTING.md 0.5"
@@ -328,6 +341,7 @@ async def main() -> None:
             ("Cartesia", check_cartesia(c)),
             ("Kokoro", check_kokoro(c)),
             ("Voice", check_voice_choice),
+            ("Turn-taking", check_turn_taking),
             ("LiveKit", check_livekit()),
         ]
         if settings.telephony_provider == "softphone":

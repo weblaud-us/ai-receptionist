@@ -224,11 +224,17 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
     await db.schedule_exceptions.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("start", ASCENDING)]),
     ])
+    await db.pms_compensations.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("next_at", ASCENDING)]),
+    ])
     await db.appointments.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("start", ASCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("resource_id", ASCENDING), ("start", ASCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("contact_id", ASCENDING), ("start", DESCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING), ("start", DESCENDING)]),
+        # Callers find their own booking by name + date of birth (SEC-06); only booked-with-DOB rows.
+        IndexModel([("tenant_id", ASCENDING), ("dob_check", ASCENDING), ("start", ASCENDING)],
+                   partialFilterExpression={"dob_check": {"$type": "string"}}, name="tenant_dob_check_start"),
         IndexModel([("appointment_id", ASCENDING)], unique=True),
     ])
     # One document per resource per 5-minute block. The UNIQUE index is what makes double booking

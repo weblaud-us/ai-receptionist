@@ -461,6 +461,59 @@ async def test_a_failed_rollback_alerts_the_practice(db, pms, monkeypatch):
     assert alerts and "Sam Smith" in alerts[0][0] and alerts[0][1].get("urgent") is True
 
 
+async def _failed_rollback(db, pms, monkeypatch):
+    t = await _connected(db, pms)
+    slot = (await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24",
+                                                        "resource": "Ava Nguyen"}))["slots"][0]["slot_id"]
+    from core import notifications
+    from core.repositories.repos import AppointmentsRepo
+
+    alerts: list = []
+
+    async def boom(self, doc):
+        raise RuntimeError("disk full")
+
+    async def owner(t, event, text, **kw):
+        alerts.append(text)
+        return {}
+
+    monkeypatch.setattr(AppointmentsRepo, "insert_one", boom)
+    monkeypatch.setattr(notifications, "notify_owner", owner)
+    pms.fail[("PATCH", "/v1/individual_appointments")] = lambda r: httpx.Response(503)
+    await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith", "service": "Implant consultation"})
+    await drain()
+    return t, alerts
+
+
+async def test_a_failed_rollback_keeps_being_retried_until_the_pms_cancels_it(db, pms, monkeypatch):
+    from core.services import pms_compensation
+
+    t, _ = await _failed_rollback(db, pms, monkeypatch)
+    rows = await Repos(db, t.id).pms_compensations.find({})
+    assert len(rows) == 1 and rows[0]["status"] == "pending" and rows[0]["external_id"] == "ia1"
+    assert "Sam" not in json.dumps(rows[0], default=str)              # no patient details kept
+    assert await pms_compensation.run_due(t, NOW) == 0                 # not due yet
+    aware = pms_compensation._aware
+    later = aware(rows[0]["next_at"]) + timedelta(seconds=1)
+    assert await pms_compensation.run_due(t, later) == 0               # PMS still down: try again later
+    row = await Repos(db, t.id).pms_compensations.find_one({})
+    assert row["status"] == "pending" and row["attempts"] == 1 and aware(row["next_at"]) > later
+    pms.fail.clear()                                                   # the diary is back
+    assert await pms_compensation.run_due(t, aware(row["next_at"]) + timedelta(seconds=1)) == 1
+    assert pms.cancelled == ["ia1"]
+    assert (await Repos(db, t.id).pms_compensations.find_one({}))["status"] == "done"
+
+
+async def test_a_rollback_that_never_succeeds_gives_up_after_a_day_and_alerts_again(db, pms, monkeypatch):
+    from core.services import pms_compensation
+
+    t, alerts = await _failed_rollback(db, pms, monkeypatch)
+    row = await Repos(db, t.id).pms_compensations.find_one({})
+    await pms_compensation.run_due(t, pms_compensation._aware(row["created_at"]) + timedelta(hours=25))
+    assert (await Repos(db, t.id).pms_compensations.find_one({}))["status"] == "gave_up"
+    assert len(alerts) == 2 and "ia1" in alerts[1] and "Action needed" in alerts[1]
+
+
 async def test_orphaned_locks_from_a_crash_are_freed_but_live_ones_are_not(db, pms):
     from core.services import availability as av
     from core.services.scheduling import SchedulingService
@@ -508,7 +561,8 @@ async def test_a_pms_booking_never_locks_any(db, pms):
     with pytest.raises(SchedulingError) as e:
         await svc.book(resource_id="any", start=datetime.fromisoformat(SLOT_1.replace("Z", "+00:00")),
                        service=None, name="Sam", phone=CALLER, now=NOW)
-    assert e.value.code == "unknown_resource"
+    assert e.value.code in ("unknown_resource", "pms_unmapped")
+    assert not await Repos(db, t.id).slot_locks.find({"resource_id": "any"})
 
 
 # ── Plan A1.3: availability cache and diary request budget ─────────────────

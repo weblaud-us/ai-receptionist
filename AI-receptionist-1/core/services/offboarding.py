@@ -38,7 +38,7 @@ TENANT_COLLECTIONS = (
     "knowledge_items", "unanswered_questions", "leads", "conversations", "usage_events", "audit_log", "rooms",
     "bookings", "room_nights", "guests", "call_sessions", "invites", "number_orders",
     # Phase 6/7. `dsr_requests` is kept on purpose: proof that requests were handled (masked, no personal data).
-    "consent_events", "owner_feedback", "call_reviews", "eval_cases", "wa_outbox",
+    "consent_events", "owner_feedback", "call_reviews", "eval_cases", "wa_outbox", "pms_compensations",
 )
 EXPORT_KINDS = ("calls.csv", "transcripts.json", "contacts.csv", "appointments.csv", "appointments.ics",
                 "messages.csv")
@@ -156,7 +156,7 @@ async def export_zip(db: Any, tenant: TenantConfig) -> bytes:
         for kind in EXPORT_KINDS:
             z.writestr(kind, await export_one(db, tenant, kind))
         z.writestr("README.txt", f"Data export for {tenant.name}, {utcnow():%Y-%m-%d %H:%M} UTC.\n"
-                                 "Recordings are not included; download them from each call in the dashboard.\n")
+                                 "Calls are not recorded; call transcripts are in transcripts.json.\n")
     return buf.getvalue()
 
 

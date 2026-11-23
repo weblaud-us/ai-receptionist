@@ -104,6 +104,10 @@ class BookingsRepo(TenantRepo):
     collection = "bookings"
 
 
+class PmsCompensationsRepo(TenantRepo):
+    collection = "pms_compensations"       # PMS bookings we must still cancel (audit P0-09); see pms_compensation.py
+
+
 class WaOutboxRepo(TenantRepo):
     collection = "wa_outbox"               # WhatsApp messages staff sent from the dashboard + Meta delivery status
 
@@ -134,6 +138,7 @@ class Repos:
         self.rooms = RoomsRepo(db, tenant_id)
         self.bookings = BookingsRepo(db, tenant_id)
         self.wa_outbox = WaOutboxRepo(db, tenant_id)
+        self.pms_compensations = PmsCompensationsRepo(db, tenant_id)
 
 
 # ── Platform-level collections (not tenant-scoped) ───────────────────────────

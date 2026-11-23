@@ -81,7 +81,7 @@ def test_missed_call_texts_and_sms_recall_are_off():
     assert reactivation.available(t) is False
 
 
-async def test_phone_verification_says_why_it_cant_text(db, client, monkeypatch):
+async def _owner_headers(client, monkeypatch, tid: str) -> dict:
     from core.auth import service as auth_service
     from core.services.tenant_admin import create_tenant
 
@@ -89,14 +89,62 @@ async def test_phone_verification_says_why_it_cant_text(db, client, monkeypatch)
     monkeypatch.setattr(settings, "APP_ENV", "staging")
     auth_service.reset_rate_limits()
     await create_tenant(name="Harbour Smiles", vertical="dental", country="AU", timezone="Australia/Sydney",
-                        tenant_id="ten_sms_api", seed_template=False)
-    await auth_service.create_user(email="o@hs.au", password="correct horse battery", tenant_id="ten_sms_api",
-                                   role="owner")
-    token = client.post("/auth/login", json={"email": "o@hs.au", "password": "correct horse battery"}).json()
-    h = {"Authorization": f"Bearer {token['access_token']}"}
+                        tenant_id=tid, seed_template=False)
+    email = f"o@{tid}.au"
+    await auth_service.create_user(email=email, password="correct horse battery", tenant_id=tid, role="owner")
+    token = client.post("/auth/login", json={"email": email, "password": "correct horse battery"}).json()
+    return {"Authorization": f"Bearer {token['access_token']}"}
+
+
+async def test_phone_verification_without_twilio_voice_says_contact_support(db, client, monkeypatch):
+    monkeypatch.setattr(settings, "TWILIO_PHONE_NUMBER", "")
+    h = await _owner_headers(client, monkeypatch, "ten_sms_api")
     assert client.get("/t/context", headers=h).json()["sms_enabled"] is False
     r = client.post("/t/billing/verify-phone", json={"phone": "+61412345678"}, headers=h)
     assert r.status_code == 503 and "Contact support" in r.json()["detail"]
+
+
+async def test_phone_verification_calls_and_reads_the_code_instead_of_texting(db, client, monkeypatch):
+    monkeypatch.setattr(settings, "TWILIO_PHONE_NUMBER", "+61290000000")
+    posted: list = []
+    real_post = httpx.AsyncClient.post
+
+    async def fake_post(self, url, *a, **kw):
+        if "twilio.com" not in str(url):
+            return await real_post(self, url, *a, **kw)
+        posted.append((str(url), kw.get("data") or {}))
+        return httpx.Response(201, json={"sid": "CA123"}, request=httpx.Request("POST", str(url)))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    h = await _owner_headers(client, monkeypatch, "ten_sms_call")
+    r = client.post("/t/billing/verify-phone", json={"phone": "+61412345679"}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["channel"] == "call" and "dev_code" not in r.json()
+    assert len(posted) == 1 and posted[0][0].endswith("/Calls.json")     # a call, never Messages.json
+    data = posted[0][1]
+    assert data["To"] == "+61412345679" and data["From"] == "+61290000000" and data["Record"] == "false"
+    assert "en-AU" in data["Twiml"] and data["Twiml"].count("verification code") == 1
+
+
+async def test_phone_verification_only_calls_numbers_in_the_practice_country(db, client, monkeypatch):
+    monkeypatch.setattr(settings, "TWILIO_PHONE_NUMBER", "+61290000000")
+    real_post = httpx.AsyncClient.post
+
+    async def no_twilio(self, url, *a, **kw):
+        assert "twilio.com" not in str(url), "a number abroad must be refused before any call"
+        return await real_post(self, url, *a, **kw)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", no_twilio)
+    h = await _owner_headers(client, monkeypatch, "ten_sms_abroad")
+    r = client.post("/t/billing/verify-phone", json={"phone": "+447700900123"}, headers=h)
+    assert r.status_code == 422 and "same country" in r.json()["detail"]
+
+
+def test_the_code_is_read_digit_by_digit_twice():
+    from core.integrations import voice_code
+
+    xml = voice_code.twiml("402917", "GB")
+    assert xml.count("4, 0, 2, 9, 1, 7") == 2 and "en-GB" in xml and xml.startswith("<Response>")
 
 
 async def test_an_owner_who_chose_sms_gets_email_instead(monkeypatch):

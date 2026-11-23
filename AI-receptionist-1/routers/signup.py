@@ -59,7 +59,7 @@ class SignupBody(BaseModel):
     name: str = Field(default="", max_length=120)
     business_name: str = Field(min_length=2, max_length=120)
     vertical: str = "generic"
-    country: str = Field(default="US", min_length=2, max_length=2)
+    country: str = Field(min_length=2, max_length=2)        # required: decides emergency number, tax and plans
     timezone: str = Field(default="America/New_York", max_length=64)
     plan: str = "growth"
     interval: Literal["month", "year"] = "month"

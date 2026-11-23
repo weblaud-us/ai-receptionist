@@ -604,7 +604,7 @@ class TenantConfig(BaseModel):
     vertical: str = "generic"
     status: TenantStatus = "trial"
     region: Literal["us", "eu", "me"] = "us"
-    country: str = "US"
+    country: str = ""                       # ISO-2; empty = unknown (emergency line falls back to 112, never 911)
     timezone: str = "UTC"
     locale: str = "en-US"
     currency: str = "USD"

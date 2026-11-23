@@ -1,6 +1,6 @@
 """
-Presigned S3 GET URLs (AWS Signature Version 4, query-string auth) — for call recording playback
-in the dashboard (Roadmap Task 2.10). Standard library only; works with AWS S3 and S3-compatible
+Presigned S3 URLs (AWS Signature Version 4, query-string auth). Calls are no longer recorded; this is
+kept only to delete audio recorded before that change (retention purge and offboarding). Standard library only; works with AWS S3 and S3-compatible
 stores (R2, MinIO) via RECORDING_S3_ENDPOINT (path-style URLs).
 """
 
