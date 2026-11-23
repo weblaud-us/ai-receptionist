@@ -28,5 +28,10 @@ updates:
     schedule: { interval: monthly }
 
   - package-ecosystem: docker
-    directories: [/AI-receptionist-1, /dashboard, /platform-dashboard]
+    directories: [/AI-receptionist-1, /dashboard, /platform-dashboard, /landing-page]
+    schedule: { interval: monthly }
+
+  # Images and actions are pinned by digest / commit SHA (audit QA-06); these PRs keep the pins fresh.
+  - package-ecosystem: docker-compose
+    directory: /deploy
     schedule: { interval: monthly }

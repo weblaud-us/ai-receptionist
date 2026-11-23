@@ -9,7 +9,7 @@
 # CMD and HEALTHCHECK. They run as a non-root user and read every setting from the environment.
 # Local stack: ../docker-compose.yml. Production stack: ../deploy/docker-compose.prod.yml.
 
-FROM python:3.12-slim AS base
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS base
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

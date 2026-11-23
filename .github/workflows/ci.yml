@@ -17,8 +17,8 @@ jobs:
       run:
         working-directory: AI-receptionist-1
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
       - name: Install (exact versions from uv.lock)
@@ -56,11 +56,20 @@ jobs:
     env:
       EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
       - run: uv sync --frozen
+      # Audit QA-05: on main the evals must actually run. Pull requests from forks have no secrets
+      # and still skip them; a push to main without the key fails instead of passing silently.
+      - name: Evals key present on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if [ -z "$EVAL_OPENAI_API_KEY" ]; then
+            echo "::error::EVAL_OPENAI_API_KEY is not set: the voice agent evals would be skipped on main"
+            exit 1
+          fi
       - name: Voice agent evals
         run: uv run --frozen pytest tests/evals -rs
         env:
@@ -79,8 +88,8 @@ jobs:
   frontends:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -102,8 +111,8 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - name: Python dependencies (pip-audit against uv.lock)
         working-directory: AI-receptionist-1
         run: |
@@ -113,7 +122,7 @@ jobs:
           #   below 1.45. Fixed by moving the livekit-agents family to 1.8.7+, which needs openai>=3.
           uvx pip-audit -r /tmp/requirements.txt --require-hashes --disable-pip \
             --ignore-vuln CVE-2026-114603 --ignore-vuln CVE-2026-126360
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Frontend dependencies (npm audit, production only, all workspaces)
@@ -129,8 +138,8 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Backend images (api, jobs, worker share their layers)
         run: |
           for target in api jobs worker; do

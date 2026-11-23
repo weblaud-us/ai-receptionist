@@ -14,7 +14,7 @@
 # Serve it on its own origin (e.g. admin.example.com). Put an IP allow-list or SSO proxy in front
 # too, on top of the platform-admin + two-factor checks the API already enforces.
 
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
@@ -35,7 +35,7 @@ RUN test -n "$VITE_CLIENT_URL" || (echo "VITE_CLIENT_URL build arg is required" 
 RUN test -n "$VITE_PLATFORM_URL" || (echo "VITE_PLATFORM_URL build arg is required" >&2; exit 1)
 RUN npm run build -w platform-dashboard
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
 # Origins the app may call: the API, the LiveKit wss:// URL (the sales dialer listens in and takes
 # over calls in the browser) and the Sentry ingest host if VITE_SENTRY_DSN is set.
 ENV CSP_CONNECT_SRC=""

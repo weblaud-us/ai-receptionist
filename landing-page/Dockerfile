@@ -11,7 +11,7 @@
 # environment. Hosting on Cloudflare Pages / Netlify instead? `npm run build -w landing-page` and
 # deploy landing-page/dist with the headers from nginx.conf.template.
 
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
@@ -39,7 +39,7 @@ RUN test -n "$VITE_DASHBOARD_SIGNUP_URL" || (echo "VITE_DASHBOARD_SIGNUP_URL bui
 RUN test -n "$VITE_DASHBOARD_LOGIN_URL" || (echo "VITE_DASHBOARD_LOGIN_URL build arg is required" >&2; exit 1)
 RUN npm run build -w landing-page
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
 COPY landing-page/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /repo/landing-page/dist /usr/share/nginx/html
 EXPOSE 8080
