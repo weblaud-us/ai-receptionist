@@ -1,10 +1,10 @@
 """
-Recording retention per business (Roadmap §11.2 "Retention").
+Deleting call audio recorded before 2026-11-23 (Roadmap §11.2 "Retention").
 
-Each business sets `agent.recording.retention_days` (default 30). The bucket lifecycle rule
-(RECORDING_RETENTION_DAYS, docs/PRODUCTION_CHECKLIST.md) is the global backstop; this job enforces
-the shorter per-business value, and is what the DPA promises. Transcripts have their own setting,
-purged by services/tenant_jobs.purge_transcripts.
+Calls are no longer recorded (transcripts only). Audio stored before that change is deleted
+RECORDING_RETENTION_DAYS after the call (the bucket lifecycle rule is the backstop), and by
+erasure requests and offboarding. Transcripts have their own setting, purged by
+services/tenant_jobs.purge_transcripts.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ async def delete_recording_object(rec: Dict[str, Any]) -> bool:
 async def purge_recordings(db: Any, tenant: TenantConfig, now: datetime) -> int:
     if not storage_configured():
         return 0
-    cutoff = now - timedelta(days=tenant.agent.recording.retention_days)
+    cutoff = now - timedelta(days=settings.RECORDING_RETENTION_DAYS)
     deleted = 0
     cursor = db.calls.find({"tenant_id": tenant.id, "recording.path": {"$exists": True},  # scoped: tenant_id
                             "started_at": {"$lt": cutoff}}, {"call_id": 1, "recording": 1}).limit(MAX_PER_RUN)
@@ -59,5 +59,5 @@ async def purge_recordings(db: Any, tenant: TenantConfig, now: datetime) -> int:
             deleted += 1
     if deleted:
         logger.info("Deleted %d recordings older than %d days for %s", deleted,
-                    tenant.agent.recording.retention_days, tenant.id)
+                    settings.RECORDING_RETENTION_DAYS, tenant.id)
     return deleted

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from core import dedupe
+from config import settings
 from core.notifications import fire, notify_contact
 from core.phone import mask_phone
 from core.tenancy.models import TenantConfig
@@ -52,6 +53,10 @@ def wants_recovery(tenant: TenantConfig, *, channel: str, direction: str, caller
                    outcome: Optional[str], ended_reason: Optional[str]) -> bool:
     """Should this finished call get a recovery text?"""
     if not tenant.missed_call_recovery.enabled or tenant.is_legacy or not tenant.active:
+        return False
+    if not settings.SMS_ENABLED:
+        # Off while the platform sends no SMS. A WhatsApp text to someone who never messaged us needs an
+        # approved template, and an abandoned call isn't consent to marketing (audit P0-08).
         return False
     if channel != "phone" or direction != "inbound" or not caller_phone:
         return False

@@ -28,6 +28,7 @@ from core.integrations import webhooks
 from core.repositories import Repos
 from core.repositories.base import utcnow
 from core.services import availability as av
+from core.services import pms_cache
 from core.services import scheduling_provider as sp
 from core.tenancy.ids import new_id
 from core.tenancy.models import HoursEntry, TenantConfig
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 ACTIVE_STATUSES = ["pending", "confirmed"]
+# A booking takes its slot locks, then (with a PMS) waits up to ~8 s for the diary, then writes the
+# appointment. Locks older than this with no live appointment were left by a crash (audit P0-16).
+LOCK_ORPHAN_AFTER = timedelta(minutes=10)
 
 PMS_DOWN = ("The practice diary isn't answering right now. Don't try again: take their name, number and preferred "
             "time with take_message and say the team will call back to confirm the booking.")
@@ -146,7 +150,10 @@ class SchedulingService:
         now: Optional[datetime] = None,
         limit: int = 3,
         party_size: Optional[int] = None,
+        fresh: bool = False,
     ) -> List[av.Slot]:
+        """Open times. With a PMS, recent diary answers are reused (pms_cache); `fresh` asks the diary
+        itself, which booking always does."""
         now = _aware(now or utcnow())
         sched = self.tenant.scheduling
         day_to = day_to or day_from
@@ -157,7 +164,7 @@ class SchedulingService:
             return []
         if self.pms is not None:
             return await self._pms_slots(service=service, day_from=day_from, day_to=day_to, resource=resource,
-                                         requested_at=requested_at, now=now, limit=limit)
+                                         requested_at=requested_at, now=now, limit=limit, fresh=fresh)
 
         duration = timedelta(minutes=int((service or {}).get("duration_min") or sched.default_duration_minutes))
         buffer = timedelta(minutes=int((service or {}).get("buffer_min") or 0))
@@ -215,7 +222,7 @@ class SchedulingService:
 
     async def _pms_slots(self, *, service: Optional[Dict[str, Any]], day_from: date, day_to: date,
                          resource: Optional[Dict[str, Any]], requested_at: Optional[datetime], now: datetime,
-                         limit: int) -> List[av.Slot]:
+                         limit: int, fresh: bool = False) -> List[av.Slot]:
         """Free times from the practice diary, for the dentists mirrored from it (pms_sync)."""
         assert self.pms is not None
         if self.pms.requires_type_mapping and not (service or {}).get("pms_id"):
@@ -230,8 +237,8 @@ class SchedulingService:
         if not candidates:
             raise SchedulingError("pms_not_synced", PMS_NOT_SYNCED)
         try:
-            raw = await self.pms.get_available_slots(self._pms_service(service), day_from, day_to,
-                                                     [str(r["pms_id"]) for r in candidates])
+            raw = await pms_cache.slots(self.tenant.id, self.pms, self._pms_service(service), day_from, day_to,
+                                        [str(r["pms_id"]) for r in candidates], zone=self.zone, fresh=fresh)
         except sp.PMSError as e:
             logger.warning("PMS availability failed for %s: %s", self.tenant.id, e)
             raise SchedulingError("pms_unavailable", PMS_DOWN)
@@ -264,8 +271,10 @@ class SchedulingService:
         party_size: Optional[int] = None,
         email: Optional[str] = None,
         now: Optional[datetime] = None,
+        date_of_birth: Optional[date] = None,
     ) -> Dict[str, Any]:
-        """Claim the slot (unique index) then write the appointment. Raises SchedulingError('taken')."""
+        """Claim the slot (unique index) then write the appointment. Raises SchedulingError('taken').
+        `date_of_birth` only goes to the practice diary, to find the right patient; it isn't stored here."""
         now = _aware(now or utcnow())
         start = _aware(start)
         sched = self.tenant.scheduling
@@ -276,14 +285,19 @@ class SchedulingService:
 
         # Is the slot still inside opening hours / not blocked? Re-run availability for that day.
         resource_doc = None
+        if resource_id == "any" and self.pms is not None:
+            # "any" only exists for a business with no staff model; a PMS booking needs a real dentist.
+            raise SchedulingError("unknown_resource", "Pick one of the times from check_availability, then book it.")
         if resource_id != "any":
             resource_doc = await self.repos.resources.find_one({"_id": resource_id})
             if not resource_doc:
                 raise SchedulingError("unknown_resource", "That staff member or resource doesn't exist. Check availability again.")
         local_day = start.astimezone(self.zone).date()
         open_slots = await self.find_slots(service=service, day_from=local_day, resource=resource_doc,
-                                           requested_at=start, now=now, limit=50, party_size=party_size)
+                                           requested_at=start, now=now, limit=50, party_size=party_size,
+                                           fresh=True)
         if not any(s.start == start and s.resource_id == resource_id for s in open_slots):
+            await self._diary_changed()             # what we offered was stale: don't offer it again
             raise SchedulingError("taken", "That time was just taken or isn't available. Offer the next slot.")
 
         appointment_id = new_id("apt")
@@ -291,18 +305,14 @@ class SchedulingService:
         # Lock the service duration only. The buffer is enforced by availability (it is advice for
         # the schedule, not a claim), so every slot availability offers can always be locked.
         blocks = av.lock_blocks(start, end)
-        try:
-            await self.repos.slot_locks.insert_many(
-                [{"resource_id": resource_id, "block": b, "appointment_id": appointment_id} for b in blocks])
-        except (DuplicateKeyError, BulkWriteError):
-            await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
-            raise SchedulingError("taken", "That time was just booked by someone else. Offer the next slot.")
+        await self._claim(resource_id, blocks, appointment_id)
 
         external: Dict[str, Any] = {}
         if self.pms is not None:
             try:
                 created = await self.pms.create_appointment(
-                    sp.Patient(name=name, phone=phone, email=email), self._pms_service(service), start, end,
+                    sp.Patient(name=name, phone=phone, email=email, date_of_birth=date_of_birth),
+                    self._pms_service(service), start, end,
                     str((resource_doc or {}).get("pms_id") or ""), notes)
             except sp.PMSError as e:
                 await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
@@ -339,7 +349,12 @@ class SchedulingService:
             await self.repos.appointments.insert_one(doc)
         except Exception:
             await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
+            if external:
+                # Audit P0-09: the PMS holds the booking but we don't. Undo it there, or the diary and
+                # this system disagree and the freed slot gets booked twice.
+                await self._undo_pms_booking(external, name=name, phone=phone, start=start)
             raise
+        await self._diary_changed()
         await self.repos.contacts.update_one({"_id": contact.get("_id")}, {"$inc": {"stats.appointments": 1}})
         logger.info("Appointment %s booked (%s, %s)", appointment_id, doc["service_name"], start.isoformat())
         if self.tenant.vertical == "dental":
@@ -350,6 +365,63 @@ class SchedulingService:
         self._calendar("push", doc)
         webhooks.emit(self.tenant, "appointment.created", self._public(doc))
         return doc
+
+    async def _diary_changed(self) -> None:
+        if self.pms is not None:
+            await pms_cache.invalidate(self.tenant.id)
+
+    async def _claim(self, resource_id: str, blocks: List[datetime], appointment_id: str) -> None:
+        """Take the slot's lock rows (unique per resource + block). On a clash, free locks a crashed
+        booking left behind and try once more; a real booking always wins."""
+        rows = [{"resource_id": resource_id, "block": b, "appointment_id": appointment_id} for b in blocks]
+        for attempt in (1, 2):
+            try:
+                await self.repos.slot_locks.insert_many(rows)
+                return
+            except (DuplicateKeyError, BulkWriteError):
+                await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
+                if attempt == 2 or not await self._clear_orphan_locks(resource_id, blocks):
+                    raise SchedulingError("taken", "That time was just booked by someone else. Offer the next slot.")
+
+    async def _clear_orphan_locks(self, resource_id: str, blocks: List[datetime]) -> bool:
+        """Delete locks on these blocks whose appointment is missing or no longer active, once they are
+        old enough that the booking can't still be in flight. True when something was freed."""
+        held = await self.repos.slot_locks.find({"resource_id": resource_id, "block": {"$in": blocks}}, limit=500)
+        cutoff = utcnow() - LOCK_ORPHAN_AFTER
+        stale: List[str] = []
+        for appt_id in {str(h.get("appointment_id")) for h in held}:
+            rows = [h for h in held if str(h.get("appointment_id")) == appt_id]
+            if any(isinstance(h.get("created_at"), datetime) and _aware(h["created_at"]) > cutoff for h in rows):
+                continue                                    # recent: a booking may be mid-flight
+            appt = await self.repos.appointments.find_one({"appointment_id": appt_id}, {"status": 1})
+            if appt and appt.get("status") in ACTIVE_STATUSES:
+                continue                                    # a real booking holds it
+            stale.append(appt_id)
+        if not stale:
+            return False
+        await self.repos.slot_locks.delete_many({"appointment_id": {"$in": stale}})
+        logger.warning("Freed orphaned slot locks for %s: %s", self.tenant.id, ", ".join(stale))
+        return True
+
+    async def _undo_pms_booking(self, external: Dict[str, Any], *, name: str, phone: str, start: datetime) -> None:
+        assert self.pms is not None
+        for attempt in (1, 2):
+            try:
+                await self.pms.cancel_appointment(str(external["id"]), "Booking could not be saved; rolled back")
+                logger.warning("Rolled back PMS appointment %s for %s after a failed save", external["id"],
+                               self.tenant.id)
+                return
+            except Exception as e:                          # noqa: BLE001 — any failure: retry, then alert
+                logger.error("PMS rollback attempt %d failed for %s (%s): %s", attempt, self.tenant.id,
+                             external.get("id"), e)
+        from core.notifications import fire, notify_owner
+
+        when = start.astimezone(self.zone).strftime("%a %d %b %H:%M")
+        fire(notify_owner(self.tenant, "on_new_booking",
+                          f"Please check your practice diary: a booking for {name} ({phone}) at {when} was made in "
+                          f"{self.pms.name} but couldn't be saved here, and undoing it failed. Cancel it in "
+                          f"{self.pms.name} if the patient doesn't expect it.",
+                          subject="Diary needs checking", urgent=True))
 
     @staticmethod
     def _public(appointment: Dict[str, Any]) -> Dict[str, Any]:
@@ -384,6 +456,7 @@ class SchedulingService:
             {"$set": {"status": "cancelled", "cancelled_at": utcnow(), "cancel_reason": (reason or "")[:300],
                       "updated_at": utcnow()}})
         await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
+        await self._diary_changed()                 # the freed time can be offered straight away
         appt["status"] = "cancelled"
         appt["cancel_reason"] = (reason or "")[:300]
         self._calendar("remove", appt)
@@ -406,7 +479,9 @@ class SchedulingService:
             {"$set": {"status": "cancelled", "cancelled_at": utcnow(), "cancel_reason": "rescheduled",
                       "rescheduled_to": new["appointment_id"], "updated_at": utcnow()}})
         await self.repos.slot_locks.delete_many({"appointment_id": appointment_id})
-        if not await self._pms_cancel(appt, "Rescheduled by phone"):
+        pms_cancelled = await self._pms_cancel(appt, "Rescheduled by phone")
+        await self._diary_changed()
+        if not pms_cancelled:
             from core.notifications import fire, notify_owner
 
             # The new time is booked; the old one is still in the diary. Ask the team to remove it.
@@ -465,3 +540,42 @@ class SchedulingService:
             return datetime.combine(day, datetime.min.time().replace(hour=h, minute=m), tzinfo=self.zone).astimezone(UTC)
         except (ValueError, AttributeError):
             return None
+
+
+# ── Warm the diary cache when a call starts (plan A1.3) ─────────────────────
+
+PREFETCH_DAYS = 7          # most callers ask about this week; the cache is per day, so any day in it hits
+PREFETCH_SERVICES = 2      # the services this practice books most
+
+
+async def prefetch_availability(repos: Repos, tenant: TenantConfig, *, now: Optional[datetime] = None) -> int:
+    """Ask the practice diary for the coming week while the greeting plays, so the caller's first
+    "when can I come in?" is answered from the cache instead of waiting on Cliniko / Dentally.
+    Returns how many open times were cached. Never raises: a failed prefetch only means a live
+    lookup later, exactly as before."""
+    if not sp.connected(tenant):
+        return 0
+    now = _aware(now or utcnow())
+    try:
+        svc = SchedulingService(repos, tenant)
+        assert svc.pms is not None
+        services = [s for s in await svc.services()
+                    if s.get("pms_id") or not svc.pms.requires_type_mapping]
+        if not services:
+            return 0
+        counts = await repos.appointments.aggregate([
+            {"$match": {"start": {"$gte": now - timedelta(days=90)}}},
+            {"$group": {"_id": "$service_id", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 20}])
+        booked = {c["_id"]: int(c["n"]) for c in counts}
+        ranked = sorted(enumerate(services), key=lambda e: (-booked.get(e[1].get("_id"), 0), e[0]))
+        today = now.astimezone(svc.zone).date()
+        total = 0
+        for _, service in ranked[:PREFETCH_SERVICES]:
+            found = await svc.find_slots(service=service, day_from=today,
+                                         day_to=today + timedelta(days=PREFETCH_DAYS - 1), now=now, limit=1000)
+            total += len(found)
+        return total
+    except Exception as e:                              # noqa: BLE001 — a warm-up must never hurt a call
+        logger.info("Diary prefetch skipped for %s: %s", tenant.id, e)
+        return 0

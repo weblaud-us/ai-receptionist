@@ -1,0 +1,77 @@
+{
+  "id": "seed_dental_tone_bad_news_no_great",
+  "title": "Bad news is not met with 'Great'",
+  "vertical": "dental",
+  "tenant": {
+    "name": "Harbour Smiles Dental",
+    "vertical": "dental",
+    "timezone": "Australia/Sydney",
+    "country": "AU",
+    "currency": "AUD",
+    "description": "",
+    "hours": [
+      {
+        "dow": 0,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 1,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 2,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 3,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 4,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 5,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 6,
+        "open": "08:00",
+        "close": "18:00"
+      }
+    ],
+    "agent": {
+      "name": "Aria",
+      "tone": "professional"
+    },
+    "services": [
+      {
+        "name": "Check-up and clean",
+        "duration_min": 45,
+        "category": "routine"
+      },
+      {
+        "name": "Emergency appointment",
+        "duration_min": 30,
+        "category": "emergency"
+      }
+    ],
+    "knowledge": []
+  },
+  "caller_turns": [
+    "Hi, I chipped my front tooth this morning and it's a bit sore when I drink something cold."
+  ],
+  "expect": {
+    "intent": "Acknowledges the problem with empathy (never with 'Great', 'Perfect' or 'Awesome'), treats it as urgent but not life-threatening, and moves towards an emergency or same-day appointment by asking one question or offering to check times. No diagnosis, no home remedies.",
+    "must_call": [],
+    "must_not_call": [
+      "book_appointment"
+    ]
+  }
+}

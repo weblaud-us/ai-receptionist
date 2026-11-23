@@ -526,16 +526,10 @@ async def get_attempt(attempt_id: str, admin: Principal = Depends(require_platfo
     if not attempt:
         raise HTTPException(404, "Call not found")
     call = await db.calls.find_one({"call_id": attempt["call_id"]},  # cross-tenant: the platform's own sales call, by its unique id
-                                   {"transcript": 1, "summary": 1, "recording": 1, "latency": 1, "duration_s": 1})
-    recording_url = None
-    rec = (call or {}).get("recording") or {}
-    if rec.get("path") and settings.RECORDING_S3_ACCESS_KEY:
-        from core.integrations.s3_presign import presign_get
-
-        recording_url = presign_get(rec["path"], bucket=rec.get("bucket") or settings.RECORDING_S3_BUCKET, expires=600)
+                                   {"transcript": 1, "summary": 1, "latency": 1, "duration_s": 1})
     lead = await db[m.LEADS].find_one({"_id": attempt["lead_id"]}, {"gate_log": 0})
     return {"attempt": _out(attempt), "lead": _out(lead),
-            "transcript": to_jsonable((call or {}).get("transcript") or []), "recording_url": recording_url}
+            "transcript": to_jsonable((call or {}).get("transcript") or [])}
 
 
 class AttemptPatch(BaseModel):

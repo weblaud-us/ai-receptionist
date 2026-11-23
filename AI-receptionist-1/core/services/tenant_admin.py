@@ -59,6 +59,15 @@ def _apply_locale_defaults(doc: Dict[str, Any]) -> None:
     doc["agent"] = agent
 
 
+def check_dental_country(vertical: str, country: str) -> None:
+    """Dental practices are AU or UK only: the triage track, emergency numbers (000 / 999 / 111),
+    health-fund and NHS rules are written for those two. ValueError → 422."""
+    from core.prompts.verticals.dental import DENTAL_COUNTRIES
+
+    if vertical == "dental" and (country or "").upper() not in DENTAL_COUNTRIES:
+        raise ValueError("Dental practices must be in Australia (AU) or the United Kingdom (GB)")
+
+
 def default_hours_for(vertical: str) -> List[HoursEntry]:
     if vertical == "hotel":
         return [HoursEntry(dow=d, open="00:00", close="24:00") for d in range(7)]
@@ -111,6 +120,12 @@ async def create_tenant(*, name: str, vertical: str = "generic", timezone: str =
     if vertical == "dental":
         # Enquiry leads are not clinical records (those live in the practice's own system): keep a year.
         doc["privacy"] = {"encrypt_clinical_text": True, "lead_retention_days": 365}
+        # Plan A2.5: Deepgram Aura in the practice's own accent (fast, and the same key as the STT).
+        from core.voices import AURA_DEFAULT_FOR_COUNTRY
+
+        aura = AURA_DEFAULT_FOR_COUNTRY.get((country or "").upper())
+        if aura:
+            doc["agent"] = {"voice_provider": "deepgram", "voice_id": aura}
     doc.update(extra or {})
     _apply_locale_defaults(doc)
     tenant = TenantConfig.from_doc(doc)                     # validate before writing
@@ -144,6 +159,8 @@ async def update_tenant(tenant: TenantConfig, changes: Dict[str, Any], *, allowe
         else:
             merged[key] = value
     updated = TenantConfig.from_doc(merged)                 # raises ValueError on bad input
+    if {"country", "vertical"} & set(changes):
+        check_dental_country(updated.vertical, updated.country)
     after = updated.to_doc()
     sets = {k: after[k] for k in changes}
     await TenantsStore(get_db()).update(tenant.id, sets)

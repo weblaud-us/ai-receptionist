@@ -49,6 +49,28 @@ async def test_voice_tool_runs_the_shared_implementation(db):
     assert (await db.messages.find_one({"message_id": result["message_id"]}))["channel"] == "voice"
 
 
+async def test_slow_tools_run_inside_a_filler_and_fast_ones_dont(db):
+    from contextlib import asynccontextmanager
+
+    opened: list = []
+
+    class Ctx:
+        userdata = _state(caller_phone="+8801711111111")
+
+        @asynccontextmanager
+        async def with_filler(self, source, *, delay=0, interval=None, max_steps=None):
+            opened.append((source(0), delay, max_steps))
+            yield
+
+    tools = {_name(t): t for t in shared_tools(load_profile())}
+    await tools["take_message"](raw_arguments={"caller_name": "Rahim", "callback_number": "+8801711111111",
+                                               "message": "Late check-out?"}, context=Ctx())
+    assert opened == []                                   # nothing to wait for: no filler
+    slow = next(n for n in ("check_availability", "check_room_availability") if n in tools)
+    await tools[slow](raw_arguments={"date": "2026-12-01"}, context=Ctx())
+    assert len(opened) == 1 and opened[0][1] == 0.7 and opened[0][2] == 1 and opened[0][0]
+
+
 def test_agent_has_voice_only_tools_and_prompt():
     agent = ReceptionistAgent(_state())
     names = {_name(t) for t in agent.tools}
@@ -100,6 +122,29 @@ async def test_deepgram_aura_first_kokoro_then_openai(monkeypatch):
     assert "kokoro" in str(engines[1]._client.base_url) and len(engines) == 3
 
 
+async def test_a_business_aura_voice_is_used_and_other_ids_never_reach_deepgram(monkeypatch):
+    from types import SimpleNamespace
+
+    from livekit.plugins import deepgram
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="deepgram", VOICE_TTS_FALLBACKS="", DEEPGRAM_API_KEY="dg-test",
+            DEEPGRAM_TTS_MODEL="aura-2-andromeda-en")
+    profile = load_profile()
+
+    def as_business(provider, voice_id):
+        agent = profile.tenant.agent.model_copy(update={"voice_provider": provider, "voice_id": voice_id})
+        tenant = profile.tenant.model_copy(update={"agent": agent})
+        return SimpleNamespace(tenant=tenant, voice_provider=provider, voice_id=voice_id,
+                               tts_language="en")
+
+    assert session_factory.aura_model(as_business("deepgram", "aura-2-theia-en")) == "aura-2-theia-en"
+    # An ElevenLabs id on a business that switched to Deepgram's fallback: the platform Aura default
+    assert session_factory.aura_model(as_business("elevenlabs", "EST9Ui6982FZPSi7gCHi")) == "aura-2-andromeda-en"
+    assert session_factory.aura_model(as_business("deepgram", "")) == "aura-2-andromeda-en"
+    tts = session_factory._tts_for("deepgram", as_business("deepgram", "aura-2-draco-en"))
+    assert isinstance(tts, deepgram.TTS) and tts._opts.model == "aura-2-draco-en"
+
+
 async def test_kokoro_alone_points_at_the_local_server(monkeypatch):
     from livekit.plugins import openai as lk_openai
 
@@ -128,6 +173,41 @@ async def test_session_builds_with_turn_detection(monkeypatch):
     monkeypatch.setattr(settings, "ELEVENLABS_API_KEY", "el-test")
     session = session_factory.build_session({"vad": None}, _state())
     assert session.userdata.call_id == "call-lk"
+
+
+def test_turn_taking_is_explicit_about_the_cloud_models(monkeypatch):
+    # Unset, `start` on our own hosts silently picks the local turn model and no adaptive barge-in.
+    monkeypatch.setattr(settings, "LIVEKIT_API_KEY", "APIkey")
+    monkeypatch.setattr(settings, "LIVEKIT_API_SECRET", "secret")
+    th = session_factory.turn_handling(load_profile())
+    assert th["interruption"]["mode"] == settings.VOICE_INTERRUPT_MODE == "adaptive"
+    assert th["interruption"]["min_duration"] == 0.25 and th["interruption"]["resume_false_interruption"]
+    assert th["preemptive_generation"] == {"enabled": True, "preemptive_tts": True}
+    assert th["endpointing"]["mode"] == "dynamic"
+    assert th["turn_detection"].model == "turn-detector-v1"
+    monkeypatch.setattr(settings, "VOICE_PREEMPTIVE_TTS", False)
+    monkeypatch.setattr(settings, "VOICE_INTERRUPT_MODE", "vad")
+    th = session_factory.turn_handling(load_profile())
+    assert th["preemptive_generation"]["preemptive_tts"] is False and th["interruption"]["mode"] == "vad"
+    # No LiveKit keys (tests, a laptop): the local model, never a crash.
+    monkeypatch.setattr(settings, "LIVEKIT_API_SECRET", "")
+    assert session_factory.turn_detector_version() == "v1-mini"
+    assert session_factory.turn_handling(load_profile())["turn_detection"].model == "turn-detector-v1-mini"
+
+
+async def test_turn_tuning_changes_a_real_sessions_endpointing(monkeypatch):
+    from agent.turn_tuning import PATIENT_ENDPOINTING, TurnTuner
+
+    monkeypatch.setattr(settings, "ELEVENLABS_API_KEY", "el-test")
+    state = _state()
+    session = session_factory.build_session({"vad": None}, state)
+    normal = session_factory.endpointing(state.profile)
+    tuner = TurnTuner(lambda o: session.update_options(endpointing_opts=o), normal)
+    tuner.on_assistant_message("What's the best number to reach you on?")
+    assert session._opts.endpointing["max_delay"] == PATIENT_ENDPOINTING["max_delay"]
+    tuner.on_user_message()
+    assert session._opts.endpointing["max_delay"] == normal["max_delay"]
+    assert session._opts.endpointing["min_delay"] == normal["min_delay"]
 
 
 # ── Phase 3: fallbacks, provider health, busy lines, per-business call limit ──

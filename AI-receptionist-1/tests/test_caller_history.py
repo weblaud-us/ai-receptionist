@@ -99,3 +99,19 @@ def _tenant():
     from core.tenancy.models import TenantConfig
 
     return TenantConfig(_id="ten_x", name="Bella", slug="bella", vertical="salon", timezone="America/Chicago")
+
+
+async def test_a_patients_regular_dentist_is_offered_first(db):
+    from core.prompts.builder import render_caller_history
+
+    t = await _seed(db, "ten_regular")
+    r = Repos(db, t.id)
+    await r.resources.insert_one({"_id": "res_lee", "name": "Dr Lee", "active": True})
+    await r.contacts.update_one({"_id": "con_1"}, {"$set": {"preferred_resource_id": "res_lee"}})
+    state = CallState(call_id="call_now", profile=VoiceProfile(tenant=t), caller_phone=PHONE)
+    h = await load_contact(state)
+    assert h["regular_resource"] == "Dr Lee"
+    text = render_caller_history(t, h)
+    assert "Their regular dentist is Dr Lee" in text and "check_availability" in text
+    await r.resources.update_one({"_id": "res_lee"}, {"$set": {"active": False}})   # left the practice
+    assert (await load_contact(state))["regular_resource"] is None

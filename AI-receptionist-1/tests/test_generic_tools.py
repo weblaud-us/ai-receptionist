@@ -13,6 +13,15 @@ from core.tools import registry
 from core.tools.hotel import drain_background_tasks
 from core.tools.registry import ToolContext, run_tool, schemas_for, tool_names_for
 
+
+@pytest.fixture(autouse=True)
+def _sms_on(monkeypatch):
+    """These tests cover the SMS paths, which the platform has switched off (config.SMS_ENABLED)."""
+    from config import settings as _settings
+
+    monkeypatch.setattr(_settings, "SMS_ENABLED", True)
+
+
 TZ = "America/Chicago"
 NOW = datetime(2026, 11, 23, 8, 0, tzinfo=ZoneInfo(TZ)).astimezone(timezone.utc)   # Monday 08:00 local
 

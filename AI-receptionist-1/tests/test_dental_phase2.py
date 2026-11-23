@@ -14,6 +14,15 @@ from core.services.tenant_admin import create_tenant
 from core.tenancy import invalidate
 from core.tenancy.models import HoursEntry, LegalEntity, TenantConfig, abn_valid
 
+
+@pytest.fixture(autouse=True)
+def _sms_on(monkeypatch):
+    """These tests cover the SMS paths, which the platform has switched off (config.SMS_ENABLED)."""
+    from config import settings as _settings
+
+    monkeypatch.setattr(_settings, "SMS_ENABLED", True)
+
+
 SYD = ZoneInfo("Australia/Sydney")
 SPLIT = [HoursEntry(dow=d, open=o, close=c) for d in range(5) for o, c in (("09:00", "13:00"), ("14:00", "17:30"))]
 CALLER = "+61412345678"
@@ -39,6 +48,9 @@ def _fresh():
     invalidate()
 
 
+NOTICE = "Just so you know, this call is transcribed for the practice. "
+
+
 # ── Answer window and greeting ───────────────────────────
 
 def test_answer_window_open_lunch_and_after_hours():
@@ -57,30 +69,38 @@ def test_answer_window_open_lunch_and_after_hours():
 def test_dental_greetings_follow_the_moment_of_the_call():
     t = _dental()
     lunch = t.greeting_text(_mon(13, 10))
-    assert lunch.startswith("Thanks for calling Harbour Smiles. Our reception team is currently on a short lunch break")
+    assert lunch.startswith(f"{NOTICE}Thanks for calling Harbour Smiles. Our reception team is currently on a "
+                            "short lunch break")
     assert "AI assistant" in lunch and lunch.endswith("How can I help?")
     closed = t.greeting_text(_mon(19))
     assert "We're currently closed" in closed and "AI assistant" in closed
-    assert t.greeting_text(_mon(10)).startswith("Thanks for calling Harbour Smiles, this is Aria")
+    assert t.greeting_text(_mon(10)).startswith(f"{NOTICE}Thanks for calling Harbour Smiles, this is Aria")
     overflow = _dental(answering_mode="overflow")
     assert "Our receptionists are helping other patients" in overflow.greeting_text(_mon(10))
     assert "lunch break" in overflow.greeting_text(_mon(13, 10))
     assert t.greeting_text() == t.greeting_text(_mon(10))      # no time given: the standard greeting
 
 
-def test_dental_recording_notice_comes_first_and_custom_greetings_are_kept():
-    t = _dental(agent={"recording": {"enabled": True}})
-    assert t.greeting_text(_mon(13, 10)).startswith("Just so you know, this call may be recorded. Thanks for calling")
-    own = _dental(agent={"recording": {"enabled": True, "announce_text": "Calls are recorded for training."}})
-    assert own.greeting_text(_mon(19)).startswith("Calls are recorded for training. Thanks for calling")
+def test_dental_transcription_notice_comes_first_and_custom_greetings_are_kept():
+    # Calls are never recorded, but every call is transcribed, and dental callers hear that first.
+    t = _dental()
+    assert t.greeting_text(_mon(13, 10)).startswith(f"{NOTICE}Thanks for calling")
+    own = _dental(agent={"call_notice": "  Calls are transcribed  so the team can follow up. "})
+    assert own.greeting_text(_mon(19)).startswith("Calls are transcribed so the team can follow up. Thanks for calling")
     custom = _dental(agent={"greeting": "Hello from Harbour Smiles, I'm Aria, the AI assistant."})
-    assert custom.greeting_text(_mon(13, 10)) == "Hello from Harbour Smiles, I'm Aria, the AI assistant. How can I help?"
+    assert custom.greeting_text(_mon(13, 10)) == (f"{NOTICE}Hello from Harbour Smiles, I'm Aria, the AI assistant. "
+                                                  "How can I help?")
+    told = _dental(agent={"greeting": "Hi, I'm Aria, the AI assistant; this call is transcribed. How can I help?"})
+    assert not told.greeting_text(_mon(10)).startswith("Just so you know")      # already said: not twice
+    # A recording notice left over from before is ignored: no audio is recorded any more.
+    old = _dental(agent={"recording": {"enabled": True, "announce_text": "Calls are recorded for training."}})
+    assert "recorded" not in old.greeting_text(_mon(10))
 
 
 def test_other_verticals_keep_their_greeting_at_any_time():
     salon = _dental(vertical="salon", agent={"recording": {"enabled": True}})
     expected = ("Thanks for calling Harbour Smiles, this is Aria, Harbour Smiles's virtual assistant. "
-                "This call may be recorded. How can I help?")
+                "This call is transcribed for the team. How can I help?")              # an AU business
     for moment in (_mon(10), _mon(13, 10), _mon(20), None):
         assert salon.greeting_text(moment) == expected
 

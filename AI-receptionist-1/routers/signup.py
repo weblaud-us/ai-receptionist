@@ -28,7 +28,7 @@ from core.billing import plans
 from core.integrations.email import send_email
 from core.repositories import Repos
 from core.repositories.repos import UsersStore
-from core.services.tenant_admin import create_tenant
+from core.services.tenant_admin import check_dental_country, create_tenant
 from core.tenancy.models import VERTICALS
 from database.mongodb import get_db
 
@@ -125,6 +125,10 @@ async def signup(body: SignupBody, request: Request, response: Response):
         raise HTTPException(409, "An account with that e-mail already exists — sign in instead")
 
     country = body.country.upper()
+    try:
+        check_dental_country(body.vertical, country)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     billing = {"plan": plan.key, "interval": body.interval}
     status = "incomplete"
     if not settings.billing_enabled:

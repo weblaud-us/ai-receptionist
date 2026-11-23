@@ -206,6 +206,9 @@ async def verify_phone_start(body: PhoneBody, tp: TenantPrincipal = Depends(_own
          "expires_at": utcnow() + PHONE_CODE_TTL}, upsert=True)
     sent = await send_sms(number, f"Your verification code is {code}. It expires in 10 minutes.")
     if not sent and not settings.is_development:
+        if not settings.SMS_ENABLED:
+            raise HTTPException(503, "Verifying a number by text isn't available. Contact support and we'll "
+                                     "verify your transfer number for you, or choose a paid plan.")
         raise HTTPException(502, "We couldn't text that number. Check it and try again.")
     out: Dict[str, Any] = {"success": True, "sent": sent}
     if not sent:

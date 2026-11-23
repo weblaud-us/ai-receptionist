@@ -178,6 +178,15 @@ class Settings(BaseSettings):
     CARTESIA_API_KEY:           str = Field(default="")   # fallback TTS when set
     CARTESIA_VOICE_ID:          str = Field(default="")
     CARTESIA_MODEL:             str = Field(default="sonic-3")
+    # Turn-taking (Vapi/Retell-grade feel). livekit-agents picks the small local models when running
+    # `start` on our own hosts, so these are set explicitly:
+    #   v1 = LiveKit's cloud end-of-turn model (falls back to the local v1-mini if the gateway fails)
+    VOICE_TURN_DETECTOR:        Literal["v1", "v1-mini"] = Field(default="v1")
+    # adaptive = ML barge-in: stops for "wait"/"no", talks through the caller's "mm-hmm" (audit P0-13).
+    # Falls back to plain VAD by itself if the detector can't start.
+    VOICE_INTERRUPT_MODE:       Literal["adaptive", "vad"] = Field(default="adaptive")
+    VOICE_INTERRUPT_MIN_DURATION: float = Field(default=0.25, ge=0.1, le=1.5)  # s of speech; "wait!" is ~0.25 s
+    VOICE_PREEMPTIVE_TTS:       bool  = Field(default=True)  # start the voice before the turn is confirmed
     VOICE_ENDPOINTING_MIN_DELAY: float = Field(default=0.3)  # raise if callers get cut off mid-number
     VOICE_ENDPOINTING_MAX_DELAY: float = Field(default=2.5)
     VOICE_USER_AWAY_TIMEOUT:    float = Field(default=12.0)  # seconds of silence before "are you there?"
@@ -212,7 +221,12 @@ class Settings(BaseSettings):
     TWILIO_SIP_OUTBOUND_USERNAME: str = Field(default="")   # Twilio trunk credential list
     TWILIO_SIP_OUTBOUND_PASSWORD: str = Field(default="")
 
-    # Call recording via LiveKit Egress (ENABLE_CALL_RECORDING=true). ⚖ consent-sensitive.
+    # The platform does not send SMS (2026-11-23). Patient and owner messages go by WhatsApp or e-mail;
+    # missed-call text-back and SMS recall are off. Turning this on is a deliberate product decision
+    # (Spam Act / PECR consent rules apply to every automated text).
+    SMS_ENABLED: bool = Field(default=False)
+    # Call audio is never recorded (2026-11-23: transcripts only). These settings remain only so the
+    # retention, erasure and offboarding jobs can still delete audio stored before that change.
     RECORDING_S3_BUCKET:     str = Field(default="")
     RECORDING_S3_REGION:     str = Field(default="")
     RECORDING_S3_ENDPOINT:   str = Field(default="")   # S3-compatible endpoint; empty = AWS
@@ -361,7 +375,6 @@ class Settings(BaseSettings):
     # ── Feature Flags ─────────────────────────────────────
     ENABLE_VOICE_CALLS:              bool = Field(default=True)
     ENABLE_WHATSAPP:                 bool = Field(default=True)
-    ENABLE_CALL_RECORDING:           bool = Field(default=False)
     ENABLE_ONE_DAY_BOOKING_REMINDER: bool = Field(default=True)
     BOOKING_REMINDER_POLL_MINUTES:   int  = Field(default=30)
 
@@ -496,8 +509,6 @@ class Settings(BaseSettings):
             problems.append("WEBHOOK_BASE_URL must be the public https:// URL")
         if self.ENABLE_WHATSAPP and not self.META_APP_SECRET:
             problems.append("META_APP_SECRET is required when ENABLE_WHATSAPP=true")
-        if self.ENABLE_CALL_RECORDING and not (self.RECORDING_S3_BUCKET and self.RECORDING_S3_SECRET):
-            problems.append("ENABLE_CALL_RECORDING needs RECORDING_S3_BUCKET and credentials")
         if self.GOOGLE_OAUTH_CLIENT_ID and len(self.TOKEN_ENCRYPTION_KEY) < 40:
             problems.append("TOKEN_ENCRYPTION_KEY (a Fernet key) is required with Google Calendar")
         if not self.REQUIRE_ADMIN_MFA:
@@ -506,6 +517,9 @@ class Settings(BaseSettings):
             problems.append("DEEPGRAM_MIP_OPT_OUT must be true (callers' health details must not train Deepgram models)")
         if self.OPENAI_STORE:
             problems.append("OPENAI_STORE must be false (calls must not be stored by OpenAI)")
+        if self.LEGACY_TWILIO_VOICE:
+            problems.append("LEGACY_TWILIO_VOICE must be false: phone calls go through the LiveKit SIP trunk "
+                            "(the old path is the hotel stack, runs on one replica and drops calls on deploy)")
         if self.TWILIO_EDGE.strip() and self.TWILIO_EDGE.strip().lower() not in {*TWILIO_EDGE_REGIONS, *TWILIO_REGION_EDGES}:
             problems.append(f"TWILIO_EDGE {self.TWILIO_EDGE!r} is not a Twilio edge (sydney, dublin, …)")
         if self.DEPLOYMENT_REGION.strip() and self.DEPLOYMENT_REGION.strip() not in KNOWN_DEPLOYMENT_REGIONS:

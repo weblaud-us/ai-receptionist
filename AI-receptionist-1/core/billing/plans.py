@@ -71,7 +71,6 @@ class Plan:
     max_concurrent_calls: int
     tagline: str
     features: Tuple[str, ...] = field(default_factory=tuple)
-    recording: bool = False
     warm_transfer: bool = False
     international_transfers: bool = False
     self_serve: bool = True
@@ -141,14 +140,13 @@ PLANS: Dict[str, Plan] = {
     # agent/receptionist.py supports TransferConfig.warm.
     "pro": Plan(
         key="pro", name="Pro", monthly_usd=299, included_minutes=1000, max_users=5, max_numbers=3,
-        max_concurrent_calls=5, tagline="Several staff and resources, call transfers, recordings",
-        recording=True,
+        max_concurrent_calls=5, tagline="Several staff and resources, call transfers",
         features=("1,000 minutes / month", "Multiple staff and resources", "Transfers calls to your team",
-                  "Call recordings", "Priority support", "5 dashboard users")),
+                  "Priority support", "5 dashboard users")),
     "agency": Plan(
         key="agency", name="Agency / multi-location", monthly_usd=0, included_minutes=0, max_users=0,
         max_numbers=0, max_concurrent_calls=10, tagline="Agencies and chains: pooled minutes, custom terms",
-        recording=True, international_transfers=True, self_serve=False,
+        international_transfers=True, self_serve=False,
         features=("Pooled minutes", "Many locations", "Custom terms")),
     # Dental (AU / UK private and mixed practices): an overflow and after-hours receptionist sold as a
     # monthly retainer with a one-time onboarding fee. 1–3 locations.
@@ -161,10 +159,10 @@ PLANS: Dict[str, Plan] = {
                   "3 dashboard users")),
     "dental_pro": Plan(
         key="dental_pro", name="Dental Pro", monthly_usd=649, included_minutes=1500, max_users=8, max_numbers=3,
-        max_concurrent_calls=6, verticals=("dental",), setup_fee_required=True, recording=True, recommended=True,
-        tagline="Up to three locations, call recordings and priority support",
+        max_concurrent_calls=6, verticals=("dental",), setup_fee_required=True, recommended=True,
+        tagline="Up to three locations and priority support",
         features=("1,500 minutes / month", "Up to 3 practice numbers", "Everything in Essentials",
-                  "Call recordings (announced)", "Priority support", "8 dashboard users")),
+                  "Priority support", "8 dashboard users")),
 }
 
 SELF_SERVE_PLANS: Tuple[str, ...] = tuple(k for k, p in PLANS.items() if p.self_serve)

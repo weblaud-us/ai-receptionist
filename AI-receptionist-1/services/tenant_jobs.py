@@ -11,7 +11,7 @@ jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process
 - transcript purge — strips transcripts and per-turn rows from calls older than the tenant's
                     `agent.transcript_retention_days` (Task 2.2). The call record itself (who,
                     when, outcome, summary, usage) is kept for billing and statistics.
-- recording purge — deletes recordings older than `agent.recording.retention_days` (Phase 6).
+- recording purge — deletes audio stored before calls stopped being recorded (RECORDING_RETENTION_DAYS).
 - monthly report  — "your assistant this month" on the 1st (Phase 7, Task 7.3).
 - pilot report    — weekly scorecard to pilot businesses on Mondays (Phase 7, Task 7.1).
 

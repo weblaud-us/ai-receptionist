@@ -17,15 +17,13 @@ from agent.state import CallState
 from agent.telemetry import TurnTracker, percentile, summarise, turn_latency
 
 
-def _profile(transfer_number=None, transfer_hours=None, recording=None):
+def _profile(transfer_number=None, transfer_hours=None):
     """The legacy hotel profile with a few tenant fields overridden."""
     tenant = load_profile().tenant.model_copy(deep=True)
     if transfer_number is not None:
         tenant.transfer.number = transfer_number
     if transfer_hours is not None:
         tenant.transfer.hours = transfer_hours
-    if recording is not None:
-        tenant.agent.recording.enabled = recording
     return VoiceProfile(tenant=tenant)
 
 
@@ -52,8 +50,8 @@ def test_keyterms_come_from_tenant_and_vertical():
     assert words[:2] == ("Grand Azure Hotel", "Aria") and "deluxe" in words
 
 
-def test_greeting_announces_recording():
-    assert "may be recorded" in _profile(recording=True).greeting_text
+def test_calls_are_never_announced_as_recorded():
+    assert "record" not in _profile().greeting_text
 
 
 def test_parse_hours():
@@ -147,6 +145,35 @@ def test_turn_tracker():
     assert state.tools_used == ["check_room_availability", "get_hotel_info"]
     s = summarise(state.turns)
     assert s["turns"] == 3 and s["p50_s"] == 0.8 and s["tool_turns"] == 2 and s["tool_p50_s"] == 0.9
+
+
+def test_turn_tracker_joins_user_side_metrics():
+    # end_of_turn_delay / transcription_delay arrive on the USER message, the rest on the reply.
+    state = _state()
+    t = TurnTracker(state)
+    t.on_user_message({"end_of_turn_delay": 0.31, "transcription_delay": 0.12, "e2e_latency": 99})
+    t.on_assistant_message({"llm_node_ttft": 0.42, "llm_node_ttfs": 0.55, "tts_node_ttfb": 0.18,
+                            "playback_latency": 0.01, "end_of_turn_delay": 7.0})
+    row = state.turns[0]
+    assert row["end_of_turn_delay"] == 0.31 and row["transcription_delay"] == 0.12
+    assert row["llm_node_ttft"] == 0.42 and row["llm_node_ttfs"] == 0.55 and row["playback_latency"] == 0.01
+    assert "e2e_latency" not in row                        # an assistant-only key is never read off the user
+    # no e2e from the framework → the stage sum stands in for it
+    assert row["latency_s"] == pytest.approx(0.31 + 0.42 + 0.18)
+
+    t.on_user_message()                                    # old call style: no metrics
+    t.on_assistant_message({"e2e_latency": 0.7, "llm_node_ttft": True})
+    assert state.turns[1]["latency_s"] == 0.7 and "end_of_turn_delay" not in state.turns[1]
+    assert "llm_node_ttft" not in state.turns[1]           # bools are not numbers here
+
+
+def test_latency_report_stage_breakdown():
+    from scripts.latency_report import stage_breakdown
+
+    rows = [{"end_of_turn_delay": 0.3, "llm_node_ttft": 0.4}, {"end_of_turn_delay": 0.5, "llm_node_ttft": 0.6}]
+    out = stage_breakdown(rows)
+    assert out["end_of_turn_delay"] == (0.3, 0.5) and out["llm_node_ttft"] == (0.4, 0.6)
+    assert "tts_node_ttfb" not in out
 
 
 def test_greeting_latency_recorded_once():

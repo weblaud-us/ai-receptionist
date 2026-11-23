@@ -23,9 +23,10 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from config import settings
+from core.services import pms_cache
 from core.services.scheduling_provider import (
     RECALL_LOOKBACK_DAYS, AppointmentType, CreatedAppointment, LapsedPatient, Patient, PMSError, Practitioner,
-    ProviderSlot, lapsed_from_visits, request_json, same_phone, split_name,
+    ProviderAppointment, ProviderSlot, lapsed_from_visits, pick_patient, request_json, split_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ class DentallyProvider:
 
     async def _call(self, method: str, path: str, *, params: Any = None, json_body: Any = None,
                     write: bool = False) -> Any:
+        if not await pms_cache.spend(self.name, self.token):
+            raise PMSError("too many diary requests this minute", status=429)
         return await request_json(method, f"{self.base}{path}", headers=self._headers(), params=params,
                                   json_body=json_body, write=write)
 
@@ -112,11 +115,9 @@ class DentallyProvider:
     async def _find_patient(self, patient: Patient) -> Optional[str]:
         _, last = split_name(patient.name)
         data = await self._call("GET", "/patients", params={"query": last})
-        for r in data.get("patients") or []:
-            phones = [r.get("mobile_phone") or "", r.get("home_phone") or "", r.get("work_phone") or ""]
-            if any(same_phone(p, patient.phone) for p in phones):
-                return str(r["id"])
-        return None
+        return pick_patient([{"id": r["id"], "first_name": r.get("first_name"), "date_of_birth": r.get("date_of_birth"),
+                              "phones": [r.get("mobile_phone") or "", r.get("home_phone") or "", r.get("work_phone") or ""]}
+                             for r in data.get("patients") or []], patient)
 
     async def _create_patient(self, patient: Patient) -> str:
         first, last = split_name(patient.name)
@@ -124,6 +125,8 @@ class DentallyProvider:
                                             "site_id": self.site_id or None}}
         if patient.email:
             body["patient"]["email_address"] = patient.email
+        if patient.date_of_birth:
+            body["patient"]["date_of_birth"] = patient.date_of_birth.isoformat()
         data = await self._call("POST", "/patients", json_body=body, write=True)
         return str((data.get("patient") or data)["id"])
 
@@ -157,6 +160,42 @@ class DentallyProvider:
                          json_body={"reason": (reason or "Cancelled by phone")[:200]})
 
     # ── Recall (patient reactivation) ─────────────────────────────────────
+
+    async def list_appointments(self, date_from: date, date_to: date,
+                                practitioner_ids: List[str]) -> List[ProviderAppointment]:
+        """Appointments for these practitioners between two local days. ⚠ VERIFY the filters, the
+        `patient_name` / `reason` fields and the states against the Dentally sandbox."""
+        if not practitioner_ids:
+            return []
+        zone = ZoneInfo(self.timezone or "Europe/London")
+        wanted = {str(p) for p in practitioner_ids[:MAX_PRACTITIONERS]}
+        out: List[ProviderAppointment] = []
+        page = 1
+        while page <= 10:
+            data = await self._call("GET", "/appointments", params={
+                "start_time": _iso(datetime.combine(date_from, time.min, tzinfo=zone)),
+                "finish_time": _iso(datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=zone)),
+                "practitioner_ids[]": sorted(wanted), "per_page": 100, "page": page})
+            rows = data.get("appointments") or []
+            for r in rows:
+                pid = str(r.get("practitioner_id") or "")
+                if pid not in wanted or not r.get("start_time"):
+                    continue
+                s = _parse(r["start_time"])
+                finish = _parse(r["finish_time"]) if r.get("finish_time") else s + timedelta(minutes=30)
+                state = str(r.get("state") or "").lower()
+                status = ("cancelled" if state == "cancelled" or r.get("cancelled_at")
+                          else "did_not_attend" if state in ("did_not_attend", "dna", "failed")
+                          else "completed" if state == "completed" else "booked")
+                out.append(ProviderAppointment(
+                    id=str(r.get("id")), start=s, end=finish, practitioner_id=pid,
+                    patient_name=str(r.get("patient_name") or "").strip() or "Patient",
+                    type_name=str(r.get("reason") or ""), status=status))
+            if len(rows) < 100:
+                break
+            page += 1
+        out.sort(key=lambda a: (a.start, a.practitioner_id))
+        return out
 
     async def list_lapsed_patients(self, since_date: datetime, exclude_with_future_booking: bool = True,
                                    *, now: Optional[datetime] = None) -> List[LapsedPatient]:

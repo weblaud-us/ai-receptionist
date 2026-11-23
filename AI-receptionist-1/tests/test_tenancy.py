@@ -35,13 +35,18 @@ def test_ids_are_prefixed_sortable_and_unique():
     assert a.startswith("ten_") and len(a) == 30 and a != b
 
 
-def test_greeting_discloses_ai_and_recording():
+def test_greeting_discloses_ai_and_transcription_where_required():
     t = TenantConfig.from_doc(_doc())
     assert t.greeting_text() == "Thanks for calling Bella Dental, this is Aria, Bella Dental's virtual assistant. How can I help?"
-    t.agent.recording.enabled = True
-    assert "may be recorded" in t.greeting_text()
+    assert "record" not in t.greeting_text()                    # nothing is recorded, anywhere
+    for country in ("AU", "GB"):                                # two-party consent / UK GDPR: always told
+        t.country = country
+        assert "This call is transcribed for the team." in t.greeting_text()
+    t.country = "US"
+    t.agent.call_notice = "Calls are transcribed for quality."  # elsewhere: only the owner's own notice
+    assert "Calls are transcribed for quality." in t.greeting_text()
     t.agent.greeting = "Hi, you've reached Bella Dental. I'm Aria, an AI assistant. What can I do for you?"
-    assert t.greeting_text().count("?") == 1 and "recorded" in t.greeting_text()
+    assert t.greeting_text().count("?") == 1 and "transcribed" in t.greeting_text()
 
 
 def test_custom_greeting_without_ai_disclosure_gets_one():
@@ -191,7 +196,7 @@ def test_dental_vertical_and_old_documents_load_with_defaults():
     t = TenantConfig.from_doc(_doc(vertical="dental"))
     assert t.vertical == "dental"
     assert t.dental.accepts_nhs is False and t.dental.accepts_private_health_funds is False
-    assert t.agent.stt_keyterms == [] and t.agent.recording.announce_text == ""
+    assert t.agent.stt_keyterms == [] and t.agent.call_notice == ""
     old = TenantConfig.from_doc(_doc())                       # a pre-dental document: nothing new in it
     assert old.vertical == "clinic" and old.dental.finance_available is False
 
@@ -205,17 +210,17 @@ def test_split_shift_hours_close_for_lunch():
     assert t.is_open(monday(14, 15)) and not t.is_open(monday(17, 45))
 
 
-def test_stt_keyterms_and_recording_notice_are_cleaned_and_capped():
+def test_stt_keyterms_and_call_notice_are_cleaned_and_capped():
     t = TenantConfig.from_doc(_doc(agent={"stt_keyterms": ["  Invisalign ", "invisalign", "", "x" * 80] +
                                                           [f"term{i}" for i in range(80)],
-                                          "recording": {"enabled": True, "announce_text": "  Calls are recorded  for training. "}}))
+                                          "call_notice": "  Calls are transcribed  for training. " + "x" * 300}))
     terms = t.agent.stt_keyterms
     assert terms[0] == "Invisalign" and terms.count("Invisalign") == 1 and len(terms) == 50
     assert all(len(w) <= 40 for w in terms)
-    assert t.agent.recording.announce_text == "Calls are recorded for training."
-    assert "Calls are recorded for training." in t.greeting_text()
-    plain = TenantConfig.from_doc(_doc(agent={"recording": {"enabled": True}}))
-    assert "This call may be recorded." in plain.greeting_text()
+    assert t.agent.call_notice.startswith("Calls are transcribed for training. x") and len(t.agent.call_notice) == 200
+    assert "Calls are transcribed for training." in t.greeting_text()
+    plain = TenantConfig.from_doc(_doc(agent={"recording": {"enabled": True}}))    # an old document
+    assert "record" not in plain.greeting_text()
 
 
 async def test_dental_tenants_start_with_lunch_break_hours_and_dental_services(db):

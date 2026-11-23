@@ -111,11 +111,10 @@ def test_greeting_uses_the_call_start_in_the_practices_own_timezone():
     from agent.profile import VoiceProfile
 
     au = VoiceProfile(tenant=TenantConfig(_id="t1", name="Harbour Smiles", slug="hs", vertical="dental",
-                                          timezone=SYD, hours=SPLIT,
-                                          agent={"recording": {"enabled": True}}))
+                                          timezone=SYD, hours=SPLIT))
     # Monday 23 Nov 2026, 02:30 UTC = 13:30 in Sydney (AEDT, +11): reception is at lunch.
     lunch = au.greeting_for(datetime(2026, 11, 23, 2, 30, tzinfo=UTC))
-    assert lunch.startswith("Just so you know, this call may be recorded. Thanks for calling Harbour Smiles. "
+    assert lunch.startswith("Just so you know, this call is transcribed for the practice. Thanks for calling Harbour Smiles. "
                             "Our reception team is currently on a short lunch break")
     # 13:30 UTC is 00:30 Tuesday in Sydney: closed, not lunch (a server-clock bug would say lunch).
     assert "We're currently closed" in au.greeting_for(datetime(2026, 11, 23, 13, 30, tzinfo=UTC))

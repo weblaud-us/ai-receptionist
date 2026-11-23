@@ -17,17 +17,20 @@ Cliniko API docs and a test account before the first customer goes live.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from config import settings
+from core.services import pms_cache
 from core.services.scheduling_provider import (
     RECALL_LOOKBACK_DAYS, AppointmentType, CreatedAppointment, LapsedPatient, Patient, PMSError, Practitioner,
-    ProviderSlot, lapsed_from_visits, request_json, same_phone, split_name,
+    ProviderAppointment, ProviderSlot, lapsed_from_visits, pick_patient, request_json, split_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,7 @@ MAX_PAGES = 10
 RECALL_MAX_PAGES = 60            # appointments scanned for recall (100 per page); runs in the jobs worker
 MAX_WEEKS = 2                    # a call asks about a day or a few; never scan months live
 MAX_PRACTITIONERS = 6            # "anyone": ask about at most this many diaries at once
+PARALLEL_REQUESTS = 4            # availability requests in flight at once, per lookup
 CANCEL_REASON_OTHER = 50         # ⚠ VERIFY: Cliniko's cancellation reason code for "Other"
 
 
@@ -77,6 +81,8 @@ class ClinikoProvider:
     async def _call(self, method: str, path: str, *, params: Any = None, json_body: Any = None,
                     write: bool = False) -> Any:
         url = path if path.startswith("http") else f"{self.base}{path}"
+        if not await pms_cache.spend(self.name, self.api_key):
+            raise PMSError("too many diary requests this minute", status=429)
         return await request_json(method, url, headers=self._headers(), auth=httpx.BasicAuth(self.api_key, ""),
                                   params=params, json_body=json_body, write=write)
 
@@ -136,20 +142,36 @@ class ClinikoProvider:
         business = await self._ensure_business()
         duration = timedelta(minutes=int(service.get("duration_min") or 30))
         last = min(date_to, date_from + timedelta(days=7 * MAX_WEEKS - 1))
-        slots: List[ProviderSlot] = []
-        for pid in practitioner_ids[:MAX_PRACTITIONERS]:
-            start = date_from
-            while start <= last:
-                end = min(last, start + timedelta(days=6))
+        # Cliniko answers one practitioner and one week per request. Asked one after another, six
+        # dentists over two weeks is ~12 round trips (longer than the tool's timeout), so ask in
+        # parallel, a few at a time.
+        weeks: List[Tuple[date, date]] = []
+        start = date_from
+        while start <= last:
+            end = min(last, start + timedelta(days=6))
+            weeks.append((start, end))
+            start = end + timedelta(days=1)
+        gate = asyncio.Semaphore(PARALLEL_REQUESTS)
+
+        async def one(pid: str, week_from: date, week_to: date) -> List[ProviderSlot]:
+            async with gate:
                 rows = await self._list(
                     f"/businesses/{business}/practitioners/{pid}/appointment_types/{type_id}/available_times",
-                    "available_times", {"from": start.isoformat(), "to": end.isoformat()})
-                for r in rows:
-                    value = r.get("appointment_start") or r.get("starts_at")
-                    if value:
-                        s = _parse(value)
-                        slots.append(ProviderSlot(start=s, end=s + duration, practitioner_id=str(pid)))
-                start = end + timedelta(days=1)
+                    "available_times", {"from": week_from.isoformat(), "to": week_to.isoformat()})
+            out = []
+            for r in rows:
+                value = r.get("appointment_start") or r.get("starts_at")
+                if value:
+                    s = _parse(value)
+                    out.append(ProviderSlot(start=s, end=s + duration, practitioner_id=str(pid)))
+            return out
+
+        parts = await asyncio.gather(*(one(pid, a, b) for pid in practitioner_ids[:MAX_PRACTITIONERS]
+                                       for a, b in weeks), return_exceptions=True)
+        failed = [p for p in parts if isinstance(p, BaseException)]
+        if failed:
+            raise failed[0]                       # every request has finished; none is left running
+        slots: List[ProviderSlot] = [s for part in parts if not isinstance(part, BaseException) for s in part]
         slots.sort(key=lambda x: (x.start, x.practitioner_id))
         return slots
 
@@ -158,11 +180,9 @@ class ClinikoProvider:
     async def _find_patient(self, patient: Patient) -> Optional[str]:
         first, last = split_name(patient.name)
         rows = await self._list("/patients", "patients", {"q[]": [f"last_name:={last}"]})
-        for r in rows:
-            numbers = [n.get("number", "") for n in r.get("patient_phone_numbers") or []]
-            if any(same_phone(n, patient.phone) for n in numbers):
-                return str(r["id"])
-        return None
+        return pick_patient([{"id": r["id"], "first_name": r.get("first_name"), "date_of_birth": r.get("date_of_birth"),
+                              "phones": [n.get("number", "") for n in r.get("patient_phone_numbers") or []]}
+                             for r in rows], patient)
 
     async def _create_patient(self, patient: Patient) -> str:
         first, last = split_name(patient.name)
@@ -170,6 +190,8 @@ class ClinikoProvider:
                                 "patient_phone_numbers": [{"phone_type": "Mobile", "number": patient.phone}]}
         if patient.email:
             body["email"] = patient.email
+        if patient.date_of_birth:
+            body["date_of_birth"] = patient.date_of_birth.isoformat()
         row = await self._call("POST", "/patients", json_body=body, write=True)
         return str(row["id"])
 
@@ -202,6 +224,35 @@ class ClinikoProvider:
         await self._call("PATCH", f"/individual_appointments/{appointment_id}/cancel", write=True,
                          json_body={"cancellation_reason": CANCEL_REASON_OTHER,
                                     "cancellation_note": (reason or "Cancelled by phone")[:200]})
+
+    # ── A dentist's day (plan E2) ─────────────────────────────────────────
+
+    async def list_appointments(self, date_from: date, date_to: date,
+                                practitioner_ids: List[str]) -> List[ProviderAppointment]:
+        """Individual appointments for these practitioners between two local days. ⚠ VERIFY the
+        `practitioner_id` filter, `patient_name` and the `appointment_type` link against the Cliniko API
+        docs with a real account (the field names follow the ones recall already reads)."""
+        zone = ZoneInfo(self.timezone or "Australia/Sydney")
+        start = datetime.combine(date_from, time.min, tzinfo=zone)
+        end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=zone)
+        out: List[ProviderAppointment] = []
+        for pid in practitioner_ids[:MAX_PRACTITIONERS]:
+            rows = await self._list("/individual_appointments", "individual_appointments", {"q[]": [
+                f"starts_at:>={_iso(start)}", f"starts_at:<{_iso(end)}", f"practitioner_id:={pid}"]})
+            for r in rows:
+                begins = r.get("starts_at") or r.get("appointment_start")
+                if not begins:
+                    continue
+                s = _parse(begins)
+                finish = _parse(r["ends_at"]) if r.get("ends_at") else s + timedelta(minutes=30)
+                status = ("cancelled" if r.get("cancelled_at") else "did_not_attend" if r.get("did_not_arrive")
+                          else "booked")
+                out.append(ProviderAppointment(
+                    id=str(r.get("id")), start=s, end=finish, practitioner_id=str(pid),
+                    patient_name=str(r.get("patient_name") or "").strip() or "Patient",
+                    type_name=str(r.get("appointment_type_name") or ""), status=status))
+        out.sort(key=lambda a: (a.start, a.practitioner_id))
+        return out
 
     # ── Recall (patient reactivation) ─────────────────────────────────────
 

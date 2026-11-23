@@ -57,7 +57,6 @@ DEFAULT_PERSONA = "sales_v1"
 _CONSENTED_OPENER = ("Hi, this is {persona}, an AI assistant from {company}. You asked us for a call about our "
                      "AI receptionist{for_business}. Is now a good time? If you'd rather not hear from us, "
                      "just say so and I'll take you off our list.")
-_RECORDING_NOTICE = " This call may be recorded."
 
 VOICEMAIL_MESSAGE = ("Hi, this is {persona}, an AI assistant from {company}, returning your request for a call "
                      "about our AI receptionist. You can reach us on {callback}. If you'd prefer no more calls, "
@@ -79,7 +78,7 @@ def _business(lead: Mapping[str, Any]) -> str:
     return str(lead.get("business_name") or "").strip() or "your business"
 
 
-def opener(persona: Persona, lead: Mapping[str, Any], mode: str, *, recording: bool = False) -> str:
+def opener(persona: Persona, lead: Mapping[str, Any], mode: str) -> str:
     """The exact first sentence(s) of the call."""
     names = {"persona": settings.SALES_PERSONA_NAME, "company": settings.SALES_COMPANY_NAME}
     if mode == "ai_consented":
@@ -87,7 +86,7 @@ def opener(persona: Persona, lead: Mapping[str, Any], mode: str, *, recording: b
         text = _CONSENTED_OPENER.format(for_business=f" for {business}" if business else "", **names)
     else:
         text = persona.cold_opener.format(business=_business(lead), **names)
-    return text + (_RECORDING_NOTICE if recording else "")
+    return text
 
 
 def check_opener(text: str) -> List[str]:

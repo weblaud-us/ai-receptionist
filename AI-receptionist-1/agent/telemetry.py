@@ -1,12 +1,17 @@
 """
 Per-turn latency — the numbers Phase 1 is accepted on (Roadmap Tasks 1.1 and 1.12.c).
 
-livekit-agents 1.8 attaches a MetricsReport to each assistant ChatMessage:
-    e2e_latency         caller stopped speaking → agent audio starts   ← "response latency"
-    end_of_turn_delay   end of speech → turn declared over
-    transcription_delay end of speech → final transcript
-    llm_node_ttft       LLM time to first token
-    tts_node_ttfb       TTS time to first audio
+livekit-agents 1.8 attaches a MetricsReport to each ChatMessage. The user-side and assistant-side
+keys live on DIFFERENT messages, so a turn row joins the caller's message with the reply to it:
+    user message:
+        end_of_turn_delay    end of speech → turn declared over
+        transcription_delay  end of speech → final transcript
+    assistant message:
+        e2e_latency          caller stopped speaking → agent audio starts   ← "response latency"
+        llm_node_ttft        LLM time to first token
+        llm_node_ttfs        LLM start → first sentence handed to the TTS
+        tts_node_ttfb        TTS time to first audio
+        playback_latency     first frame forwarded → playback started
 (`metrics_collected` still fires but is deprecated in favour of these.)
 
 A "turn" is the caller's utterance plus the first agent reply to it. Its latency is that first
@@ -25,7 +30,14 @@ from agent.state import CallState
 
 logger = logging.getLogger(__name__)
 
-_METRIC_KEYS = ("e2e_latency", "end_of_turn_delay", "transcription_delay", "llm_node_ttft", "tts_node_ttfb")
+USER_METRIC_KEYS = ("end_of_turn_delay", "transcription_delay")
+ASSISTANT_METRIC_KEYS = ("e2e_latency", "llm_node_ttft", "llm_node_ttfs", "tts_node_ttfb", "playback_latency")
+STAGE_KEYS = ("end_of_turn_delay", "transcription_delay", "llm_node_ttft", "llm_node_ttfs", "tts_node_ttfb")
+
+
+def _numbers(metrics: dict[str, Any], keys: Iterable[str]) -> dict[str, float]:
+    return {k: round(float(v), 3) for k in keys
+            if isinstance((v := metrics.get(k)), (int, float)) and not isinstance(v, bool) and v >= 0}
 
 
 def percentile(values: Iterable[float], pct: float) -> Optional[float]:
@@ -69,11 +81,13 @@ class TurnTracker:
         self._awaiting_reply = False
         self._tool_before_reply = False
         self._current: Optional[dict[str, Any]] = None
+        self._user_metrics: dict[str, float] = {}
 
-    def on_user_message(self) -> None:
+    def on_user_message(self, metrics: Optional[dict[str, Any]] = None) -> None:
         self._awaiting_reply = True
         self._tool_before_reply = False
         self._current = None
+        self._user_metrics = _numbers(metrics or {}, USER_METRIC_KEYS)
 
     def on_assistant_message(self, metrics: dict[str, Any], interrupted: bool = False) -> None:
         if not self._awaiting_reply:
@@ -81,11 +95,9 @@ class TurnTracker:
         self._awaiting_reply = False
         row: dict[str, Any] = {"turn": len(self.state.turns) + 1, "tool_turn": self._tool_before_reply,
                                "interrupted": bool(interrupted)}
-        for key in _METRIC_KEYS:
-            value = metrics.get(key)
-            if isinstance(value, (int, float)):
-                row[key] = round(float(value), 3)
-        latency = turn_latency(metrics)
+        joined = {**self._user_metrics, **_numbers(metrics, ASSISTANT_METRIC_KEYS)}
+        row.update(joined)
+        latency = turn_latency(joined)
         row["latency_s"] = round(latency, 3) if latency is not None else None
         self.state.turns.append(row)
         self._current = row
@@ -112,7 +124,7 @@ def attach_telemetry(session: Any, state: CallState) -> TurnTracker:
         item = ev.item
         role = getattr(item, "role", None)
         if role == "user":
-            tracker.on_user_message()
+            tracker.on_user_message(dict(getattr(item, "metrics", None) or {}))
         elif role == "assistant":
             tracker.on_assistant_message(dict(getattr(item, "metrics", None) or {}),
                                          bool(getattr(item, "interrupted", False)))

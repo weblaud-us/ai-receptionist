@@ -505,10 +505,10 @@ def test_every_opener_discloses_ai_company_and_opt_out():
     lead = {"business_name": "Joe's Plumbing"}
     for script in persona.PERSONAS.values():
         for mode in ("ai_cold_b2b_us", "ai_consented"):
-            text = persona.opener(script, lead, mode, recording=True)
+            text = persona.opener(script, lead, mode)
             assert persona.check_opener(text) == [], text
             assert text.startswith(f"Hi, this is {settings.SALES_PERSONA_NAME}, an AI assistant")
-            assert text.endswith("This call may be recorded.")
+            assert "recorded" not in text                       # sales calls aren't recorded either
     assert "Joe's Plumbing" in persona.opener(persona.get("sales_v1"), lead, "ai_cold_b2b_us")
     assert persona.check_opener("Hi, got a minute?") != []
 

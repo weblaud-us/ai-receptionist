@@ -113,10 +113,12 @@ async def db():
 def _fresh_shared_state():
     """Rate limits, dedupe and the metrics cache live in process memory in tests: start each test clean."""
     from core import dedupe, metrics, ratelimit
+    from core.services import pms_cache
 
     ratelimit.memory.reset()
     dedupe.reset()
     metrics.reset_cache()
+    pms_cache.reset_for_tests()
     yield
 
 

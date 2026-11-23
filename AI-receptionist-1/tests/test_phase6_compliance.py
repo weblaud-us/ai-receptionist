@@ -27,6 +27,15 @@ from core.services.tenant_admin import create_tenant
 from core.tenancy import invalidate
 from core.tenancy.models import TenantConfig
 
+
+@pytest.fixture(autouse=True)
+def _sms_on(monkeypatch):
+    """These tests cover the SMS paths, which the platform has switched off (config.SMS_ENABLED)."""
+    from config import settings as _settings
+
+    monkeypatch.setattr(_settings, "SMS_ENABLED", True)
+
+
 PASSWORD = "correct horse battery"
 CALLER = "+15125550111"
 BASE = "https://receptionist.example.com"
@@ -326,8 +335,9 @@ def test_public_signup_needs_published_legal_documents():
 
 # ── Retention ───────────────────────────────────────────────
 
-async def test_recordings_are_deleted_after_the_business_retention(db, monkeypatch):
-    t = await _tenant("ten_A", agent={"recording": {"enabled": True, "retention_days": 7}})
+async def test_audio_from_before_recording_stopped_is_still_deleted(db, monkeypatch):
+    t = await _tenant("ten_A")
+    monkeypatch.setattr(settings, "RECORDING_RETENTION_DAYS", 7)
     now = datetime.now(timezone.utc)
     repos = Repos(db, t.id)
     await repos.calls.insert_one({"call_id": "old", "started_at": now - timedelta(days=8), "recording": {"path": "a.ogg"}})

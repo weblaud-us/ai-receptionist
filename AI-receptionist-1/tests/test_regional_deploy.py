@@ -72,7 +72,7 @@ def test_dental_preflight_passes_a_well_set_up_au_stack_and_flags_wrong_defaults
     msg = next(m for level, check, m in dental_preflight(good, [wrong]) if check == "Practice")
     assert "timezone" in msg and "currency" in msg and "speech language" in msg and "eu-west-2" in msg
     uk_edge = Settings(**PROD, TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode(), DEPLOYMENT_REGION="eu-west-2",
-                       TWILIO_EDGE="sydney")
+                       TWILIO_EDGE="sydney", LEGACY_TWILIO_VOICE=False)
     assert any(check == "Twilio edge" for _, check, _ in dental_preflight(uk_edge, [_practice("GB")]))
 
 

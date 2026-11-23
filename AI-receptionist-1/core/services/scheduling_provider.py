@@ -70,6 +70,19 @@ class AppointmentType:
 
 
 @dataclass(frozen=True)
+class ProviderAppointment:
+    """One booking in the practice diary, read for a dentist's day (plan E2). Never stored here."""
+    id: str
+    start: datetime              # aware, UTC
+    end: datetime
+    practitioner_id: str
+    patient_name: str
+    patient_phone: str = ""
+    type_name: str = ""
+    status: str = "booked"       # booked | cancelled | did_not_attend | completed
+
+
+@dataclass(frozen=True)
 class ProviderSlot:
     start: datetime              # aware, UTC
     end: datetime
@@ -81,6 +94,7 @@ class Patient:
     name: str
     phone: str
     email: Optional[str] = None
+    date_of_birth: Optional[date] = None     # tells apart family members sharing one phone (audit P0-14)
 
 
 @dataclass(frozen=True)
@@ -124,6 +138,11 @@ class SchedulingProvider(Protocol):
                                  practitioner_id: str, notes: str) -> CreatedAppointment: ...
 
     async def cancel_appointment(self, appointment_id: str, reason: str) -> None: ...
+
+    async def list_appointments(self, date_from: date, date_to: date,
+                                practitioner_ids: List[str]) -> List[ProviderAppointment]:
+        """The diary between two business-local days (inclusive), for these practitioners."""
+        ...
 
     async def list_lapsed_patients(self, since_date: datetime, exclude_with_future_booking: bool = True,
                                    *, now: Optional[datetime] = None) -> List[LapsedPatient]:
@@ -218,6 +237,7 @@ class _Broken:
 
     test_connection = list_practitioners = list_appointment_types = _fail
     get_available_slots = create_appointment = cancel_appointment = list_lapsed_patients = _fail
+    list_appointments = _fail
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
@@ -285,7 +305,58 @@ def digits(phone: str) -> str:
     return "".join(c for c in phone or "" if c.isdigit())
 
 
+def national_number(phone: str) -> str:
+    """The national significant number: +61 412 345 678 and 0412 345 678 → "412345678";
+    +44 7700 900123 and 07700 900123 → "7700900123". Empty when it doesn't look like a phone number."""
+    raw = (phone or "").strip()
+    d = digits(raw)
+    if len(d) < 7:
+        return ""
+    if raw.startswith("+") or raw.startswith("00"):
+        try:
+            import phonenumbers
+
+            return str(phonenumbers.parse("+" + d.lstrip("0") if raw.startswith("00") else raw, None).national_number)
+        except Exception:
+            return ""
+    return d.lstrip("0")
+
+
 def same_phone(a: str, b: str) -> bool:
-    """+61 412 345 678 == 0412 345 678: compare the last 9 digits (national number without trunk 0)."""
-    da, db = digits(a), digits(b)
-    return bool(da and db) and da[-9:] == db[-9:]
+    """The same number written two ways. Compares the whole national number (audit P0-14: the old
+    last-9-digits rule matched different UK numbers)."""
+    na, nb = national_number(a), national_number(b)
+    return bool(na) and na == nb
+
+
+def _first(name: str) -> str:
+    return (name or "").strip().split()[0].lower() if (name or "").strip() else ""
+
+
+def pick_patient(candidates: List[Dict[str, Any]], patient: "Patient") -> Optional[str]:
+    """The one diary record that is this caller, or None (book them as a new patient rather than guess).
+    Each candidate: {id, first_name, phones: [...], date_of_birth: "YYYY-MM-DD" | None}, already
+    filtered on surname. Phone and first name must match; a date of birth, when both sides have one,
+    must match too. Two records still left (a parent and child with the same first initial and phone)
+    means no match: a wrong merge puts allergies on the wrong person's record."""
+    first = _first(patient.name)
+    dob = patient.date_of_birth.isoformat() if patient.date_of_birth else ""
+    found = []
+    for c in candidates:
+        if not any(same_phone(p, patient.phone) for p in c.get("phones") or []):
+            continue
+        theirs = _first(str(c.get("first_name") or ""))
+        if first and theirs and not (theirs == first or theirs.startswith(first) or first.startswith(theirs)):
+            continue
+        their_dob = str(c.get("date_of_birth") or "")[:10]
+        if dob and their_dob and their_dob != dob:
+            continue
+        found.append(c)
+    exact = [c for c in found if dob and str(c.get("date_of_birth") or "")[:10] == dob]
+    if exact:
+        found = exact                       # a record with their exact date of birth beats one without any
+    if len(found) == 1:
+        return str(found[0]["id"])
+    if len(found) > 1:
+        logger.info("Several diary records match a caller; booking as a new patient for the team to merge")
+    return None

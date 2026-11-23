@@ -662,7 +662,6 @@ async def system(tp: TenantPrincipal = Depends(_admin)):
             "one_day_reminder": settings.ENABLE_ONE_DAY_BOOKING_REMINDER,
             "whatsapp": settings.ENABLE_WHATSAPP,
             "voice_calls": settings.ENABLE_VOICE_CALLS,
-            "call_recording": settings.ENABLE_CALL_RECORDING,
             "livekit_realtime": settings.LIVEKIT_USE_REALTIME,
             # The old Twilio Media Streams path (/voice/*), off after the SIP cutover (Task 1.13).
             "legacy_twilio_voice": settings.LEGACY_TWILIO_VOICE,

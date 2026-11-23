@@ -20,6 +20,15 @@ from core.services.tenant_admin import create_tenant
 from core.tenancy import invalidate, resolve_by_id
 from core.tenancy.models import DEFAULT_RECALL_TEMPLATE, ReactivationSettings, recall_template_problems
 
+
+@pytest.fixture(autouse=True)
+def _sms_on(monkeypatch):
+    """These tests cover the SMS paths, which the platform has switched off (config.SMS_ENABLED)."""
+    from config import settings as _settings
+
+    monkeypatch.setattr(_settings, "SMS_ENABLED", True)
+
+
 AU_MOBILE = "+61412345678"
 UK_MOBILE = "+447911123456"
 BASE = "https://receptionist.example.com"

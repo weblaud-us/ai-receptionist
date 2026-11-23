@@ -32,6 +32,7 @@ from livekit.plugins import openai as lk_openai
 from agent.profile import VoiceProfile
 from agent.state import CallState
 from config import settings
+from core.voices import is_aura_model
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
             kwargs["voice"] = settings.CARTESIA_VOICE_ID
         return cartesia.TTS(**kwargs)
     if provider == "deepgram":     # Aura; same key as the streaming STT. The voice is the model name.
-        return deepgram.TTS(model=settings.DEEPGRAM_TTS_MODEL, api_key=settings.DEEPGRAM_API_KEY)
+        return deepgram.TTS(model=aura_model(p), api_key=settings.DEEPGRAM_API_KEY)
     if provider == "kokoro":       # local Kokoro-82M behind Kokoro-FastAPI's OpenAI-compatible endpoint
         return lk_openai.TTS(model=settings.KOKORO_MODEL, voice=settings.KOKORO_VOICE,
                              base_url=settings.KOKORO_BASE_URL, api_key="not-needed")
@@ -112,6 +113,15 @@ def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
         return lk_openai.TTS(model=settings.OPENAI_TTS_MODEL, voice=settings.OPENAI_TTS_VOICE,
                              api_key=settings.OPENAI_API_KEY)
     return None
+
+
+def aura_model(p: VoiceProfile) -> str:
+    """The business's own Aura voice when it picked Deepgram, else the platform default. A voice id
+    chosen for another provider (an ElevenLabs id) is never sent to Deepgram."""
+    own = p.tenant.agent.voice_id
+    if p.voice_provider == "deepgram" and is_aura_model(own):
+        return own
+    return settings.DEEPGRAM_TTS_MODEL
 
 
 def build_tts(p: VoiceProfile) -> Any:
@@ -160,23 +170,42 @@ def build_llm(p: VoiceProfile) -> Any:
     return lk_llm.FallbackAdapter([primary, fallback], attempt_timeout=LLM_ATTEMPT_TIMEOUT_S)
 
 
-def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
+def endpointing(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
+    """The tenant's normal pause before replying (agent/turn_tuning.py lengthens it for digits)."""
     ep = p.tenant.agent.endpointing if p else None
     return {
+        "mode": "dynamic",
+        "min_delay": ep.min_delay if ep else settings.VOICE_ENDPOINTING_MIN_DELAY,
+        "max_delay": ep.max_delay if ep else settings.VOICE_ENDPOINTING_MAX_DELAY,
+    }
+
+
+def turn_detector_version() -> str:
+    """The cloud model needs the LiveKit key pair (an explicit version raises without it, where
+    "auto" would quietly fall back), so without keys use the local model."""
+    if settings.VOICE_TURN_DETECTOR == "v1" and not (settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET):
+        return "v1-mini"
+    return settings.VOICE_TURN_DETECTOR
+
+
+def turn_handling(p: Optional[VoiceProfile] = None) -> dict[str, Any]:
+    return {
+        # Explicit version: left unset, `start` on our own hosts silently uses the smaller local model.
         "turn_detection": inference.TurnDetector(
+            version=turn_detector_version(), local_fallback=True,  # type: ignore[arg-type]
             api_key=settings.LIVEKIT_API_KEY, api_secret=settings.LIVEKIT_API_SECRET),
-        "endpointing": {
-            "mode": "dynamic",
-            "min_delay": ep.min_delay if ep else settings.VOICE_ENDPOINTING_MIN_DELAY,
-            "max_delay": ep.max_delay if ep else settings.VOICE_ENDPOINTING_MAX_DELAY,
-        },
+        "endpointing": endpointing(p),
         "interruption": {
             "enabled": True,
-            "min_duration": 0.5,                # ignore coughs and clicks
+            # Explicit too: unset, production mode turns the adaptive detector off.
+            "mode": settings.VOICE_INTERRUPT_MODE,
+            "min_duration": settings.VOICE_INTERRUPT_MIN_DURATION,   # a short "wait!" must stop the agent
             "false_interruption_timeout": 2.0,
-            "resume_false_interruption": True,  # "mm-hmm" doesn't kill the sentence
+            "resume_false_interruption": True,  # a cough or "mm-hmm" doesn't kill the sentence
         },
-        "preemptive_generation": {"enabled": True, "preemptive_tts": False},
+        # Preemptive TTS: the first words are already synthesised when the turn is confirmed. Aura is
+        # cheap, so the occasional discarded guess costs little and every turn starts sooner.
+        "preemptive_generation": {"enabled": True, "preemptive_tts": settings.VOICE_PREEMPTIVE_TTS},
     }
 
 

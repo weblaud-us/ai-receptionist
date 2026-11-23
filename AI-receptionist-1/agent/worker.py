@@ -10,7 +10,7 @@ agent for whichever tenant owns the dialled number (or is named in the browser t
 
 What happens per call, in order — nothing slow sits before the greeting:
     connect → caller attributes → tenant + business snapshot (cached 60 s) → session → greeting
-    → in the background: caller history, contact bookkeeping, periodic flush, recording.
+    → in the background: caller history, contact bookkeeping, periodic flush, diary prefetch.
 
 Phase 3 (Task 3.6):
 - Deploys don't drop calls: on SIGTERM the worker stops taking new calls and waits up to
@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 from typing import Any, Optional
 
 from config import settings
@@ -57,13 +58,14 @@ from agent.profile import VoiceProfile, resolve_profile, unassigned_profile  # n
 from agent.receptionist import (  # noqa: E402
     BusyLineAgent, DtmfWatcher, ReceptionistAgent, ServiceUnavailableAgent, SilenceWatcher, UnassignedNumberAgent,
 )
-from agent.recording import start_recording  # noqa: E402
-from agent.session_factory import build_session  # noqa: E402
+from agent.session_factory import build_session, endpointing  # noqa: E402
 from agent.state import CallState  # noqa: E402
 from agent.telemetry import attach_telemetry  # noqa: E402
+from agent.turn_tuning import attach_turn_tuning  # noqa: E402
 from core import concurrency  # noqa: E402
 from core.billing.usage import gate as billing_gate  # noqa: E402
 from core.phone import mask_phone  # noqa: E402
+from core.services.scheduling import prefetch_availability  # noqa: E402
 
 logger = logging.getLogger("agent.worker")
 
@@ -73,7 +75,18 @@ TENANT_RESOLVE_TIMEOUT_S = 3.0
 
 def prewarm(proc: JobProcess) -> None:
     """Once per worker process, before any job: load heavy models here, never per call."""
+    _export_livekit_credentials()
     proc.userdata["vad"] = silero.VAD.load()
+
+
+def _export_livekit_credentials() -> None:
+    """livekit-agents builds the adaptive interruption detector itself and only reads
+    LIVEKIT_API_KEY / LIVEKIT_API_SECRET from the environment. Without them it quietly falls back to
+    VAD barge-in, so copy them from settings (which may come from .env, not os.environ)."""
+    for name in ("LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_URL"):
+        value = getattr(settings, name, "")
+        if value:
+            os.environ.setdefault(name, value)
 
 
 server = AgentServer(
@@ -154,12 +167,6 @@ async def _start_background_audio(ctx: JobContext, session: Any, profile: VoiceP
         await player.start(room=ctx.room, agent_session=session)
     except Exception:
         logger.warning("Background audio unavailable", exc_info=True)
-
-
-async def _record(ctx: JobContext, state: CallState) -> None:
-    if not state.profile.recording:
-        return
-    state.recording = await start_recording(ctx.api, state)
 
 
 def _alert_unassigned(caller: dict[str, Any], room: str) -> None:
@@ -246,6 +253,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session = build_session(ctx.proc.userdata, state)  # providers pre-warm when the agent starts
 
     attach_telemetry(session, state)
+    attach_turn_tuning(session, endpointing(profile))   # longer pauses while digits are read out
     attach_provider_health(session, state)
     recorder = CallRecorder(state)
     recorder.attach(session)
@@ -272,10 +280,11 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     recorder.start()
+    # While the greeting plays: fetch this week's diary so "when can I come in?" doesn't wait on the PMS.
+    asyncio.create_task(prefetch_availability(state.tool_context().repos(), profile.tenant))
     asyncio.create_task(_load_history(agent, state))
     asyncio.create_task(record_contact_call(state))
     asyncio.create_task(_start_background_audio(ctx, session, profile))
-    asyncio.create_task(_record(ctx, state))
 
 
 def main() -> None:
@@ -283,6 +292,7 @@ def main() -> None:
                if not getattr(settings, v)]
     if missing:
         raise SystemExit(f"Missing settings for the voice agent: {', '.join(missing)}")
+    _export_livekit_credentials()           # job processes inherit it (prewarm sets it again per process)
     logger.info("Voice agent '%s' (env=%s, telephony=%s, LLM %s%s, STT %s, TTS %s, drain %ss, redis %s)",
                 settings.LIVEKIT_AGENT_NAME, settings.APP_ENV, settings.telephony_provider, settings.VOICE_LLM_MODEL,
                 f" → {settings.VOICE_LLM_FALLBACK_MODEL}" if settings.ANTHROPIC_API_KEY else "",

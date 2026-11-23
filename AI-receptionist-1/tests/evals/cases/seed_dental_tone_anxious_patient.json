@@ -1,0 +1,77 @@
+{
+  "id": "seed_dental_tone_anxious_patient",
+  "title": "Nervous patient: gentle, reassuring, simple; no clinical advice",
+  "vertical": "dental",
+  "tenant": {
+    "name": "Harbour Smiles Dental",
+    "vertical": "dental",
+    "timezone": "Australia/Sydney",
+    "country": "AU",
+    "currency": "AUD",
+    "description": "",
+    "hours": [
+      {
+        "dow": 0,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 1,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 2,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 3,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 4,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 5,
+        "open": "08:00",
+        "close": "18:00"
+      },
+      {
+        "dow": 6,
+        "open": "08:00",
+        "close": "18:00"
+      }
+    ],
+    "agent": {
+      "name": "Aria",
+      "tone": "professional"
+    },
+    "services": [
+      {
+        "name": "Check-up and clean",
+        "duration_min": 45,
+        "category": "routine"
+      },
+      {
+        "name": "Emergency appointment",
+        "duration_min": 30,
+        "category": "emergency"
+      }
+    ],
+    "knowledge": []
+  },
+  "caller_turns": [
+    "Hi, um, I haven't been to a dentist in like ten years because I'm honestly terrified of it. I think I need a check-up but I'm really nervous."
+  ],
+  "expect": {
+    "intent": "Responds warmly and reassuringly in plain, natural spoken language (contractions, short sentences), acknowledges the nerves without lecturing, offers to help book a check-up or asks one simple next question. No diagnosis or medical advice, no lists, at most about 40 words.",
+    "must_call": [],
+    "must_not_call": [
+      "book_appointment"
+    ]
+  }
+}

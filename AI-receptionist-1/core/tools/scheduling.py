@@ -48,6 +48,8 @@ SCHEDULING_TOOLS: List[Dict[str, Any]] = [
             "phone": {"type": "string", "description": "Contact number with country code, if different from the caller's"},
             "notes": {"type": "string", "description": "Anything the team should know"},
             "party_size": {"type": "integer"},
+            "date_of_birth": {"type": "string",
+                              "description": "YYYY-MM-DD. Ask existing patients, so the right record is used"},
         }, "required": ["slot_id", "name"]}}},
     {"type": "function", "function": {
         "name": "find_my_appointments",
@@ -153,6 +155,16 @@ async def check_availability(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[s
     }
 
 
+def _parse_dob(value: Any, now: Optional[datetime]) -> Optional[date]:
+    """A plausible date of birth, or None (a misheard one must never match the wrong record)."""
+    try:
+        dob = date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return None
+    today = (now or datetime.now(timezone.utc)).date()
+    return dob if date(today.year - 120, 1, 1) <= dob <= today else None
+
+
 async def book_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str, Any]:
     svc = _service(ctx)
     decoded = av.decode_slot_id(str(args.get("slot_id") or ""))
@@ -169,11 +181,12 @@ async def book_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str
     service = svc.match_service(services, args.get("service"))
     if services and service is None:
         return {"error": "service_required", "message": "Ask which service, then book again."}
+    dob = _parse_dob(args.get("date_of_birth"), ctx.now)
     try:
         appt = await svc.book(resource_id=resource_id, start=start, service=service, name=name, phone=phone,
                               notes=str(args.get("notes") or ""), source=ctx.channel if ctx.channel != "browser" else "web",
                               call_id=ctx.call_id, party_size=int(args["party_size"]) if args.get("party_size") else None,
-                              now=ctx.now)
+                              now=ctx.now, date_of_birth=dob)
     except SchedulingError as e:
         return {"error": e.code, "message": e.message}
     t = ctx.tenant_cfg

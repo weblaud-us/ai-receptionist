@@ -33,7 +33,6 @@ class CallState:
     tools_used: list[str] = field(default_factory=list)
     greeting_latency_s: Optional[float] = None
     outcome: Optional[str] = None             # booked / transferred / message / cancelled / completed
-    recording: Optional[dict[str, Any]] = None
     ended_reason: Optional[str] = None
     # Provider health during this call (Phase 3, Task 3.7): {"llm": 2, "tts": 1}
     provider_errors: dict[str, int] = field(default_factory=dict)
@@ -45,6 +44,7 @@ class CallState:
     lead_id: Optional[str] = None
     attempt_id: Optional[str] = None
     summary_prompt: Optional[str] = None      # replaces the receptionist's summary instructions
+    fillers_used: list[str] = field(default_factory=list)       # "one moment…" lines already said (agent/fillers.py)
 
     @property
     def tenant_id(self) -> str:

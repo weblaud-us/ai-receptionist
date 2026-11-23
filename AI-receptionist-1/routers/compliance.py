@@ -82,8 +82,9 @@ async def legal_status(tp: TenantPrincipal = Depends(_member)):
         "dpa": legal.dpa_status(tp.tenant),
         "outstanding": [] if tp.user.platform_admin else legal.outstanding(user),
         "subprocessors": legal.SUBPROCESSORS,
-        "retention": {"transcript_days": a.transcript_retention_days, "recording_days": a.recording.retention_days,
-                      "recording_enabled": a.recording.enabled, "after_cancellation_days": settings.CANCEL_RETENTION_DAYS},
+        # Call audio is never recorded: only transcripts are kept.
+        "retention": {"transcript_days": a.transcript_retention_days,
+                      "after_cancellation_days": settings.CANCEL_RETENTION_DAYS},
         "privacy_contact": settings.PRIVACY_CONTACT_EMAIL or settings.SUPPORT_EMAIL,
         "dsr_deadline_days": settings.DSR_DEADLINE_DAYS,
     })

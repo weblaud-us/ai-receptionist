@@ -15,6 +15,7 @@ from typing import Any, Optional
 from livekit.agents import RunContext, function_tool
 from livekit.agents.llm import RawFunctionTool, Tool, Toolset
 
+from agent import fillers
 from agent.profile import VoiceProfile
 from core.tools.registry import run_tool, schemas_for
 
@@ -42,7 +43,14 @@ def _make_tool(schema: dict[str, Any]) -> RawFunctionTool:
 
     async def handler(raw_arguments: dict[str, object], context: RunContext) -> str:
         state = context.userdata
-        result = await run_tool(state.tool_context(), name, dict(raw_arguments))
+        filler = fillers.source_for(name, state)
+        with_filler = getattr(context, "with_filler", None)
+        if filler is not None and with_filler is not None:
+            # Speaks only if the lookup is still running after DELAY_S of silence (plan A2.1).
+            async with with_filler(filler, delay=fillers.DELAY_S, max_steps=1):
+                result = await run_tool(state.tool_context(), name, dict(raw_arguments))
+        else:
+            result = await run_tool(state.tool_context(), name, dict(raw_arguments))
         if name in _OUTCOMES and _succeeded(result):
             state.set_outcome(_OUTCOMES[name])
         return result

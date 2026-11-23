@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 def configured() -> bool:
-    return bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_SMS_FROM)
+    return bool(settings.SMS_ENABLED and settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN
+                and settings.TWILIO_SMS_FROM)
 
 
 async def send_sms(to: str, body: str, sender: Optional[str] = None) -> bool:
@@ -29,6 +30,9 @@ async def send_sms(to: str, body: str, sender: Optional[str] = None) -> bool:
 
 async def send_sms_sid(to: str, body: str, sender: Optional[str] = None) -> Optional[str]:
     """Send one SMS and return Twilio's message SID (for the audit trail), or None. Never raises."""
+    if not settings.SMS_ENABLED:             # the platform doesn't send SMS (config.SMS_ENABLED)
+        logger.info("SMS skipped (SMS is off on this platform) → %s", mask_phone(to))
+        return None
     if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN):
         logger.info("SMS skipped (Twilio not configured) → %s", mask_phone(to))
         return None

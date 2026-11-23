@@ -116,7 +116,7 @@ async def _membership_view(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         t = await tenants.get(m["tenant_id"])
         if t:
             out.append({"tenant_id": t["_id"], "name": t.get("name"), "vertical": t.get("vertical"),
-                        "status": t.get("status"), "role": m.get("role")})
+                        "status": t.get("status"), "role": m.get("role"), "resource_id": m.get("resource_id")})
     return out
 
 
@@ -263,7 +263,8 @@ async def disable_mfa(user_id: str, code: str) -> None:
 
 
 async def create_user(*, email: str, password: Optional[str], name: str = "", tenant_id: Optional[str] = None,
-                      role: str = "owner", platform_admin: bool = False) -> Dict[str, Any]:
+                      role: str = "owner", platform_admin: bool = False,
+                      resource_id: Optional[str] = None) -> Dict[str, Any]:
     email = email.strip().lower()
     users = UsersStore(get_db())
     if await users.by_email(email):
@@ -274,17 +275,26 @@ async def create_user(*, email: str, password: Optional[str], name: str = "", te
             raise HTTPException(400, problem)
     doc = {"_id": new_id("usr"), "email": email, "name": name.strip()[:120],
            "password_hash": hash_password(password) if password else None,
-           "memberships": [{"tenant_id": tenant_id, "role": role}] if tenant_id else [],
+           "memberships": [_membership(tenant_id, role, resource_id)] if tenant_id else [],
            "is_platform_admin": platform_admin, "mfa": {"enabled": False}, "disabled": False,
            "email_verified_at": None, "last_login_at": None}
     await users.insert(doc)
     return doc
 
 
-async def add_membership(user_id: str, tenant_id: str, role: str) -> None:
+def _membership(tenant_id: str, role: str, resource_id: Optional[str] = None) -> Dict[str, Any]:
+    """A dentist's membership names the practitioner (a `resources` row) whose day they see."""
+    m: Dict[str, Any] = {"tenant_id": tenant_id, "role": role}
+    if role == "dentist" and resource_id:
+        m["resource_id"] = resource_id
+    return m
+
+
+async def add_membership(user_id: str, tenant_id: str, role: str, resource_id: Optional[str] = None) -> None:
     db = get_db()
     await db.users.update_one({"_id": user_id}, {"$pull": {"memberships": {"tenant_id": tenant_id}}})
-    await db.users.update_one({"_id": user_id}, {"$push": {"memberships": {"tenant_id": tenant_id, "role": role}}})
+    await db.users.update_one({"_id": user_id},
+                              {"$push": {"memberships": _membership(tenant_id, role, resource_id)}})
 
 
 async def remove_membership(user_id: str, tenant_id: str) -> None:
@@ -317,10 +327,12 @@ async def finish_password_reset(token: str, new_password: str) -> None:
     await db.sessions.delete_many({"user_id": row["user_id"]})      # sign out everywhere
 
 
-async def create_invite(*, tenant_id: str, email: str, role: str, invited_by: str) -> str:
+async def create_invite(*, tenant_id: str, email: str, role: str, invited_by: str,
+                        resource_id: Optional[str] = None) -> str:
     token = new_opaque_token()
     await get_db().invites.insert_one({"token_hash": token_hash(token), "tenant_id": tenant_id,
                                        "email": email.strip().lower(), "role": role, "invited_by": invited_by,
+                                       "resource_id": resource_id if role == "dentist" else None,
                                        "expires_at": utcnow() + INVITE_TTL, "created_at": utcnow()})
     return token
 
@@ -333,12 +345,12 @@ async def accept_invite(token: str, *, password: Optional[str], name: str = "") 
     users = UsersStore(db)
     doc = await users.by_email(row["email"])
     if doc:
-        await add_membership(doc["_id"], row["tenant_id"], row["role"])
+        await add_membership(doc["_id"], row["tenant_id"], row["role"], row.get("resource_id"))
     else:
         if not password:
             raise HTTPException(400, "Choose a password")
         doc = await create_user(email=row["email"], password=password, name=name, tenant_id=row["tenant_id"],
-                                role=row["role"])
+                                role=row["role"], resource_id=row.get("resource_id"))
         await db.users.update_one({"_id": doc["_id"]}, {"$set": {"email_verified_at": utcnow()}})
     await db.invites.delete_one({"_id": row["_id"]})
     return doc

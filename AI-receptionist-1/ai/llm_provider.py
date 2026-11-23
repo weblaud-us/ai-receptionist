@@ -58,6 +58,7 @@ class OpenAIProvider(BaseLLMProvider):
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            store=settings.OPENAI_STORE,      # never kept by OpenAI (audit P0-06)
         )
         if tools:
             kwargs["tools"]       = tools
@@ -101,6 +102,7 @@ class OpenAIProvider(BaseLLMProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            store=settings.OPENAI_STORE,
         )
         async for chunk in stream:
             delta = chunk.choices[0].delta

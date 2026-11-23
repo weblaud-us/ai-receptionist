@@ -298,3 +298,39 @@ async def test_owner_site_import_and_apply_stay_in_their_business(db, client, mo
     assert len(await Repos(db, b.id).services.find()) == 4                    # B untouched (salon examples)
     assert await db.audit_log.find_one({"tenant_id": a.id, "action": "site_import.apply"})
     assert json.dumps(applied.json())
+
+
+# ── Audit P0-02 / SEC-12: SSRF hardening ─────────────────────────────────────
+
+def test_only_web_ports_are_fetched(monkeypatch):
+    from core.services import site_import as si
+
+    monkeypatch.setattr(si, "_host_is_public", lambda h: True)
+    assert si.public_url("https://example.com:443/x")
+    for bad in ("http://example.com:6379/", "https://example.com:27017", "http://example.com:99999/"):
+        with pytest.raises(si.SiteImportError):
+            si.public_url(bad)
+
+
+async def test_a_rebound_address_is_refused_after_connecting(monkeypatch):
+    import httpx
+
+    from core.services import site_import as si
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"<html>secret metadata</html>"
+
+    class FakeNet:
+        def get_extra_info(self, name):
+            return ("169.254.169.254", 80) if name == "server_addr" else None
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/html"}, stream=Stream(),
+                              extensions={"network_stream": FakeNet()})
+
+    monkeypatch.setattr(si, "_host_is_public", lambda h: True)          # the first DNS answer looked public
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(si.SiteImportError, match="public website"):
+            await si.fetch(client, "http://rebind.example/")
+    assert not si._ip_is_public("::ffff:10.0.0.1") and si._ip_is_public("1.1.1.1")

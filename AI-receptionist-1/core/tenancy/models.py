@@ -86,24 +86,12 @@ class EndpointingConfig(BaseModel):
     max_delay: float = Field(default=2.5, ge=0.5, le=6.0)
 
 
-class RecordingConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    enabled: bool = False
-    retention_days: int = Field(default=30, ge=1, le=3650)
-    announce: bool = True
-    announce_text: str = ""                  # owner's own recording notice; empty → "This call may be recorded."
-
-    @field_validator("announce_text")
-    @classmethod
-    def _cap(cls, v: str) -> str:
-        return " ".join((v or "").split())[:MAX_ANNOUNCE_TEXT]
-
 
 class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str = "Aria"
-    voice_provider: Literal["elevenlabs", "cartesia", "openai"] = "elevenlabs"
+    voice_provider: Literal["elevenlabs", "cartesia", "openai", "deepgram"] = "elevenlabs"
     voice_id: str = ""                       # empty → provider default from settings
     language: str = "en-US"                  # TTS / reply language
     stt_language: str = "en-US"              # "multi" for code-switching callers
@@ -113,7 +101,9 @@ class AgentConfig(BaseModel):
     llm_model: str = ""                      # empty → settings.VOICE_LLM_MODEL
     endpointing: EndpointingConfig = Field(default_factory=EndpointingConfig)
     ambience: bool = False
-    recording: RecordingConfig = Field(default_factory=RecordingConfig)
+    # Said at the start of every call: callers are told the call is transcribed (a transcript is a record
+    # of the call; AU two-party-consent states and UK GDPR need notice). Empty → the standard wording.
+    call_notice: str = ""
     max_call_minutes: int = Field(default=15, ge=1, le=120)
     transcript_retention_days: int = Field(default=90, ge=1, le=3650)   # transcripts purged after this
     stt_keyterms: List[str] = Field(default_factory=list)   # owner's extra words STT should expect
@@ -122,6 +112,11 @@ class AgentConfig(BaseModel):
     @classmethod
     def _cap(cls, v: str) -> str:
         return (v or "")[:MAX_CUSTOM_INSTRUCTIONS]
+
+    @field_validator("call_notice")
+    @classmethod
+    def _notice(cls, v: str) -> str:
+        return " ".join((v or "").split())[:MAX_ANNOUNCE_TEXT]
 
     @field_validator("stt_keyterms", mode="before")
     @classmethod
@@ -413,8 +408,10 @@ AnsweringMode = Literal["all_calls", "overflow", "after_hours"]
 # of today's opening intervals is a break (lunch), not "closed for the day".
 AnswerWindow = Literal["open", "lunch_break", "after_hours"]
 MAX_BREAK_MINUTES = 180
-DEFAULT_RECORDING_NOTICE = "This call may be recorded."
-DENTAL_RECORDING_NOTICE = "Just so you know, this call may be recorded."
+# Calls are never recorded (audio), but every call is transcribed, and callers are told so.
+DEFAULT_CALL_NOTICE = "This call is transcribed for the team."
+DENTAL_CALL_NOTICE = "Just so you know, this call is transcribed for the practice."
+CALL_NOTICE_COUNTRIES = ("AU", "GB")
 
 
 class HotelSettings(BaseModel):
@@ -706,15 +703,21 @@ class TenantConfig(BaseModel):
         else:
             text = (f"Thanks for calling {self.name}, this is {self.agent.name}, "
                     f"{self.name}'s virtual assistant.")
-        rec = self.agent.recording
-        if rec.enabled and rec.announce and "record" not in text.lower():
-            if self.vertical == "dental":           # dental: the recording notice comes first
-                text = (rec.announce_text or DENTAL_RECORDING_NOTICE) + " " + text
+        lowered = text.lower()
+        if self.call_notice_required() and "transcri" not in lowered and "record" not in lowered:
+            if self.vertical == "dental":           # dental: the notice comes first, before any symptoms
+                text = (self.agent.call_notice or DENTAL_CALL_NOTICE) + " " + text
             else:
-                text += " " + (rec.announce_text or DEFAULT_RECORDING_NOTICE)
+                text += " " + (self.agent.call_notice or DEFAULT_CALL_NOTICE)
         if "?" not in text:
             text += " How can I help?"
         return text
+
+    def call_notice_required(self) -> bool:
+        """Every call is transcribed. Callers are told so in AU and the UK (two-party consent states,
+        UK GDPR), at every dental practice, and wherever the owner wrote their own notice."""
+        return (self.vertical == "dental" or (self.country or "").upper() in CALL_NOTICE_COUNTRIES
+                or bool(self.agent.call_notice))
 
     def greeting_state(self, local_now: Optional[datetime]) -> Optional[str]:
         """lunch_break | after_hours | busy_overflow (open, calls forwarded when reception is busy) | None."""
@@ -800,7 +803,6 @@ def legacy_hotel_tenant() -> TenantConfig:
             language=settings.VOICE_LANGUAGE,
             stt_language=settings.VOICE_LANGUAGE,
             llm_model=settings.VOICE_LLM_MODEL,
-            recording=RecordingConfig(enabled=settings.ENABLE_CALL_RECORDING),
             endpointing=EndpointingConfig(min_delay=settings.VOICE_ENDPOINTING_MIN_DELAY,
                                           max_delay=settings.VOICE_ENDPOINTING_MAX_DELAY),
             ambience=settings.VOICE_AMBIENT_SOUND,

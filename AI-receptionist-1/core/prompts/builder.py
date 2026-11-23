@@ -23,7 +23,7 @@ from core.tools.links import available_kinds
 
 DOW = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
-# ≤ ~1 500 characters. No business names in here — they go in the facts below.
+# ≤ ~2 500 characters. No business names in here — they go in the facts below.
 BASE_VOICE_RULES = """# Role
 You are the AI phone assistant for the business described under "Business facts". You are on a
 live phone call; your words are turned into speech.
@@ -34,7 +34,13 @@ live phone call; your words are turned into speech.
 - Ask one question at a time. Offer at most three options.
 - Say dates like "Tuesday the fourteenth", and prices the way a person would, with the currency name.
 - Read phone numbers back in small groups of digits.
-- Before a lookup, say a very short phrase such as "Let me check." Never say it otherwise.
+- Call a tool straight away when you need one; don't announce it first. If it takes a moment, the
+  system tells the caller you're checking.
+- Sound like a friendly receptionist, not a script. Use contractions (I'll, we've, that's).
+- Open with a short, natural acknowledgement that fits ("Sure", "Of course", "Got it", "No worries")
+  and vary it: never start two replies in a row the same way. Never say "Great" to bad news.
+- Once you know their first name, use it now and then, not in every reply.
+- If they sound worried or in pain, slow down, be gentle and reassuring, and keep it simple.
 - If you didn't catch something, say so and ask again. Never guess names, numbers or dates.
 - Before booking, changing or cancelling anything, read back the key details and get a clear yes.
 - Never repeat the greeting or re-introduce yourself.
@@ -278,6 +284,10 @@ def render_caller_history(t: TenantConfig, contact: Optional[Dict[str, Any]]) ->
                    "don't promise a callback time.")
     if contact.get("open_enquiries"):
         out.append("Open enquiries with the team: " + "; ".join(contact["open_enquiries"]) + ".")
+    if contact.get("regular_resource"):
+        res_label = get_vertical(t.vertical).labels.get("resource", "staff member").lower()
+        out.append(f"Their regular {res_label} is {contact['regular_resource']}. When booking, pass them as "
+                   "`resource` to check_availability unless the caller asks for anyone else or it's an emergency.")
     if contact.get("no_shows"):
         n = int(contact["no_shows"])
         out.append(f"They have missed {n} appointment{'s' if n != 1 else ''}. When booking, kindly mention the "

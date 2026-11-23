@@ -11,6 +11,21 @@ from core.prompts.verticals import ALWAYS, SCHEDULING_TOOLS, VerticalSpec, _labe
 from core.tenancy.models import TenantConfig
 
 DENTAL_TOOLS = ("triage_dental_emergency", "qualify_cosmetic_lead")
+DENTAL_COUNTRIES = ("AU", "GB")     # the dental vertical is built for these two; signup and settings enforce it
+
+# ⚖ Audit P0-12: the red-flag track says "call the emergency number in the facts". These lines make
+# that number unambiguous, and separate life-threatening emergencies from after-hours advice.
+EMERGENCY_LINES = {
+    "AU": ("- Life-threatening emergency (swelling that affects breathing, swallowing or an eye, bleeding that "
+           "won't stop, a serious injury): call Triple Zero, 000, or go to the nearest hospital emergency "
+           "department.",
+           "- Health advice when the practice is closed and it isn't life-threatening: Healthdirect on "
+           "1800 022 222, any time."),
+    "GB": ("- Life-threatening emergency (swelling that affects breathing, swallowing or an eye, bleeding that "
+           "won't stop, a serious injury): call 999 or go to A&E.",
+           "- Urgent dental advice when the practice is closed and it isn't life-threatening: NHS 111 "
+           "(call 111)."),
+}
 
 RULES = """# Dental practice rules
 You answer the calls the reception team can't take, because they're busy, on a break or closed.
@@ -24,9 +39,10 @@ Pick the track that fits the call:
      go to the nearest emergency department. Ask nothing else first and don't offer an
      appointment. Then use triage_dental_emergency with swelling_or_bleeding_red_flag true.
    - Urgent but not life-threatening (bad toothache, a broken or chipped tooth, a lost crown or
-     filling, a knocked-out adult tooth): get their name and number, use
-     triage_dental_emergency, then offer the earliest emergency appointment with
-     check_availability.
+     filling, a knocked-out adult tooth): get their name and number, ask "So the dentist can
+     help, may I note your symptoms for the practice?", use triage_dental_emergency with
+     symptom_consent set to their answer, then offer the earliest emergency appointment with
+     check_availability. A no is fine: carry on helping.
 2. Cosmetic and implant enquiries (implants, All-on-4, Invisalign or other clear aligners,
    veneers, composite bonding, whitening). These are big decisions, so be warm, never pushy.
    One question at a time, find out: the treatment, new or existing patient, when they'd like
@@ -34,7 +50,9 @@ Pick the track that fits the call:
    and offer to book the consultation (with its fee from the facts) or a call back from the
    treatment coordinator.
 3. Check-ups, hygiene and other routine visits: ask new or existing patient, then book with
-   check_availability, or take their preferred days with take_message.
+   check_availability, or take their preferred days with take_message. For an existing patient,
+   ask their date of birth before booking and pass it to book_appointment: families often share
+   one phone, and it makes sure the booking goes on the right record.
 4. NHS or private (UK practices only): follow the NHS line in the facts exactly.
 
 # Clinical safety and prices
@@ -49,7 +67,7 @@ Pick the track that fits the call:
 def _facts(t: TenantConfig) -> str:
     d = t.dental
     country = (t.country or "").upper()
-    lines = []
+    lines = list(EMERGENCY_LINES.get(country, ()))
     if country == "GB":
         if not d.accepts_nhs:
             lines.append("- NHS: this is a private practice and does not offer NHS treatment. If a caller asks for "
@@ -60,7 +78,6 @@ def _facts(t: TenantConfig) -> str:
         else:
             lines.append("- NHS: the practice takes new NHS patients, subject to availability; the team confirms "
                          "eligibility. Private treatment is also available.")
-        lines.append("- Urgent dental advice when the practice is closed: NHS 111 (call 111).")
     if country == "AU":
         if d.accepts_private_health_funds:
             lines.append("- Health funds: HICAPS on-the-spot claiming is available. The gap depends on the "

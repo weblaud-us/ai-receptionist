@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core import dedupe
+from config import settings
 from core.outbound import gate, phones, rules
 from core.outbound.models import RECALLS
 from core.repositories import Repos
@@ -62,8 +63,9 @@ def _aware(v: Any) -> Optional[datetime]:
 
 
 def available(tenant: TenantConfig) -> bool:
-    """Recall can run for this practice at all: dental, a connected PMS, a recall country."""
-    return (tenant.vertical == "dental" and sp.connected(tenant)
+    """Recall can run for this practice at all: dental, a connected PMS, a recall country, and SMS
+    (recall texts are SMS; the platform currently sends none)."""
+    return (settings.SMS_ENABLED and tenant.vertical == "dental" and sp.connected(tenant)
             and (tenant.country or "").upper() in rules.RECALL_COUNTRIES)
 
 

@@ -53,8 +53,6 @@ SUBPROCESSORS: List[Dict[str, str]] = [
      "location": "Same region as the database", "when": "always"},
     {"name": "Cloud host", "purpose": "Application servers", "data": "All data in processing",
      "location": "Same region as the database", "when": "always"},
-    {"name": "S3-compatible storage provider", "purpose": "Call recordings", "data": "Call audio",
-     "location": "Same region as the database", "when": "only if the business turns recording on"},
     {"name": "Stripe, Inc.", "purpose": "Subscriptions and payments", "data": "Business billing contact and payment details",
      "location": "United States", "when": "self-serve plans"},
     {"name": "Functional Software, Inc. (Sentry)", "purpose": "Error tracking", "data": "Technical identifiers; no transcripts",

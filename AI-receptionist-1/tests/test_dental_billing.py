@@ -45,7 +45,8 @@ def test_dental_prices_and_onboarding_fees_are_in_aud_and_gbp():
     assert au["setup_fee"] == plans.DENTAL_SETUP_FEES["dental_essentials"]["AUD"] and au["setup_fee_required"]
     assert uk["monthly"] == plans.PRICE_BOOK["GBP"]["dental_pro"] and uk["setup_fee"] == plans.DENTAL_SETUP_FEES["dental_pro"]["GBP"]
     assert au["verticals"] == ["dental"] and ess.included_minutes > plans.PLANS["growth"].included_minutes
-    assert pro.recording and not pro.warm_transfer
+    assert not pro.warm_transfer
+    assert not any("record" in f.lower() for p in plans.PLANS.values() for f in (*p.features, p.tagline))
     cat = plans.catalogue("AUD", "dental")
     assert [p["key"] for p in cat["plans"]] == ["dental_essentials", "dental_pro", "agency"]
     assert plans.setup_fee_price("dental_pro") == "price_dent_setup_pro"
@@ -79,6 +80,15 @@ async def test_signup_checks_the_plan_fits_the_business(db, client, monkeypatch)
     salon = {**body, "email": "x@salon.co.uk", "business_name": "Salon", "vertical": "salon", "country": "GB",
              "plan": "dental_pro"}
     assert client.post("/signup", json=salon).status_code == 422
+
+
+async def test_dental_signup_must_be_au_or_gb(db, client, monkeypatch):
+    # P0-12: a US default would give dental callers "dial 911".
+    monkeypatch.setattr(settings, "SIGNUP_ENABLED", True)
+    body = {"email": "dr@smiles.example", "password": PASSWORD, "business_name": "Smiles", "vertical": "dental",
+            "country": "US", "timezone": "America/New_York", "plan": "dental_essentials", "accept_terms": True}
+    r = client.post("/signup", json=body)
+    assert r.status_code == 422 and "Australia" in r.text
 
 
 async def test_checkout_always_adds_the_dental_onboarding_fee(db, client, monkeypatch):

@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from core.prompts import builder
 from core.prompts.builder import BusinessSnapshot, build_chat_prompt, build_voice_prompt, fence_owner_text
 from core.prompts.verticals import VERTICALS, get_vertical, vertical_catalog
@@ -106,7 +108,22 @@ def test_dental_prompt_tracks_guardrails_and_country_facts():
                                     dental={"accepts_private_health_funds": True, "finance_available": True}), now=NOW)
     assert "HICAPS on-the-spot claiming is available" in au and "Emergency number here: 000" in au
     assert "treatment finance are available" in au and "- NHS:" not in au
+    # P0-12: life-threatening vs after-hours advice, per country.
+    assert "Triple Zero, 000" in au and "Healthdirect on 1800 022 222" in au and "A&E" not in au
+    assert "call 999 or go to A&E" in gb and "NHS 111" in gb and "Healthdirect" not in gb and "Triple Zero" not in gb
     # Other verticals don't get any of it.
     salon = build_voice_prompt(_tenant(), now=NOW)
     assert "Dental practice rules" not in salon and "NHS" not in salon and "HICAPS" not in salon
     assert get_vertical("dental").keyterms[0] == "Invisalign"
+
+
+def test_dental_practices_must_be_au_or_gb():
+    from core.services.tenant_admin import check_dental_country
+
+    check_dental_country("dental", "au")
+    check_dental_country("dental", "GB")
+    check_dental_country("salon", "US")                    # other verticals: any country
+    with pytest.raises(ValueError, match="Australia"):
+        check_dental_country("dental", "US")
+    with pytest.raises(ValueError):
+        check_dental_country("dental", "")

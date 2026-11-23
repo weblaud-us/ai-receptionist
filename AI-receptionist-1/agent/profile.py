@@ -84,10 +84,6 @@ class VoiceProfile:
         return self.tenant.transfer.number
 
     @property
-    def recording(self) -> bool:
-        return self.tenant.agent.recording.enabled
-
-    @property
     def large_kb(self) -> bool:
         return self.snapshot.large_kb
 

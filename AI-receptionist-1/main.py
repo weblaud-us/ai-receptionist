@@ -206,6 +206,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 for _module, _attr in _ROUTERS:
     if _module == "voice.twilio_handler" and not settings.LEGACY_TWILIO_VOICE:
         logger.info("Legacy Twilio voice path disabled (phone calls go through the LiveKit SIP trunk)")
+
+        @app.api_route("/voice/{_rest:path}", methods=["GET", "POST"], include_in_schema=False)
+        async def legacy_voice_gone(_rest: str):
+            # Audit P0-11: a number pointed at the old webhook must never reach the hotel stack. Say so loudly.
+            logger.error("A call hit the retired /voice/%s webhook: point that Twilio number at the LiveKit SIP "
+                         "trunk (scripts/setup_telephony.py)", _rest)
+            return JSONResponse(status_code=410, content={"error": "gone",
+                                                          "detail": "This voice webhook is retired; use the SIP trunk."})
         continue
     _router = _import_router(_module, _attr)
     if _router is not None:

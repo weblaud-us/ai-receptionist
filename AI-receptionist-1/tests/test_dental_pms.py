@@ -216,7 +216,7 @@ async def test_a_slow_or_failing_diary_means_take_a_callback(db, pms):
     pms.fail[("GET", "/v1/businesses/b1/practitioners")] = flaky
     r = await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24"})
     assert r["error"] == "pms_unavailable" and "take_message" in r["message"]
-    assert hits["n"] == 2                                  # one retry for a read, then give up
+    assert hits["n"] == 4                                  # both dentists asked at once, one retry each
 
     def timeout(request):
         raise httpx.ReadTimeout("slow", request=request)
@@ -416,3 +416,248 @@ async def test_dashboard_slots_turn_a_pms_refusal_into_a_409_not_a_500(db, clien
     r = client.get("/t/slots", headers=h, params={"service_id": "svc_local", "day": "2026-11-24"})
     assert r.status_code == 409, r.text
     assert "can't be booked automatically" in r.json()["detail"]
+
+
+# ── Audit P0-09 / P0-16: no split brain, no locks left behind ──────────────
+
+async def test_a_failed_local_save_cancels_the_pms_booking(db, pms, monkeypatch):
+    t = await _connected(db, pms)
+    slot = (await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24",
+                                                        "resource": "Ava Nguyen"}))["slots"][0]["slot_id"]
+    from core.repositories.repos import AppointmentsRepo
+
+    async def boom(self, doc):
+        raise RuntimeError("primary stepped down")
+
+    monkeypatch.setattr(AppointmentsRepo, "insert_one", boom)
+    r = await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith",
+                                                  "service": "Implant consultation"})
+    assert not r.get("success")
+    assert pms.created and pms.cancelled == ["ia1"]           # created in Cliniko, then undone there
+    assert await Repos(db, t.id).slot_locks.count({}) == 0     # and nothing held here
+
+
+async def test_a_failed_rollback_alerts_the_practice(db, pms, monkeypatch):
+    t = await _connected(db, pms)
+    slot = (await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24",
+                                                        "resource": "Ava Nguyen"}))["slots"][0]["slot_id"]
+    from core import notifications
+    from core.repositories.repos import AppointmentsRepo
+
+    alerts: list = []
+
+    async def boom(self, doc):
+        raise RuntimeError("disk full")
+
+    async def owner(t, event, text, **kw):
+        alerts.append((text, kw))
+        return {}
+
+    monkeypatch.setattr(AppointmentsRepo, "insert_one", boom)
+    monkeypatch.setattr(notifications, "notify_owner", owner)
+    pms.fail[("PATCH", "/v1/individual_appointments")] = lambda r: httpx.Response(503)
+    await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith", "service": "Implant consultation"})
+    await drain()
+    assert alerts and "Sam Smith" in alerts[0][0] and alerts[0][1].get("urgent") is True
+
+
+async def test_orphaned_locks_from_a_crash_are_freed_but_live_ones_are_not(db, pms):
+    from core.services import availability as av
+    from core.services.scheduling import SchedulingService
+
+    t = await _connected(db, pms)
+    repos = Repos(db, t.id)
+    ava = await repos.resources.find_one({"name": "Ava Nguyen"})
+    start = datetime.fromisoformat(SLOT_1.replace("Z", "+00:00"))
+    blocks = av.lock_blocks(start, start + timedelta(minutes=45))
+    svc = SchedulingService(repos, t)
+
+    # A booking that's still in flight (fresh locks, no appointment yet) keeps its slot.
+    await repos.slot_locks.insert_many([{"resource_id": ava["_id"], "block": b, "appointment_id": "apt_inflight"}
+                                        for b in blocks])
+    assert await svc._clear_orphan_locks(ava["_id"], blocks) is False
+
+    # The same locks 20 minutes later with still no appointment: a crash left them. Freed.
+    await repos.slot_locks.update_many({"appointment_id": "apt_inflight"},
+                                       {"$set": {"created_at": datetime.now(timezone.utc) - timedelta(minutes=20)}})
+    assert await svc._clear_orphan_locks(ava["_id"], blocks) is True
+    assert await repos.slot_locks.count({"appointment_id": "apt_inflight"}) == 0
+
+
+async def test_old_locks_of_a_live_appointment_are_kept(db, pms):
+    from core.services.scheduling import SchedulingService
+
+    t = await _connected(db, pms)
+    slot = (await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24",
+                                                        "resource": "Ava Nguyen"}))["slots"][0]["slot_id"]
+    booked = await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith",
+                                                       "service": "Implant consultation"})
+    repos = Repos(db, t.id)
+    await repos.slot_locks.update_many({}, {"$set": {"created_at": datetime.now(timezone.utc) - timedelta(days=1)}})
+    locks = await repos.slot_locks.find({"appointment_id": booked["appointment_id"]})
+    svc = SchedulingService(repos, t)
+    assert await svc._clear_orphan_locks(locks[0]["resource_id"], [lk["block"] for lk in locks]) is False
+    assert await repos.slot_locks.count({"appointment_id": booked["appointment_id"]}) == len(locks)
+
+
+async def test_a_pms_booking_never_locks_any(db, pms):
+    from core.services.scheduling import SchedulingError, SchedulingService
+
+    t = await _connected(db, pms)
+    svc = SchedulingService(Repos(db, t.id), t)
+    with pytest.raises(SchedulingError) as e:
+        await svc.book(resource_id="any", start=datetime.fromisoformat(SLOT_1.replace("Z", "+00:00")),
+                       service=None, name="Sam", phone=CALLER, now=NOW)
+    assert e.value.code == "unknown_resource"
+
+
+# ── Plan A1.3: availability cache and diary request budget ─────────────────
+
+def _availability_requests(pms_fake) -> int:
+    return sum(1 for r in pms_fake.requests if r.url.path.endswith("/available_times"))
+
+
+async def test_a_second_availability_question_is_answered_from_the_cache(db, pms):
+    t = await _connected(db, pms)
+    args = {"service": "Implant consultation", "date": "2026-11-24"}
+    first = await _call(_ctx(t), "check_availability", args)
+    asked = _availability_requests(pms)
+    assert first["slots"] and asked > 0
+    again = await _call(_ctx(t), "check_availability", args)
+    assert again["slots"] == first["slots"] and _availability_requests(pms) == asked   # no new diary request
+
+
+async def test_booking_asks_the_diary_itself_and_then_forgets_the_cache(db, pms):
+    t = await _connected(db, pms)
+    args = {"service": "Implant consultation", "date": "2026-11-24", "resource": "Ava Nguyen"}
+    slot = (await _call(_ctx(t), "check_availability", args))["slots"][0]["slot_id"]
+    before = _availability_requests(pms)
+    r = await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith",
+                                                  "service": "Implant consultation"})
+    assert r["success"]
+    assert _availability_requests(pms) > before                # the booking re-checked live
+    after_booking = _availability_requests(pms)
+    await _call(_ctx(t, "call-2"), "check_availability", args)
+    assert _availability_requests(pms) > after_booking         # the cache was dropped after the booking
+
+
+async def test_a_stale_offer_is_refused_not_double_booked(db, pms):
+    t = await _connected(db, pms)
+    args = {"service": "Implant consultation", "date": "2026-11-24", "resource": "Ava Nguyen"}
+    slot = (await _call(_ctx(t), "check_availability", args))["slots"][0]["slot_id"]
+
+    def gone(request):                                         # the front desk took it a moment ago
+        if "/practitioners/p1/" in request.url.path:
+            return httpx.Response(200, json={"available_times": [{"appointment_start": SLOT_2}], "links": {}})
+        return None
+
+    pms.fail[("GET", "/v1/businesses/b1/practitioners")] = gone
+    r = await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith",
+                                                  "service": "Implant consultation"})
+    assert r.get("error") == "taken" and not pms.created
+
+
+async def test_the_cache_is_per_day_so_a_week_prefetch_answers_one_day(db, pms):
+    from core.services.scheduling import SchedulingService
+
+    t = await _connected(db, pms)
+    repos = Repos(db, t.id)
+    svc = SchedulingService(repos, t)
+    service = await repos.services.find_one({"name": "Implant consultation"})
+    week = await svc.find_slots(service=service, day_from=NOW.date(), day_to=NOW.date() + timedelta(days=6),
+                                now=NOW, limit=50)
+    asked = _availability_requests(pms)
+    tuesday = await svc.find_slots(service=service, day_from=datetime(2026, 11, 24).date(), now=NOW, limit=50)
+    assert tuesday and _availability_requests(pms) == asked
+    assert {s.start for s in tuesday} <= {s.start for s in week}
+
+
+async def test_the_diary_request_budget(monkeypatch):
+    from core.services import pms_cache
+
+    monkeypatch.setattr(pms_cache, "REQUESTS_PER_MINUTE", 3)
+    assert [await pms_cache.spend("cliniko", "key-a") for _ in range(4)] == [True, True, True, False]
+    assert await pms_cache.spend("cliniko", "key-b") is True   # another practice has its own budget
+
+
+async def test_over_budget_means_take_a_callback_not_a_hang(db, pms, monkeypatch):
+    from core.services import pms_cache
+
+    t = await _connected(db, pms)
+    monkeypatch.setattr(pms_cache, "REQUESTS_PER_MINUTE", 0)
+    r = await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-25"})
+    assert r["error"] == "pms_unavailable"
+
+
+async def test_the_cache_works_through_redis_too(db, pms, redis):
+    from core.services import pms_cache
+
+    t = await _connected(db, pms)
+    args = {"service": "Implant consultation", "date": "2026-11-24"}
+    first = await _call(_ctx(t), "check_availability", args)
+    asked = _availability_requests(pms)
+    assert any(k.startswith("pmsc:") for k in await redis.keys("*"))
+    pms_cache.reset_for_tests()                               # another process: no local memory, same Redis
+    again = await _call(_ctx(t), "check_availability", args)
+    assert again["slots"] == first["slots"] and _availability_requests(pms) == asked
+    await pms_cache.invalidate(t.id)
+    await _call(_ctx(t), "check_availability", args)
+    assert _availability_requests(pms) > asked
+
+
+async def test_prefetch_warms_the_week_for_the_most_booked_service(db, pms):
+    from core.services.scheduling import prefetch_availability
+
+    t = await _connected(db, pms)
+    cached = await prefetch_availability(Repos(db, t.id), t, now=NOW)
+    assert cached > 0
+    asked = _availability_requests(pms)
+    r = await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24"})
+    assert r["slots"] and _availability_requests(pms) == asked          # the caller's question: no diary wait
+
+
+async def test_prefetch_never_raises(db, pms):
+    from core.services.scheduling import prefetch_availability
+
+    t = await _connected(db, pms)
+    pms.fail[("GET", "/v1/businesses/b1/practitioners")] = lambda r: httpx.Response(503)
+    assert await prefetch_availability(Repos(db, t.id), t, now=NOW) == 0
+    salon = await create_tenant(name="Salon", vertical="salon", tenant_id="ten_salon", seed_template=False)
+    assert await prefetch_availability(Repos(db, salon.id), salon, now=NOW) == 0   # no PMS: nothing to do
+
+
+# ── Audit P0-14: the right patient on a shared family phone ────────────────
+
+def test_phone_numbers_compare_on_the_whole_national_number():
+    assert sp.same_phone("+61 412 345 678", "0412 345 678")
+    assert sp.same_phone("+44 7700 900123", "07700 900123")
+    assert not sp.same_phone("07700 900123", "08700 900123")            # the old last-9-digits rule said equal
+    assert not sp.same_phone("", "0412 345 678") and not sp.same_phone("12", "12")
+
+
+def test_a_shared_phone_needs_the_first_name_and_date_of_birth_to_agree():
+    from datetime import date
+
+    family = [{"id": "mum", "first_name": "Sarah", "date_of_birth": "1980-04-02", "phones": ["0412 345 678"]},
+              {"id": "kid", "first_name": "Sam", "date_of_birth": "2015-09-10", "phones": ["0412 345 678"]}]
+    p = lambda name, dob=None: sp.Patient(name=name, phone=CALLER, date_of_birth=dob)  # noqa: E731
+    assert sp.pick_patient(family, p("Sarah Smith")) == "mum"
+    assert sp.pick_patient(family, p("Sam Smith", date(2015, 9, 10))) == "kid"
+    assert sp.pick_patient(family, p("Sam Smith", date(1980, 4, 2))) is None          # name and DOB disagree
+    twins = family + [{"id": "twin", "first_name": "Samuel", "date_of_birth": None, "phones": ["0412345678"]}]
+    assert sp.pick_patient(twins, p("Sam Smith")) is None                              # two left: never guess
+    assert sp.pick_patient(twins, p("Sam Smith", date(2015, 9, 10))) == "kid"
+    assert sp.pick_patient(family, p("Jo Smith")) is None
+
+
+async def test_the_date_of_birth_reaches_cliniko_for_a_new_patient(db, pms):
+    t = await _connected(db, pms)
+    slot = (await _call(_ctx(t), "check_availability", {"service": "Implant consultation", "date": "2026-11-24",
+                                                        "resource": "Ava Nguyen"}))["slots"][0]["slot_id"]
+    r = await _call(_ctx(t), "book_appointment", {"slot_id": slot, "name": "Sam Smith", "service": "Implant consultation",
+                                                  "date_of_birth": "2015-09-10"})
+    assert r["success"] and pms.patients[0]["date_of_birth"] == "2015-09-10"
+    from core.tools.scheduling import _parse_dob
+
+    assert _parse_dob("3020-01-01", NOW) is None and _parse_dob("10/09/2015", NOW) is None   # misheard: dropped
+    assert str(_parse_dob("2015-09-10", NOW)) == "2015-09-10"

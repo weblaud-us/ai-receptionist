@@ -76,6 +76,7 @@ async def llm_summary(transcript: list[dict[str, Any]], *, model: Optional[str] 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, max_retries=0, timeout=SUMMARY_TIMEOUT_S)
     completion = await client.chat.completions.create(
         model=model or settings.OPENAI_MODEL, temperature=0.2, max_tokens=90,
+        store=settings.OPENAI_STORE,          # audit P0-06: a clinical transcript is never kept by OpenAI
         messages=[{"role": "system", "content": prompt or _PROMPT},
                   {"role": "user", "content": transcript_text(transcript)}])
     text = (completion.choices[0].message.content or "").strip()

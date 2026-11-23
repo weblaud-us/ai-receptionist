@@ -53,7 +53,6 @@ from agent.health import attach_provider_health
 from agent.persistence import CallRecorder
 from agent.profile import resolve_profile
 from agent.receptionist import _sip_participant, hang_up
-from agent.recording import start_recording
 from agent.session_factory import build_session, openai_client
 from agent.speech import clean_stream
 from agent.state import CallState
@@ -402,8 +401,6 @@ async def sales_caller(ctx: JobContext) -> None:
         await db[m.ATTEMPTS].update_one({"_id": attempt_id}, {"$set": {"status": "in_progress", "sip_status": 200}})
         timers.append(_later(max_seconds, "max_call_duration"))
         recorder.start()
-        if profile.recording:
-            asyncio.ensure_future(_record(ctx, state))
         result = await detector.execute()
 
     state.amd = result.category.value
@@ -420,9 +417,4 @@ async def sales_caller(ctx: JobContext) -> None:
     if human_assisted:
         return                                    # the person talks; the agent listens and takes notes
 
-    announce = profile.recording and profile.tenant.agent.recording.announce
-    session.say(persona.opener(script, lead, mode, recording=announce), allow_interruptions=True)
-
-
-async def _record(ctx: JobContext, state: SalesCallState) -> None:
-    state.recording = await start_recording(ctx.api, state)
+    session.say(persona.opener(script, lead, mode), allow_interruptions=True)

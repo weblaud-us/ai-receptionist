@@ -237,6 +237,9 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("tenant_id", ASCENDING), ("resource_id", ASCENDING), ("block", ASCENDING)],
                    unique=True, name="uniq_tenant_resource_block"),
         IndexModel([("appointment_id", ASCENDING)]),
+        # Locks are claims on future time; once a block is two days past nothing can book it, so
+        # Mongo drops the row (audit P0-16: the collection never grew a cleanup).
+        IndexModel([("block", ASCENDING)], expireAfterSeconds=2 * 86400, name="ttl_block_past"),
     ])
     await db.contacts.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("phone", ASCENDING)], unique=True),

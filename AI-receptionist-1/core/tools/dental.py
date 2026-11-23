@@ -53,6 +53,8 @@ _TREATMENT_WORDS = {
 MAX_SUMMARY = 300
 MAX_NOTES = 500
 
+NO_CONSENT_NOTE = "(The caller didn't agree to their symptoms being noted: ask when you call back.)"
+
 TRIAGE_SCHEMA: Dict[str, Any] = {
     "type": "function",
     "function": {
@@ -75,6 +77,11 @@ TRIAGE_SCHEMA: Dict[str, Any] = {
                 },
                 "patient_name": {"type": "string"},
                 "callback_phone": {"type": "string", "description": "Callback number with country code"},
+                "symptom_consent": {
+                    "type": "boolean",
+                    "description": "True only if the caller said yes when asked whether the practice may note their "
+                                   "symptoms. Not needed for a red-flag emergency.",
+                },
             },
             "required": ["symptom_summary", "severity_level", "swelling_or_bleeding_red_flag"],
         },
@@ -152,6 +159,10 @@ async def triage_dental_emergency(ctx: "ToolContext", args: Dict[str, Any]) -> D
         severity = "life_threatening"
     name = str(args.get("patient_name") or "").strip()[:120]
     phone = str(args.get("callback_phone") or ctx.caller_phone or "").strip()[:32]
+    # Audit P0-07: symptoms are health data. They're kept only with the caller's yes, or in a red-flag
+    # emergency (vital interests). Without it the practice still gets the callback, just not the details.
+    consent = bool(args.get("symptom_consent")) or red_flag
+    noted = summary if consent else ""
 
     number = emergency_number(t.country)
     country = (t.country or "").upper()
@@ -163,8 +174,12 @@ async def triage_dental_emergency(ctx: "ToolContext", args: Dict[str, Any]) -> D
         escalation = "same_day"
         guidance = ("Saved as urgent and the practice has been alerted. Offer the earliest emergency appointment "
                     "with check_availability; if none suits, say the team will call back as soon as possible.")
-        if country == "GB" and not t.is_open(business_now(t.timezone, ctx.now)):
-            guidance += " While the practice is closed they can also call NHS 111 for urgent dental advice."
+        if not t.is_open(business_now(t.timezone, ctx.now)):
+            if country == "GB":
+                guidance += " While the practice is closed they can also call NHS 111 for urgent dental advice."
+            elif country == "AU":
+                guidance += (" While the practice is closed they can also call Healthdirect on 1800 022 222 "
+                             "for health advice.")
     else:
         escalation = "routine"
         guidance = "Saved. Offer the next available appointment with check_availability."
@@ -179,7 +194,7 @@ async def triage_dental_emergency(ctx: "ToolContext", args: Dict[str, Any]) -> D
         contact_id = contact.get("_id")
     lead = {
         "contact_id": contact_id, "name": name or "Unknown", "phone": phone, "address": "",
-        "problem": summary,
+        "problem": noted, "symptom_consent": consent,
         "urgency": "emergency" if severity == "life_threatening" else "today" if severity == "urgent" else "this_week",
         "preferred_time": "", "severity": severity, "red_flag": red_flag, "escalation": escalation,
     }
@@ -188,7 +203,7 @@ async def triage_dental_emergency(ctx: "ToolContext", args: Dict[str, Any]) -> D
         urgent = severity != "routine"
         label = "EMERGENCY (told to call " + number + ")" if severity == "life_threatening" else (
             "Urgent dental problem" if urgent else "Dental problem")
-        text = f"{'🔴 ' if urgent else ''}{label}\nFrom: {lead['name']} — {phone or 'no number'}\n\n{summary}"
+        text = f"{'🔴 ' if urgent else ''}{label}\nFrom: {lead['name']} — {phone or 'no number'}\n\n{noted or NO_CONSENT_NOTE}"
         fire(notify_owner(t, "on_message", text, subject="Urgent dental call", urgent=urgent))
         _emit(ctx, lead_id, "dental_emergency", lead)
     logger.info("Dental triage lead %s (%s)", lead_id, severity)

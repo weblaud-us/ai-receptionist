@@ -26,7 +26,7 @@ class CostItem:
     low: float                         # USD per call-minute
     high: float
     basis: str
-    applies: str = "always"            # always | recording | outbound
+    applies: str = "always"            # always | outbound
 
     @property
     def mid(self) -> float:
@@ -40,7 +40,6 @@ COST_ITEMS: List[CostItem] = [
     CostItem("stt", "Speech-to-text — Deepgram Nova-3 streaming", 0.0077, 0.0077, "Deepgram list price"),
     CostItem("llm", "LLM — mini-class model, ~4 turns/min, cached prompt", 0.002, 0.005, "Prompt size and caching"),
     CostItem("tts", "Text-to-speech — ElevenLabs Flash", 0.012, 0.016, "Agent speaks ~40–50 % of the call"),
-    CostItem("recording", "Recording (egress + storage)", 0.005, 0.01, "⚠ VERIFY egress pricing", applies="recording"),
     CostItem("carrier_outbound", "Outbound carrier (termination)", 0.01, 0.01, "Termination costs more", applies="outbound"),
 ]
 
@@ -65,11 +64,10 @@ FIXED_MONTHLY: List[Dict[str, object]] = [
 ]
 
 
-def per_minute(*, recording: bool = False, outbound: bool = False, country: str = "") -> Dict[str, float]:
+def per_minute(*, outbound: bool = False, country: str = "") -> Dict[str, float]:
     """Variable cost of one call-minute: low, mid and high estimates. `country`: the carrier rate for
     numbers in that country (AU, GB), instead of the US one."""
-    items = [i for i in COST_ITEMS if i.applies == "always"
-             or (i.applies == "recording" and recording) or (i.applies == "outbound" and outbound)]
+    items = [i for i in COST_ITEMS if i.applies == "always" or (i.applies == "outbound" and outbound)]
     local = COUNTRY_CARRIER_INBOUND.get((country or "").upper())
     if local:
         items = [CostItem(i.key, i.label, float(local["low"]), float(local["high"]),  # type: ignore[arg-type]
@@ -78,8 +76,8 @@ def per_minute(*, recording: bool = False, outbound: bool = False, country: str 
             "high": round(sum(i.high for i in items), 4)}
 
 
-def call_cost_usd(seconds: float, *, recording: bool = False, outbound: bool = False) -> float:
-    return round(max(0.0, seconds) / 60 * per_minute(recording=recording, outbound=outbound)["mid"], 4)
+def call_cost_usd(seconds: float, *, outbound: bool = False) -> float:
+    return round(max(0.0, seconds) / 60 * per_minute(outbound=outbound)["mid"], 4)
 
 
 def plan_margin(plan: Plan, cost_per_min: float) -> float:
@@ -96,7 +94,7 @@ def _plan_country(plan: Plan) -> str:
 
 def _plan_cpm(plan: Plan, default: float) -> float:
     country = _plan_country(plan)
-    return per_minute(recording=plan.recording, country=country)["mid"] if country else default
+    return per_minute(country=country)["mid"] if country else default
 
 
 def model() -> Dict[str, object]:
@@ -107,7 +105,6 @@ def model() -> Dict[str, object]:
         "items": [{"key": i.key, "label": i.label, "low": i.low, "high": i.high, "basis": i.basis,
                    "applies": i.applies} for i in COST_ITEMS],
         "per_minute": base,
-        "per_minute_with_recording": per_minute(recording=True),
         "fixed_monthly": FIXED_MONTHLY,
         "fixed_monthly_total": {"low": sum(int(f["low"]) for f in FIXED_MONTHLY),       # type: ignore[call-overload]
                                 "high": sum(int(f["high"]) for f in FIXED_MONTHLY)},    # type: ignore[call-overload]

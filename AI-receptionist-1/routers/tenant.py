@@ -73,6 +73,8 @@ _staff = require_tenant("staff")
 _admin = require_tenant("admin")
 _owner = require_tenant("owner")
 _staff_any_status = require_tenant("staff", allow_inactive=True)   # the app shell of a suspended business
+_dentist = require_tenant("dentist")                                # their own day; staff and up see any dentist's
+_member_any_status = require_tenant("dentist", allow_inactive=True)  # the app shell, for every role
 
 LIVE_CALL_STALE_S = 120
 _HIDDEN_TENANT_FIELDS = ("billing",)
@@ -149,7 +151,7 @@ def _billing_brief(tp: TenantPrincipal) -> Dict[str, Any]:
 
 
 @tenant_router.get("/context")
-async def context(tp: TenantPrincipal = Depends(_staff_any_status)):
+async def context(tp: TenantPrincipal = Depends(_member_any_status)):
     spec = get_vertical(tp.tenant.vertical)
     return {
         "billing": _billing_brief(tp),
@@ -160,6 +162,7 @@ async def context(tp: TenantPrincipal = Depends(_staff_any_status)):
         "vertical": {"key": spec.key, "label": spec.label, "labels": spec.labels,
                      "uses_scheduling": spec.uses_scheduling, "tools": list(spec.tools)},
         "greeting": tp.tenant.greeting_text(),
+        "sms_enabled": settings.SMS_ENABLED,           # the dashboard hides SMS-only options when False
     }
 
 
@@ -705,7 +708,7 @@ async def import_knowledge(body: ImportBody, tp: TenantPrincipal = Depends(_admi
     try:
         completion = await client.chat.completions.create(
             model=settings.OPENAI_MODEL, temperature=0.2, response_format={"type": "json_object"},
-            messages=[{"role": "user", "content": prompt}])
+            store=settings.OPENAI_STORE, messages=[{"role": "user", "content": prompt}])
         items = json.loads(completion.choices[0].message.content or "{}").get("items", [])
     except Exception:
         logger.warning("Website import LLM call failed", exc_info=True)
@@ -831,11 +834,106 @@ async def update_appointment(appointment_id: str, body: AppointmentPatch, reques
     return _clean(await repos.appointments.find_one({"appointment_id": appointment_id}))
 
 
+class ReassignBody(BaseModel):
+    resource_id: str = Field(min_length=1, max_length=60)
+
+
+@tenant_router.post("/appointments/{appointment_id}/reassign")
+async def reassign_appointment(appointment_id: str, body: ReassignBody, request: Request,
+                               tp: TenantPrincipal = Depends(_staff)):
+    """Same time, another dentist (plan E3). Books the new practitioner first, then cancels the old
+    booking, in the practice diary too, so the slot is never lost in between."""
+    svc = _scheduler(tp)
+    repos = tp.repos()
+    appt = await repos.appointments.find_one({"appointment_id": appointment_id})
+    if not appt or appt.get("status") not in ("pending", "confirmed"):
+        raise _not_found("No active appointment with that ID")
+    if appt.get("resource_id") == body.resource_id:
+        return _clean(appt)
+    resource = await repos.resources.find_one({"_id": body.resource_id})
+    if not resource or resource.get("active") is False:
+        raise HTTPException(422, "That practitioner doesn't exist or is inactive")
+    start = appt["start"] if appt["start"].tzinfo else appt["start"].replace(tzinfo=timezone.utc)
+    try:
+        new = await svc.reschedule(appointment_id, resource_id=body.resource_id, start=start)
+    except SchedulingError as e:
+        if e.code == "taken":
+            raise HTTPException(409, f"{resource.get('name') or 'That dentist'} isn't free at that time")
+        raise HTTPException(409, e.message)
+    await _audit(tp, request, "appointment.reassign", "appointment", appointment_id,
+                 {"from": appt.get("resource_id"), "to": body.resource_id, "new_appointment_id": new["appointment_id"]})
+    return _clean(new)
+
+
+# ─────────────────────────────────────────────
+# MY DAY (plan E: a dentist's patients today / tomorrow)
+# ─────────────────────────────────────────────
+
+async def _linked_resource(tp: TenantPrincipal) -> Optional[str]:
+    doc = await UsersStore(get_db()).get(tp.user.user_id) or {}
+    return next((m.get("resource_id") for m in doc.get("memberships", [])
+                 if m.get("tenant_id") == tp.tenant.id), None)
+
+
+async def _day_resource(tp: TenantPrincipal, resource_id: Optional[str]) -> Dict[str, Any]:
+    if tp.can("staff"):
+        if not resource_id:
+            raise HTTPException(422, "Choose a dentist")
+    else:                                         # a dentist: always their own, whatever was asked for
+        resource_id = await _linked_resource(tp)
+        if not resource_id:
+            raise HTTPException(403, "Your account isn't linked to a practitioner yet. Ask the practice owner.")
+    res = await tp.repos().resources.find_one({"_id": resource_id})
+    if not res:
+        raise _not_found("Practitioner not found")
+    return res
+
+
+@tenant_router.get("/my-day")
+async def my_day(request: Request, day: Literal["today", "tomorrow"] = "today",
+                 resource_id: Optional[str] = Query(None, max_length=60), tp: TenantPrincipal = Depends(_dentist)):
+    from core.services.my_day import day_view
+
+    if not get_vertical(tp.tenant.vertical).uses_scheduling:
+        raise HTTPException(409, "This business doesn't use appointments")
+    res = await _day_resource(tp, resource_id)
+    local_day = _today(tp) + timedelta(days=1 if day == "tomorrow" else 0)
+    out = await day_view(tp.repos(), tp.tenant, res, local_day)
+    await _audit(tp, request, "my_day.view", "resource", res["_id"], {"day": local_day.isoformat()})
+    return to_jsonable(out)
+
+
+class MyDayPatch(BaseModel):
+    status: Literal["completed", "no_show"]
+
+
+@tenant_router.patch("/my-day/{appointment_id}")
+async def my_day_mark(appointment_id: str, body: MyDayPatch, request: Request,
+                      tp: TenantPrincipal = Depends(_dentist)):
+    """A dentist marks their own patient seen or not arrived. Staff use PATCH /t/appointments/{id}."""
+    repos = tp.repos()
+    appt = await repos.appointments.find_one({"appointment_id": appointment_id})
+    if not appt:
+        raise _not_found("Appointment not found")
+    if not tp.can("staff") and appt.get("resource_id") != await _linked_resource(tp):
+        raise _not_found("Appointment not found")           # not theirs: don't confirm it exists
+    if appt.get("status") not in ("pending", "confirmed", "completed", "no_show"):
+        raise HTTPException(409, f"That appointment is {appt.get('status')}")
+    sets: Dict[str, Any] = {"status": body.status, "updated_at": utcnow()}
+    await repos.appointments.update_one({"appointment_id": appointment_id}, {"$set": sets})
+    await repos.slot_locks.delete_many({"appointment_id": appointment_id})
+    if body.status == "no_show" and appt.get("status") != "no_show" and appt.get("contact_id"):
+        await repos.contacts.update_one({"_id": appt["contact_id"]}, {"$inc": {"stats.no_shows": 1}})
+    await _audit(tp, request, "appointment.update", "appointment", appointment_id, {"status": body.status})
+    return _clean(await repos.appointments.find_one({"appointment_id": appointment_id}))
+
+
 # ─────────────────────────────────────────────
 # CONTACTS
 # ─────────────────────────────────────────────
 
 class ContactPatch(BaseModel):
+    preferred_resource_id: Optional[str] = Field(default=None, max_length=60)   # "" clears it
     name: Optional[str] = Field(default=None, max_length=120)
     email: Optional[str] = Field(default=None, max_length=200)
     notes: Optional[str] = Field(default=None, max_length=2000)
@@ -877,6 +975,13 @@ async def update_contact(contact_id: str, body: ContactPatch, request: Request, 
     sets = body.model_dump(exclude_unset=True)
     if not sets:
         raise HTTPException(400, "Nothing to update")
+    if "preferred_resource_id" in sets:               # the patient's regular dentist (plan E3); "" clears it
+        rid = sets["preferred_resource_id"] or None
+        if rid:
+            res_doc = await tp.repos().resources.find_one({"_id": rid})
+            if not res_doc or res_doc.get("active") is False:
+                raise HTTPException(422, "That practitioner doesn't exist or is inactive")
+        sets["preferred_resource_id"] = rid
     sets["updated_at"] = utcnow()
     res = await tp.repos().contacts.update_one(_by_id(contact_id), {"$set": sets})
     if res.matched_count == 0:
@@ -998,21 +1103,6 @@ async def live(tp: TenantPrincipal = Depends(_staff)):
     return {"calls": [_clean(r) for r in rows], "total": len(rows)}
 
 
-@tenant_router.get("/calls/{call_id}/recording")
-async def call_recording(call_id: str, tp: TenantPrincipal = Depends(_staff)):
-    """A 10-minute presigned link to the call's audio (stored privately in S3)."""
-    from core.integrations.s3_presign import presign_get
-
-    doc = await scoped_db(tp.tenant).calls.find_one({"call_id": call_id}, {"recording": 1})
-    rec = (doc or {}).get("recording") or {}
-    if not doc or not rec.get("path"):
-        raise _not_found("No recording for this call")
-    if not (settings.RECORDING_S3_ACCESS_KEY and settings.RECORDING_S3_SECRET):
-        raise HTTPException(503, "Recording storage isn't configured on this server")
-    return {"url": presign_get(rec["path"], bucket=rec.get("bucket") or settings.RECORDING_S3_BUCKET, expires=600),
-            "expires_in": 600}
-
-
 @tenant_router.get("/calls/{call_id}")
 async def call_detail(call_id: str, tp: TenantPrincipal = Depends(_staff)):
     doc = await scoped_db(tp.tenant).calls.find_one({"call_id": call_id})
@@ -1124,11 +1214,25 @@ async def phone_numbers(tp: TenantPrincipal = Depends(_staff)):
 
 class InviteBody(BaseModel):
     email: str = Field(min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-    role: Literal["admin", "staff", "owner"] = "staff"
+    role: Literal["admin", "staff", "owner", "dentist"] = "staff"
+    resource_id: Optional[str] = Field(default=None, max_length=60)    # dentist: whose day they see
 
 
 class RoleBody(BaseModel):
-    role: Literal["owner", "admin", "staff"]
+    role: Literal["owner", "admin", "staff", "dentist"]
+    resource_id: Optional[str] = Field(default=None, max_length=60)
+
+
+async def _dentist_resource(tp: TenantPrincipal, role: str, resource_id: Optional[str]) -> Optional[str]:
+    """A dentist must be linked to one of the practice's active practitioners."""
+    if role != "dentist":
+        return None
+    if not resource_id:
+        raise HTTPException(422, "Choose which dentist (practitioner) this person is")
+    res = await tp.repos().resources.find_one({"_id": resource_id})
+    if not res or res.get("active") is False:
+        raise HTTPException(422, "That practitioner doesn't exist or is inactive")
+    return resource_id
 
 
 @tenant_router.get("/team")
@@ -1136,12 +1240,15 @@ async def team(tp: TenantPrincipal = Depends(_staff)):
     users = await UsersStore(get_db()).for_tenant(tp.tenant.id)
     members = []
     for u in users:
-        role = next((m.get("role") for m in u.get("memberships", []) if m.get("tenant_id") == tp.tenant.id), None)
+        mem = next((m for m in u.get("memberships", []) if m.get("tenant_id") == tp.tenant.id), {})
+        role = mem.get("role")
         members.append({"id": u["_id"], "email": u.get("email"), "name": u.get("name", ""), "role": role,
+                        "resource_id": mem.get("resource_id"),
                         "last_login_at": to_jsonable(u.get("last_login_at")), "disabled": bool(u.get("disabled")),
                         "pending_password": not u.get("password_hash")})
     invites = await get_db().invites.find({"tenant_id": tp.tenant.id}).to_list(100)
     return {"members": members, "invites": [{"email": i["email"], "role": i["role"],
+                                             "resource_id": i.get("resource_id"),
                                              "expires_at": to_jsonable(i.get("expires_at"))} for i in invites]}
 
 
@@ -1153,13 +1260,14 @@ async def invite(body: InviteBody, request: Request, tp: TenantPrincipal = Depen
         if members + pending >= tp.tenant.limits.max_users:
             raise HTTPException(402, f"Your plan includes {tp.tenant.limits.max_users} user(s). "
                                      "Upgrade on the Billing page to invite more.")
+    resource_id = await _dentist_resource(tp, body.role, body.resource_id)
     token = await auth_service.create_invite(tenant_id=tp.tenant.id, email=body.email, role=body.role,
-                                             invited_by=tp.user.user_id)
+                                             invited_by=tp.user.user_id, resource_id=resource_id)
     link = auth_service.dashboard_link(f"/accept-invite?token={token}")
     sent = await send_email(body.email, f"You're invited to {tp.tenant.name}",
                             f"{tp.user.name or tp.user.email} invited you to manage {tp.tenant.name}'s AI receptionist.\n\n"
                             f"Accept within 7 days: {link}")
-    await _audit(tp, request, "team.invite", "user", body.email, {"role": body.role})
+    await _audit(tp, request, "team.invite", "user", body.email, {"role": body.role, "resource_id": resource_id})
     return {"success": True, "emailed": sent, "link": link}
 
 
@@ -1177,8 +1285,9 @@ async def change_role(user_id: str, body: RoleBody, request: Request, tp: Tenant
     doc = await UsersStore(get_db()).get(user_id)
     if not doc or not any(m.get("tenant_id") == tp.tenant.id for m in doc.get("memberships", [])):
         raise _not_found("Member not found")
-    await auth_service.add_membership(user_id, tp.tenant.id, body.role)
-    await _audit(tp, request, "team.role", "user", user_id, {"role": body.role})
+    resource_id = await _dentist_resource(tp, body.role, body.resource_id)
+    await auth_service.add_membership(user_id, tp.tenant.id, body.role, resource_id)
+    await _audit(tp, request, "team.role", "user", user_id, {"role": body.role, "resource_id": resource_id})
     return {"success": True}
 
 
@@ -1467,6 +1576,13 @@ async def test_webhook(hook_id: str, tp: TenantPrincipal = Depends(_admin)):
 async def voices(provider: str = Query("elevenlabs", max_length=20), tp: TenantPrincipal = Depends(_staff)):
     from core.integrations import elevenlabs
 
+    if provider == "deepgram":
+        from core.voices import AURA_DEFAULT_FOR_COUNTRY, aura_catalogue
+
+        return {"provider": provider, "available": bool(settings.DEEPGRAM_API_KEY), "voices": aura_catalogue(),
+                "default_voice_id": AURA_DEFAULT_FOR_COUNTRY.get(tp.tenant.country.upper())
+                or settings.DEEPGRAM_TTS_MODEL,
+                "note": None if settings.DEEPGRAM_API_KEY else "Deepgram isn't set up on this server yet."}
     if provider != "elevenlabs":
         return {"provider": provider, "available": False, "voices": [],
                 "note": "Voice previews are available for ElevenLabs voices. Enter the voice ID for other providers."}

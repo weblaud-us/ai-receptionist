@@ -5,7 +5,6 @@ Plan rules applied when an owner changes settings (Roadmap Task 5.4 "Abuse preve
 - International transfers only on plans that allow them (toll fraud: a stolen card + a transfer to an
   expensive destination is the classic attack on voice products).
 - During a self-serve trial, transfers only to the owner's number verified by SMS code.
-- Call recording only on plans that include it.
 
 Platform admins bypass these (they edit through /platform). Manual-plan businesses keep the checks
 on premium-rate numbers only.
@@ -62,10 +61,4 @@ def check_changes(tenant: TenantConfig, changes: Dict[str, Any]) -> None:
     transfer = changes.get("transfer")
     if isinstance(transfer, dict) and "number" in transfer and transfer["number"] != tenant.transfer.number:
         check_transfer_number(tenant, str(transfer.get("number") or "").strip())
-    agent = changes.get("agent")
-    if isinstance(agent, dict) and tenant.billing.self_serve:
-        recording = agent.get("recording")
-        if isinstance(recording, dict) and recording.get("enabled") and not tenant.agent.recording.enabled:
-            plan = get_plan(tenant.billing.plan)
-            if not (plan and plan.recording):
-                raise PolicyError("Call recording is included in the Pro plan")
+

@@ -92,16 +92,30 @@ class SiteImportError(Exception):
 
 # ── Fetching (SSRF-safe) ─────────────────────────────────────────────────────
 
+def _ip_is_public(value: str) -> bool:
+    ip = ipaddress.ip_address(value)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+                or ip.is_unspecified)
+
+
 def _host_is_public(hostname: str) -> bool:
     try:
         infos = socket.getaddrinfo(hostname, None)
     except OSError:
         raise SiteImportError("That website couldn't be found")
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            return False
-    return True
+    return all(_ip_is_public(str(info[4][0])) for info in infos)
+
+
+def _peer_ip(resp: httpx.Response) -> Optional[str]:
+    """The address this response actually came from (None when the transport can't tell, e.g. tests)."""
+    stream = resp.extensions.get("network_stream")
+    try:
+        addr = stream.get_extra_info("server_addr") if stream is not None else None
+    except Exception:
+        return None
+    return str(addr[0]) if addr else None
 
 
 def public_url(url: str) -> str:
@@ -112,6 +126,12 @@ def public_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise SiteImportError("Enter a website address like https://example.com")
+    try:
+        port = parsed.port
+    except ValueError:
+        raise SiteImportError("Enter a website address like https://example.com")
+    if port not in (None, 80, 443):                   # audit SEC-12: no scanning of internal ports
+        raise SiteImportError("That address isn't a public website")
     if not _host_is_public(parsed.hostname):
         raise SiteImportError("That address isn't a public website")
     return url if parsed.path else url + "/"
@@ -126,6 +146,11 @@ async def fetch(client: httpx.AsyncClient, url: str) -> Tuple[str, str]:
     for _ in range(MAX_REDIRECTS + 1):
         url = await _check(url)
         async with client.stream("GET", url) as resp:
+            # Audit P0-02: DNS can change between the check above and the connection (rebinding).
+            # Check the address we actually reached before reading a byte of the answer.
+            peer = _peer_ip(resp)
+            if peer and not _ip_is_public(peer):
+                raise SiteImportError("That address isn't a public website")
             if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("location"):
                 url = urljoin(url, resp.headers["location"])
                 continue
@@ -177,7 +202,9 @@ def rank_links(links: List[Tuple[str, str]], base: str, limit: int) -> List[str]
     """Same-site pages most likely to hold setup facts, best first; shallow pages fill any gap."""
     site = _site_key(urlparse(base).hostname or "")
     home = base.rstrip("/")
-    seen, scored, fallback = set(), [], []
+    seen: set = set()
+    scored: List[Tuple[int, int, str]] = []
+    fallback: List[Tuple[int, int, str]] = []
     for url, text in links:
         p = urlparse(url)
         if p.scheme not in ("http", "https") or _site_key(p.hostname or "") != site or SKIP_EXT.search(p.path):
@@ -383,6 +410,7 @@ async def extract(crawled: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     try:
         completion = await client.chat.completions.create(
             model=settings.OPENAI_MODEL, temperature=0.1, response_format={"type": "json_object"},
+            store=settings.OPENAI_STORE,
             messages=[{"role": "user", "content": _prompt(crawled, vertical_catalog())}])
         data = json.loads(completion.choices[0].message.content or "{}")
         return (data if isinstance(data, dict) else {}), []
@@ -438,7 +466,7 @@ def _hours(rows: Any, warnings: List[str]) -> List[Dict[str, Any]]:
     out, bad = [], 0
     for row in rows if isinstance(rows, list) else []:
         try:
-            h = HoursEntry(**{"dow": int(row["dow"]), "open": str(row["open"])[:5], "close": str(row["close"])[:5]})
+            h = HoursEntry(dow=int(row["dow"]), open=str(row["open"])[:5], close=str(row["close"])[:5])
         except Exception:
             bad += 1
             continue
@@ -462,8 +490,8 @@ def normalize(raw: Dict[str, Any], hints: Dict[str, Any], url: str, sources: Lis
     from core.prompts.verticals import VERTICALS
 
     warnings: List[str] = []
-    hint_addr = hints.get("address") or {}
-    raw_addr = raw.get("address") if isinstance(raw.get("address"), dict) else {}
+    hint_addr: Dict[str, Any] = hints.get("address") or {}
+    raw_addr: Dict[str, Any] = raw["address"] if isinstance(raw.get("address"), dict) else {}
     address = Address(**{k: _s(hint_addr.get(k) or raw_addr.get(k), 120)
                          for k in ("line1", "city", "region", "postal", "country")}).model_dump()
 
@@ -494,7 +522,8 @@ def normalize(raw: Dict[str, Any], hints: Dict[str, Any], url: str, sources: Lis
         warnings.append("No opening hours found; the type's default hours will be used unless you add them.")
 
     services, names = [], set()
-    for s in raw.get("services") if isinstance(raw.get("services"), list) else []:
+    raw_services: List[Any] = raw["services"] if isinstance(raw.get("services"), list) else []
+    for s in raw_services:
         if not isinstance(s, dict) or not _s(s.get("name"), 120) or _s(s.get("name"), 120).lower() in names:
             continue
         name = _s(s.get("name"), 120)
@@ -510,10 +539,10 @@ def normalize(raw: Dict[str, Any], hints: Dict[str, Any], url: str, sources: Lis
         if len(services) >= MAX_SERVICES:
             break
     faqs = [{"question": _s(f.get("question"), 300), "answer": _s(f.get("answer"), 1500)}
-            for f in (raw.get("faqs") if isinstance(raw.get("faqs"), list) else [])
+            for f in (raw["faqs"] if isinstance(raw.get("faqs"), list) else [])
             if isinstance(f, dict) and _s(f.get("question"), 300) and _s(f.get("answer"), 1500)][:MAX_FAQS]
 
-    raw_links = raw.get("links") if isinstance(raw.get("links"), dict) else {}
+    raw_links: Dict[str, Any] = raw["links"] if isinstance(raw.get("links"), dict) else {}
     try:
         links = Links(booking=_s(hints.get("booking") or raw_links.get("booking"), 4000),
                       menu=_s(hints.get("menu") or raw_links.get("menu"), 4000),

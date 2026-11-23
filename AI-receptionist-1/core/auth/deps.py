@@ -34,7 +34,9 @@ from database.mongodb import get_db
 
 logger = logging.getLogger(__name__)
 
-ROLE_RANK = {"staff": 1, "admin": 2, "owner": 3}
+# "dentist" (plan E) ranks below staff: every existing endpoint requires staff or more, so a dentist
+# reaches only what is opened to them explicitly with require_tenant("dentist") (their own day).
+ROLE_RANK = {"dentist": 0, "staff": 1, "admin": 2, "owner": 3}
 _DEFAULT_SECRETS = {"", "change-in-production"}
 
 

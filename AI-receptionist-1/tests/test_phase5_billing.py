@@ -105,7 +105,8 @@ async def _usage(db, tid, seconds, at=None, billable=True):
 def test_cost_model_and_margins_match_the_roadmap():
     cpm = costs.per_minute()
     assert 0.040 <= cpm["mid"] <= 0.050
-    assert costs.per_minute(recording=True)["mid"] > cpm["mid"]
+    assert costs.per_minute(outbound=True)["mid"] > cpm["mid"]
+    assert not any(i.key == "recording" for i in costs.COST_ITEMS)      # calls are never recorded
     rows = costs.model()["plans"]
     margins = {p["key"]: p["margin_pct"] for p in rows if not plans.PLANS[p["key"]].verticals}
     assert all(82 <= m <= 88 for m in margins.values()), margins
@@ -387,8 +388,6 @@ async def test_settings_patch_enforces_plan_and_phone_verification_flow(db, clie
     tok = await _login(client, "owner@salon.com")
     r = client.patch("/t/settings", json={"transfer": {"number": "+15125550123"}}, headers=_h(tok))
     assert r.status_code == 422 and "own number" in r.json()["detail"]
-    r = client.patch("/t/settings", json={"agent": {"recording": {"enabled": True}}}, headers=_h(tok))
-    assert r.status_code == 422 and "Pro" in r.json()["detail"]
 
     r = client.post("/t/billing/verify-phone", json={"phone": "+15125550123"}, headers=_h(tok))
     code = r.json()["dev_code"]                             # development: no SMS provider

@@ -15,6 +15,15 @@ from core.tools.dental import estimate_value
 from core.tools.hotel import drain_background_tasks
 from core.tools.registry import ToolContext, run_tool, tool_names_for
 
+
+@pytest.fixture(autouse=True)
+def _sms_on(monkeypatch):
+    """These tests cover the SMS paths, which the platform has switched off (config.SMS_ENABLED)."""
+    from config import settings as _settings
+
+    monkeypatch.setattr(_settings, "SMS_ENABLED", True)
+
+
 SYD = "Australia/Sydney"
 LDN = "Europe/London"
 CALLER = "+61412345678"
@@ -90,6 +99,17 @@ async def test_red_flag_returns_the_local_emergency_number_and_alerts_the_practi
     assert any("EMERGENCY" in str(a[1]) for a in sent)
 
 
+async def test_au_closed_practice_mentions_healthdirect(db):
+    t = _tenant("ten_au_night")
+    night = datetime(2026, 11, 23, 21, 0, tzinfo=ZoneInfo(SYD)).astimezone(timezone.utc)
+    r = await _call(_ctx(t, now=night), "triage_dental_emergency",
+                    {"symptom_summary": "bad toothache", "severity_level": "urgent", "swelling_or_bleeding_red_flag": False})
+    assert "Healthdirect on 1800 022 222" in r["message"] and "111" not in r["message"]
+    day = await _call(_ctx(t, call_id="call-d2"), "triage_dental_emergency",
+                      {"symptom_summary": "chipped tooth", "severity_level": "urgent", "swelling_or_bleeding_red_flag": False})
+    assert "Healthdirect" not in day["message"]                # open: the practice itself is the answer
+
+
 async def test_urgent_problem_is_same_day_and_gb_closed_practice_mentions_nhs_111(db):
     au = await _call(_ctx(_tenant()), "triage_dental_emergency",
                      {"symptom_summary": "lost crown", "severity_level": "urgent", "swelling_or_bleeding_red_flag": False})
@@ -119,7 +139,8 @@ async def test_triage_needs_a_summary_and_a_number_unless_life_threatening(db):
 
 async def test_a_second_call_in_the_same_phone_call_updates_the_lead(db, sent):
     t = _tenant(**_owner())
-    args = {"symptom_summary": "chipped tooth", "severity_level": "urgent", "swelling_or_bleeding_red_flag": False}
+    args = {"symptom_summary": "chipped tooth", "severity_level": "urgent", "swelling_or_bleeding_red_flag": False,
+            "symptom_consent": True}
     first = await _call(_ctx(t), "triage_dental_emergency", args)
     second = await _call(_ctx(t), "triage_dental_emergency", {**args, "symptom_summary": "chipped tooth, now sharp pain"})
     assert first["lead_id"] == second["lead_id"]
@@ -130,6 +151,21 @@ async def test_a_second_call_in_the_same_phone_call_updates_the_lead(db, sent):
     assert len([a for a in sent if "Urgent dental problem" in str(a[1])]) == 1      # alerted once
     other_call = await _call(_ctx(t, call_id="call-d2"), "triage_dental_emergency", args)
     assert other_call["lead_id"] != first["lead_id"]
+
+
+async def test_symptoms_are_kept_only_with_consent_or_in_a_red_flag_emergency(db, sent):
+    # Audit P0-07: health data needs the caller's yes; a life-threatening emergency is kept regardless.
+    t = _tenant("ten_consent", **_owner())
+    base = {"severity_level": "urgent", "swelling_or_bleeding_red_flag": False}
+    no = await _call(_ctx(t, call_id="c-no"), "triage_dental_emergency", {**base, "symptom_summary": "lost filling"})
+    lead = unseal(await Repos(db, t.id).leads.find_one({"_id": no["lead_id"]}))
+    assert no["success"] and not lead.get("problem") and lead["symptom_consent"] is False
+    await drain()
+    assert any("didn't agree" in str(a[1]) for a in sent)            # the practice still gets the callback
+    red = await _call(_ctx(t, call_id="c-red"), "triage_dental_emergency",
+                      {"severity_level": "urgent", "swelling_or_bleeding_red_flag": True, "symptom_summary": "swelling to eye"})
+    lead = unseal(await Repos(db, t.id).leads.find_one({"_id": red["lead_id"]}))
+    assert lead["problem"] == "swelling to eye" and lead["symptom_consent"] is True
 
 
 # ── Cosmetic and implant leads ───────────────────────────

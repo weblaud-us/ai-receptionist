@@ -1,5 +1,6 @@
 """Two-factor auth, Google Calendar sync, reminder/digest jobs, recording links (Tasks 2.8–2.10)."""
 
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -420,23 +421,18 @@ async def test_jobs_run_once_survives_a_failing_tenant(db, salon, monkeypatch):
     assert stats["tenants"] == 1 and stats["reminders"] == 0
 
 
-# ── recording link + consent ─────────────────────────────
+# ── no call audio, ever ──────────────────────────────────
 
-async def test_recording_link_is_presigned_and_scoped(db, client, monkeypatch):
-    from config import settings
-
+async def test_there_is_no_way_to_play_call_audio(db, client):
+    """Calls are transcribed, never recorded: no audio link exists even for an old call that has one."""
     await create_tenant(name="A", vertical="salon", tenant_id="ten_A")
-    await create_tenant(name="B", vertical="salon", tenant_id="ten_B")
     await auth_service.create_user(email="o@a.com", password=PASSWORD, tenant_id="ten_A", role="owner")
     await Repos(db, "ten_A").calls.insert_one({"call_id": "cA", "recording": {"path": "recordings/cA.ogg", "bucket": "rec"}})
-    await Repos(db, "ten_B").calls.insert_one({"call_id": "cB", "recording": {"path": "recordings/cB.ogg", "bucket": "rec"}})
     h = {"Authorization": f"Bearer {client.post('/auth/login', json={'email': 'o@a.com', 'password': PASSWORD}).json()['access_token']}"}
-    assert client.get("/t/calls/cA/recording", headers=h).status_code == 503
-    monkeypatch.setattr(settings, "RECORDING_S3_ACCESS_KEY", "AK")
-    monkeypatch.setattr(settings, "RECORDING_S3_SECRET", "SK")
-    r = client.get("/t/calls/cA/recording", headers=h).json()
-    assert "recordings/cA.ogg" in r["url"] and "X-Amz-Signature=" in r["url"] and r["expires_in"] == 600
-    assert client.get("/t/calls/cB/recording", headers=h).status_code == 404
+    assert client.get("/t/calls/cA/recording", headers=h).status_code in (404, 405)
+    import agent
+
+    assert not (Path(agent.__file__).parent / "recording.py").exists()
 
 
 async def test_booking_confirmation_records_sms_consent(db, monkeypatch):

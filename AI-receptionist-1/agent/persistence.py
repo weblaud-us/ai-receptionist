@@ -93,7 +93,6 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "latency": summarise(state.turns),
         "greeting_latency_s": state.greeting_latency_s,
         "tools_used": state.tools_used,
-        "recording": state.recording,
         "provider_errors": state.provider_errors,
         "fallbacks": state.fallbacks,
         "transfer": state.transfer,
@@ -206,7 +205,6 @@ class CallRecorder:
                 "started_at": self.state.started_at, "ended_at": _utcnow(), "duration_s": round(duration, 1),
                 "outcome": self.state.outcome or "completed", "summary": summary,
                 "tools_used": list(dict.fromkeys(self.state.tools_used)), "turns": len(self.state.turns),
-                "recording": bool(self.state.recording),
             })
         except Exception:
             logger.debug("call.completed webhook failed", exc_info=True)
@@ -235,7 +233,7 @@ class CallRecorder:
             return
         seconds = math.ceil((_utcnow() - self.state.started_at).total_seconds())
         outbound = self.state.direction == "outbound"
-        cost = call_cost_usd(seconds, recording=bool(self.state.recording), outbound=outbound)
+        cost = call_cost_usd(seconds, outbound=outbound)
         # Your own sales calls (Phase 4) are a cost to you, not usage a customer pays for.
         # Calls answered as "unavailable" (suspended / capped) aren't charged to the business either.
         billable = not (settings.SALES_TENANT_ID and tenant_id == settings.SALES_TENANT_ID)             and self.state.outcome != "unavailable"
@@ -318,7 +316,8 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
     today = business_now(tenant.timezone, now).date()
     by_phone = {"phone": {"$in": variants}}
     contact, upcoming, past, calls, msgs, leads = await asyncio.gather(
-        repos.contacts.find_one(by_phone, {"name": 1, "notes": 1, "tags": 1, "do_not_contact": 1, "stats": 1}),
+        repos.contacts.find_one(by_phone, {"name": 1, "notes": 1, "tags": 1, "do_not_contact": 1, "stats": 1,
+                                           "preferred_resource_id": 1}),
         repos.appointments.find({**by_phone, "start": {"$gte": now}, "status": {"$in": _UPCOMING}},
                                 sort=[("start", 1)], limit=2,
                                 projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
@@ -337,6 +336,11 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
         return None
     contact = contact or {}
     tz = tenant.timezone
+    regular = None
+    if contact.get("preferred_resource_id"):          # the patient's regular dentist (plan E4)
+        res = await repos.resources.find_one({"_id": contact["preferred_resource_id"], "active": {"$ne": False}},
+                                             {"name": 1})
+        regular = (res or {}).get("name")
     enquiries = []
     for lead in leads:
         label = _LEAD_LABEL.get(lead.get("kind") or "", "job request" if lead.get("urgency") else "enquiry")
@@ -354,6 +358,7 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
         "tags": [str(t) for t in (contact.get("tags") or [])][:8],
         "do_not_contact": bool(contact.get("do_not_contact")),
         "no_shows": int(((contact.get("stats") or {}).get("no_shows")) or 0),
+        "regular_resource": regular,
     }
     logger.info("Returning caller %s (%d upcoming, %d past, %d calls, %d open messages)",
                 mask_phone(state.caller_phone), len(upcoming), len(past), len(calls), len(msgs))
