@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from config import settings
 from core.prompts.verticals import get_vertical
 from core.repositories import Repos
 from core.repositories.base import utcnow
@@ -121,12 +122,17 @@ async def create_tenant(*, name: str, vertical: str = "generic", timezone: str =
     if vertical == "dental":
         # Enquiry leads are not clinical records (those live in the practice's own system): keep a year.
         doc["privacy"] = {"encrypt_clinical_text": True, "lead_retention_days": 365}
-        # Plan A2.5: Deepgram Aura in the practice's own accent (fast, and the same key as the STT).
+        # The platform's voice (Cartesia) in the practice's own accent. With no voice of its own it
+        # follows the platform's AU / UK default (CARTESIA_VOICE_ID_AU / _GB), so a better default later
+        # reaches every practice that never picked one. Without a Cartesia key: the platform's Deepgram
+        # voice (Flux by default).
         from core.voices import AURA_DEFAULT_FOR_COUNTRY
 
         aura = AURA_DEFAULT_FOR_COUNTRY.get((country or "").upper())
-        if aura:
-            doc["agent"] = {"voice_provider": "deepgram", "voice_id": aura}
+        if aura and settings.tts_available("cartesia"):
+            doc["agent"] = {"voice_provider": "cartesia", "voice_id": ""}
+        elif aura:                 # Deepgram, following DEEPGRAM_TTS_MODEL[_AU / _GB]
+            doc["agent"] = {"voice_provider": "deepgram", "voice_id": ""}
     doc.update(extra or {})
     _apply_locale_defaults(doc)
     tenant = TenantConfig.from_doc(doc)                     # validate before writing

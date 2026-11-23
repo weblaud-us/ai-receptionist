@@ -26,13 +26,22 @@ def test_duplicates_and_case_are_handled():
     assert s.tts_order("kokoro") == ["kokoro", "openai"]
 
 
-def test_default_order_starts_with_deepgram_aura_and_keeps_every_fallback():
-    # Plan 2.6 / VOICE-04: Deepgram Aura is the AU/UK default; the others stay as fallbacks.
+def test_default_order_is_cartesia_then_deepgram():
+    # Cartesia is the platform's voice; Deepgram Aura (fast, cheap, same key as the STT) backs it up.
     fields = Settings.model_fields         # code defaults (tests/conftest.py overrides the env order)
-    assert fields["VOICE_TTS_PROVIDER"].default == "deepgram"
-    assert fields["VOICE_TTS_FALLBACKS"].default == "deepgram,cartesia,elevenlabs,kokoro,openai"
-    s = _s(VOICE_TTS_FALLBACKS=fields["VOICE_TTS_FALLBACKS"].default)
-    assert s.tts_order("elevenlabs") == ["elevenlabs", "deepgram", "cartesia", "kokoro", "openai"]
+    assert fields["VOICE_TTS_PROVIDER"].default == "cartesia"
+    assert fields["VOICE_TTS_FALLBACKS"].default == "deepgram"
+    s = _s(VOICE_TTS_PROVIDER="cartesia", VOICE_TTS_FALLBACKS=fields["VOICE_TTS_FALLBACKS"].default)
+    assert s.tts_order("cartesia") == ["cartesia", "deepgram"]
+    assert s.tts_order("deepgram") == ["deepgram", "cartesia"]
+    # a business that picked ElevenLabs still gets the platform chain behind it
+    assert s.tts_order("elevenlabs") == ["elevenlabs", "cartesia", "deepgram"]
+
+
+def test_bad_elevenlabs_encoding_fails_at_startup():
+    with pytest.raises(ValidationError, match="ELEVENLABS_ENCODING"):
+        _s(ELEVENLABS_ENCODING="wav")
+    assert _s(ELEVENLABS_ENCODING="mp3_44100_128").ELEVENLABS_ENCODING == "mp3_44100_128"
 
 
 def test_typo_in_fallbacks_fails_at_startup():

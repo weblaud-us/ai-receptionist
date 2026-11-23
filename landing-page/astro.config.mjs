@@ -32,6 +32,10 @@ export default defineConfig({
       VITE_TERMS_URL: link(),
       VITE_DPA_URL: link(),
       VITE_CLAIM_ZDR: envField.boolean({ context: 'client', access: 'public', optional: true, default: false }),
+      // Live "Talk to it now" demo: the API origin, the Google sign-in client id, and the switch.
+      VITE_API_URL: link(),
+      VITE_GOOGLE_CLIENT_ID: link(),
+      VITE_WEB_DEMO: envField.boolean({ context: 'client', access: 'public', optional: true, default: false }),
     },
   },
   vite: {

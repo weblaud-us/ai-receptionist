@@ -1,0 +1,96 @@
+---
+/**
+ * "Talk to it now": the live tap-to-talk demo at the top of the demo section.
+ *
+ * The visitor signs in with Google (that is the lead: it lands in the platform dashboard's Demo leads),
+ * taps the orb and talks to the receptionist of a fictional demo practice in the browser, with a live
+ * transcript and a countdown. Afterwards: the signup button and an optional practice name.
+ * live-demo.ts runs it. Shown only when the build has the demo switched on (WEB_DEMO in data/site.ts);
+ * without JavaScript it explains why nothing happens and points to the sample calls below.
+ */
+import Button from './Button.astro';
+import R from './R.astro';
+import { DEMO_PRACTICE, LINKS, WEB_DEMO } from '../data/site';
+
+const prompts = {
+  au: ["Can I book a check-up next Tuesday?", "I've chipped a tooth and it hurts", 'How much is a clean?', 'Do you take HCF?'],
+  uk: ['Can I book a check-up next Tuesday?', "I've chipped a tooth and it hurts", 'How much is a hygiene visit?', 'Do you see NHS patients?'],
+};
+---
+{
+  WEB_DEMO.enabled && (
+    <div id="talk" class="live card mb-[max(3rem,4.5vw)] grid grid-cols-1 overflow-hidden lg:grid-cols-12" data-live-demo
+      data-api={WEB_DEMO.api} data-client-id={WEB_DEMO.googleClientId} data-state="signed-out">
+      {/* Left: what this is */}
+      <div class="flex flex-col justify-between gap-8 border-b border-[var(--line)] px-5 py-6 sm:px-7 lg:col-span-5 lg:border-b-0 lg:border-r">
+        <div>
+          <p class="ord-label flex items-center gap-2.5 text-aqua-light">
+            <span class="live-dot" aria-hidden="true"></span> Live demo · about three minutes
+          </p>
+          <h3 class="h3 mt-3">Talk to it yourself.</h3>
+          <p class="mt-3 max-w-[44ch] text-[0.9375rem] leading-relaxed text-[var(--fg-2)]">
+            Sign in with Google, tap the button and speak to Ava, the receptionist at <R v={DEMO_PRACTICE} />, a demo practice.
+            Ask what your patients ask. It books into a real diary, so try to catch it out.
+          </p>
+          <p class="ord-label mt-6 text-[var(--fg-3)]">Try saying</p>
+          <ul class="mt-2.5 flex flex-wrap gap-2" aria-label="Things to try saying">
+            {prompts.au.map((p) => <li class="r-au chip live-prompt">“{p}”</li>)}
+            {prompts.uk.map((p) => <li class="r-uk chip live-prompt">“{p}”</li>)}
+          </ul>
+        </div>
+        <p class="text-[0.75rem] leading-relaxed text-[var(--fg-3)]">
+          We use your Google name and e-mail to see who tried the demo, and may contact you about the product. Demo calls are transcribed;
+          don't share real health details. {LINKS.privacy && <a class="underline underline-offset-2 hover:text-[var(--fg)]" href={LINKS.privacy}>Privacy policy</a>}
+        </p>
+      </div>
+
+      {/* Right: the call */}
+      <div class="flex min-w-0 flex-col bg-[rgb(0_0_0/0.22)] lg:col-span-7">
+        <div class="flex items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-4 sm:px-6">
+          <p class="ord-label min-w-0 truncate text-[var(--fg)]">
+            <span class="text-[var(--fg-3)]">call ·</span> <R v={DEMO_PRACTICE} />
+          </p>
+          <span class="chip" data-ld-timer aria-label="Time left in the demo">3:00</span>
+        </div>
+
+        <div class="flex flex-1 flex-col items-center gap-5 px-5 py-8 sm:px-6">
+          <button type="button" class="live-orb" data-ld-orb disabled aria-describedby="live-status">
+            <span class="live-orb-label" data-ld-label>Sign in to talk</span>
+          </button>
+          <p id="live-status" class="min-h-[1.5em] text-center text-[0.9375rem] text-[var(--fg-2)]" role="status" aria-live="polite" data-ld-status>
+            Sign in with Google to start.
+          </p>
+          <div data-ld-signin class="min-h-[44px]"></div>
+          <button type="button" class="btn btn-outline !h-11" data-ld-end hidden><span>End call</span></button>
+          <p class="hidden text-center text-[0.875rem] text-alert-light" data-ld-error role="alert"></p>
+          <noscript><p class="text-center text-[0.875rem] text-[var(--fg-3)]">Turn on JavaScript to talk to the demo, or play the sample calls below.</p></noscript>
+        </div>
+
+        <ol class="live-log max-h-[260px] space-y-1 overflow-y-auto border-t border-[var(--line)] px-3 py-3 sm:px-5" data-ld-log
+          aria-label="Live transcript" role="log" aria-live="polite" hidden></ol>
+
+        <div class="border-t border-[var(--line)] px-5 py-5 sm:px-6" data-ld-after hidden>
+          <p class="text-[var(--fg)]">That was the demo. Want Ava answering your practice's phone?</p>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <Button signup="dental_essentials">Start 14-day pilot</Button>
+            <button type="button" class="btn btn-outline" data-ld-again><span>Talk again</span></button>
+          </div>
+          <form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center" data-ld-practice>
+            <label class="text-[0.875rem] text-[var(--fg-2)]" for="live-practice">Your practice (optional)</label>
+            <input id="live-practice" name="practice" maxlength="200" autocomplete="organization"
+              class="well h-11 min-w-0 flex-1 px-3 text-[0.9375rem] text-[var(--fg)] placeholder:text-[var(--fg-3)]" placeholder="e.g. Bondi Smiles" />
+            <button type="submit" class="btn btn-outline !h-11"><span>Save</span></button>
+          </form>
+          <p class="mt-2 min-h-[1.25em] text-[0.8125rem] text-[var(--fg-3)]" data-ld-saved aria-live="polite"></p>
+        </div>
+        <div data-ld-audio hidden></div>
+      </div>
+    </div>
+  )
+}
+
+<script>
+  // Does nothing when the demo is off (no [data-live-demo] on the page); LiveKit loads only on the first tap.
+  import { initLiveDemo } from '../scripts/live-demo';
+  initLiveDemo();
+</script>

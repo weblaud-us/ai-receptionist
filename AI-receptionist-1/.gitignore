@@ -45,3 +45,5 @@ desktop.ini
 *.sqlite3
 *.db
 .junie
+# Local outputs (voice bake-off, rendered audio drafts)
+scratch/

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from typing import Any, AsyncIterable, Optional
 
 from livekit import api, rtc
@@ -23,6 +24,7 @@ from livekit.agents import llm as lk_llm
 from agent import greeting
 from agent import transfer as warm
 from agent.prompt import build_voice_prompt
+from agent.session_factory import spoken_voice
 from agent.speech import clean_stream
 from agent.state import CallState
 from agent.tools import shared_tools
@@ -33,6 +35,53 @@ from core.tools.hotel import run_in_background
 logger = logging.getLogger(__name__)
 
 SILENCE_GOODBYE_AFTER_S = 8.0
+HISTORY_WAIT_S = 1.0          # the caller's first reply waits at most this long for their history
+
+# The caller clearly wants to go. English only; other languages rely on the "you asked, they answered" check.
+_CLOSERS = re.compile(r"\b(bye|goodbye|cheerio|ta-ra|that'?s all|that'?s it|that'?s everything|nothing else|"
+                      r"no thanks|no thank you|all good|all sorted|i'?m done|i'?m good)\b", re.I)
+END_CALL_TOO_SOON = "Don't hang up yet. Ask if there's anything else you can help with, and wait for their answer."
+
+
+def _messages(chat_ctx: Any) -> list[Any]:
+    return [i for i in getattr(chat_ctx, "items", []) if getattr(i, "type", None) == "message"]
+
+
+def _latest_caller_message(chat_ctx: Any) -> tuple[Optional[Any], Optional[Any]]:
+    """The caller's latest message, and the assistant message just before it."""
+    msgs = _messages(chat_ctx)
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].role == "user" and (msgs[i].text_content or "").strip():
+            before = next((m for m in reversed(msgs[:i]) if m.role == "assistant"), None)
+            return msgs[i], before
+    return None, None
+
+
+def caller_ready_to_end(chat_ctx: Any) -> bool:
+    """True when hanging up now wouldn't cut the caller off: they said goodbye, or they just answered
+    a question from us (normally "anything else?"). Only messages up to the caller's latest one are
+    read, so it doesn't matter whether this turn's goodbye is in the chat yet."""
+    caller, before = _latest_caller_message(chat_ctx)
+    if caller is None:
+        return False
+    if _CLOSERS.search((caller.text_content or "").replace("’", "'")):
+        return True
+    asked = (before.text_content or "").rstrip() if before is not None else ""
+    return asked.endswith(("?", "؟"))
+
+
+def end_call_check(state: CallState, chat_ctx: Any) -> Optional[str]:
+    """None = go ahead and hang up. Otherwise the text for the model: ask before hanging up. Pushes back
+    once per caller message, so once the caller has spoken again the call can always end."""
+    if caller_ready_to_end(chat_ctx):
+        return None
+    caller, _ = _latest_caller_message(chat_ctx)
+    caller_id = getattr(caller, "id", None) or ""
+    if state.end_call_deferred_at is not None and state.end_call_deferred_at != caller_id:
+        return None                    # we already pushed back and they've answered since
+    state.end_call_deferred_at = caller_id
+    logger.info("Call %s: end_call before the caller was done; asking first", state.call_id)
+    return END_CALL_TOO_SOON
 
 
 def _sip_participant(room: rtc.Room) -> Optional[rtc.RemoteParticipant]:
@@ -59,6 +108,8 @@ class ReceptionistAgent(Agent):
             tools=shared_tools(state.profile),
         )
         self.state = state
+        self.history_task: Optional[asyncio.Future[Any]] = None   # caller lookup, started by the worker
+        self._waited_for_history = False
 
     # ── Greeting ────────────────────────────────────────────────────────
 
@@ -71,7 +122,7 @@ class ReceptionistAgent(Agent):
             else:                                                   # text-only sessions (evals)
                 self.session.say(text, add_to_chat_ctx=True)
             return
-        key = greeting.cache_key(text, tts, self.state.profile.voice_id)
+        key = greeting.cache_key(text, tts, spoken_voice(self.state.profile))
         cached = greeting.load(key) or await greeting.load_shared(key)
         if cached is not None:
             self.session.say(text, audio=greeting.frames(cached), allow_interruptions=True)
@@ -84,6 +135,24 @@ class ReceptionistAgent(Agent):
         await self.update_instructions(build_voice_prompt(
             self.state.profile, caller_phone=self.state.caller_phone, contact=self.state.contact))
 
+    async def on_user_turn_completed(self, turn_ctx: lk_llm.ChatContext, new_message: lk_llm.ChatMessage) -> None:
+        """The caller's first reply waits up to HISTORY_WAIT_S for their history, so the answer can
+        already use it. The reply works on a copy of the chat made before this hook runs, so the
+        new instructions go into that copy too."""
+        task = self.history_task
+        if self._waited_for_history or task is None:
+            return
+        self._waited_for_history = True
+        if not task.done():
+            with contextlib.suppress(Exception):      # timeout, or the lookup failed: carry on without it
+                await asyncio.wait_for(asyncio.shield(task), HISTORY_WAIT_S)
+            if not task.done():           # still loading: it reaches the prompt from the next turn
+                return
+        if self.state.contact:
+            from livekit.agents.voice.generation import update_instructions
+
+            update_instructions(turn_ctx, instructions=self.instructions, add_if_missing=True)
+
     # ── Speech clean-up ─────────────────────────────────────────────────
 
     def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> Any:
@@ -95,15 +164,19 @@ class ReceptionistAgent(Agent):
     # ── Voice-only tools ────────────────────────────────────────────────
 
     @function_tool()
-    async def end_call(self, context: RunContext) -> None:
-        """End the phone call. Use only after you have said goodbye and the caller has nothing else."""
+    async def end_call(self, context: RunContext) -> Optional[str]:
+        """End the phone call. Use only after the caller has said they need nothing else and you've said goodbye."""
+        too_soon = end_call_check(self.state, self.chat_ctx)
+        if too_soon:
+            return too_soon
         self.state.set_outcome("completed")
         self.state.ended_reason = "agent_hangup"
         await context.wait_for_playout()  # let the goodbye finish
         if get_job_context(required=False) is None:
             context.session.shutdown()     # text-only test runs
-            return
+            return None
         await hang_up("agent_hangup")
+        return None
 
     @function_tool()
     async def transfer_to_human(self, context: RunContext, reason: str) -> str:

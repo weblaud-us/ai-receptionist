@@ -1,4 +1,5 @@
 import {
+  VITE_API_URL,
   VITE_BOOK_DEMO_URL,
   VITE_CLAIM_ZDR,
   VITE_DASHBOARD_LOGIN_URL,
@@ -7,9 +8,11 @@ import {
   VITE_DEMO_PHONE_AU,
   VITE_DEMO_PHONE_UK,
   VITE_DPA_URL,
+  VITE_GOOGLE_CLIENT_ID,
   VITE_PRIVACY_URL,
   VITE_SITE_URL,
   VITE_TERMS_URL,
+  VITE_WEB_DEMO,
 } from 'astro:env/client';
 import type { Region } from './regions';
 import { REGION } from './regions';
@@ -39,6 +42,19 @@ export const LINKS = {
 };
 
 export const CLAIM_ZDR = VITE_CLAIM_ZDR;
+
+/**
+ * The live "Talk to it now" demo (LiveDemo.astro). On only when switched on AND both the API origin and
+ * the Google sign-in client id are set, so a half-configured build never shows a broken button.
+ */
+export const WEB_DEMO = {
+  enabled: VITE_WEB_DEMO && Boolean(VITE_API_URL && VITE_GOOGLE_CLIENT_ID),
+  api: VITE_API_URL.replace(/\/$/, ''),
+  googleClientId: VITE_GOOGLE_CLIENT_ID,
+};
+
+/** The fictional demo practices (AI-receptionist-1/scripts/seed_web_demo.py), as on the sample calls. */
+export const DEMO_PRACTICE = { au: 'Harbourline Dental', uk: 'Wimpole Dental' } as const;
 
 /** Dashboard signup, preselecting the dental vertical, the country and (optionally) a plan. */
 export function signupUrl(region: Region, plan: PlanKey = 'dental_essentials'): string {

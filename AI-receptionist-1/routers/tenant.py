@@ -27,7 +27,7 @@ POST  /t/test-call                       signed browser-call link to talk to you
 GET   /t/audit                           settings changes, exports, deletions
 GET   /t/integrations · Google Calendar connect/sync/disconnect
 GET   /t/integrations/webhooks · POST · DELETE …/{id} · POST …/{id}/test   outgoing webhooks
-GET   /t/voices                          voice catalogue with audio previews (ElevenLabs)
+GET   /t/voices                          voice catalogue (Cartesia, ElevenLabs with previews; Aura)
 """
 
 from __future__ import annotations
@@ -1656,21 +1656,31 @@ async def voices(provider: str = Query("elevenlabs", max_length=20), tp: TenantP
     from core.integrations import elevenlabs
 
     if provider == "deepgram":
-        from core.voices import AURA_DEFAULT_FOR_COUNTRY, aura_catalogue
+        from core.voices import aura_catalogue, default_voice
 
         return {"provider": provider, "available": bool(settings.DEEPGRAM_API_KEY), "voices": aura_catalogue(),
-                "default_voice_id": AURA_DEFAULT_FOR_COUNTRY.get(tp.tenant.country.upper())
-                or settings.DEEPGRAM_TTS_MODEL,
+                "default_voice_id": default_voice("deepgram", tp.tenant.country),
                 "note": None if settings.DEEPGRAM_API_KEY else "Deepgram isn't set up on this server yet."}
+    if provider == "cartesia":
+        from core.integrations import cartesia
+        from core.voices import default_voice
+
+        if not cartesia.configured():
+            return {"provider": provider, "available": False, "voices": [],
+                    "note": "Cartesia isn't set up on this server yet. Paste a Cartesia voice ID to choose one."}
+        return {"provider": provider, "available": True, "voices": await cartesia.list_voices(),
+                "default_voice_id": default_voice("cartesia", tp.tenant.country) or None}
     if provider != "elevenlabs":
         return {"provider": provider, "available": False, "voices": [],
-                "note": "Voice previews are available for ElevenLabs voices. Enter the voice ID for other providers."}
+                "note": "Voice previews are available for Cartesia and ElevenLabs voices. Enter the voice ID for other providers."}
     if not elevenlabs.configured():
         return {"provider": provider, "available": False, "voices": [],
                 "note": "Voice previews aren't available yet, so calls use the standard voice. "
                         "Paste an ElevenLabs voice ID to choose a different one."}
+    from core.voices import default_voice
+
     return {"provider": provider, "available": True, "voices": await elevenlabs.list_voices(),
-            "default_voice_id": settings.ELEVENLABS_VOICE_ID or None}
+            "default_voice_id": default_voice("elevenlabs", tp.tenant.country) or None}
 
 
 # Re-exported for the availability page.

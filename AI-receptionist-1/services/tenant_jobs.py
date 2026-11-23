@@ -40,6 +40,7 @@ from core.repositories import Repos
 from core.repositories.repos import TenantsStore
 from core.services import availability as av
 from core.services import calendar_sync
+from core.services import web_demo
 from core.tenancy.models import TenantConfig
 from core.log import set_tenant
 from database.mongodb import get_db
@@ -353,7 +354,7 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
              "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0, "chats_purged": 0, "weekly_reports": 0,
              "recall_texts": 0, "pms_rollbacks": 0, "escalations": 0,
-             "confirmation_calls": 0}
+             "confirmation_calls": 0, "web_demo_purged": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
@@ -370,12 +371,17 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
                           ("weekly_reports", maybe_send_weekly_report(t, now)),
                           ("pms_rollbacks", retry_pms_rollbacks(t, now)),
                           ("escalations", advance_escalations(t, now)),
-                          ("confirmation_calls", start_confirmation_calls(t, now))):
+                          ("confirmation_calls", start_confirmation_calls(t, now)),
+                          ("web_demo_purged", web_demo.purge_demo_tenant(get_db(), t.id, now))):
             try:
                 stats[name] += int(await job)
             except Exception:
                 logger.error("Tenant job %s failed for %s", name, t.id, exc_info=True)
     set_tenant(None)
+    try:                                            # landing-page demo leads past retention
+        stats["web_demo_purged"] += await web_demo.purge_leads(get_db(), now)
+    except Exception:
+        logger.error("Web demo lead purge failed", exc_info=True)
     return stats
 
 

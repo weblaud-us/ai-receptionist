@@ -157,6 +157,21 @@ async def test_says_goodbye_and_ends_the_call(session):
     assert "end_call" in _tools(result)
 
 
+async def test_a_thanks_is_not_a_goodbye(session, judge):
+    await session.run(user_input="What time is check-in?")
+    result = await session.run(user_input="Perfect, thanks.")
+    assert session.userdata.ended_reason != "agent_hangup"           # the call is still open
+    await result.expect.contains_message(role="assistant").judge(
+        judge, intent="Asks whether there's anything else it can help with, and does not just say goodbye.")
+
+
+async def test_an_unknown_answer_still_leaves_the_caller_with_a_next_step(session, judge):
+    result = await session.run(user_input="Can I bring my pet iguana to the room?")
+    await result.expect.contains_message(role="assistant").judge(
+        judge, intent="Does not invent a pet policy. Offers a concrete next step: taking a message for the team, "
+                      "connecting them to a person, or asking for their details so someone can call back.")
+
+
 async def test_replies_are_short_and_spoken(session):
     result = await session.run(user_input="Tell me about your rooms.")
     for reply in _replies(result):

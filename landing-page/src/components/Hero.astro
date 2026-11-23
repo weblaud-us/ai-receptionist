@@ -4,7 +4,7 @@ import CallConsole from './CallConsole.astro';
 import R from './R.astro';
 import Regional from './Regional.astro';
 import { both, money } from '../data/regions';
-import { CLAIM_ZDR } from '../data/site';
+import { CLAIM_ZDR, WEB_DEMO } from '../data/site';
 
 const headlineValue = both((r, f) => money(r, f.headlineValue));
 const accent = { au: 'Australian', uk: 'British' };
@@ -49,7 +49,9 @@ const facts = [
 
         <div class="mt-[max(2rem,2.6vw)] flex flex-col gap-3 sm:flex-row sm:items-center" data-hero-fade data-hide>
           <Button signup="dental_essentials" size="lg">Start 14-day pilot</Button>
-          <Button href="#demo" variant="outline" size="lg">Hear a dental call</Button>
+          {WEB_DEMO.enabled
+            ? <Button href="#talk" variant="outline" size="lg">Talk to it now</Button>
+            : <Button href="#demo" variant="outline" size="lg">Hear a dental call</Button>}
         </div>
       </div>
 

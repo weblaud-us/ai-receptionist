@@ -4,7 +4,7 @@ Build the AgentSession for one call (Roadmap Tasks 1.3 and 1.4.b).
     STT  Deepgram Nova-3 streaming         (fallback: OpenAI gpt-4o-mini-transcribe)
     LLM  VOICE_LLM_MODEL, streamed, tools   (OpenAI; one warm client per process;
                                              fallback: VOICE_LLM_FALLBACK_MODEL on Anthropic)
-    TTS  VOICE_TTS_PROVIDER, then VOICE_TTS_FALLBACKS (Deepgram Aura / Kokoro / ElevenLabs / Cartesia / OpenAI)
+    TTS  VOICE_TTS_PROVIDER, then VOICE_TTS_FALLBACKS (default Cartesia, then Deepgram Aura)
     Turn LiveKit turn detector + Silero VAD (VAD loaded once per process in prewarm)
 
 Phase 3 (Task 3.5): each of STT, LLM and TTS is a LiveKit FallbackAdapter when a second provider
@@ -22,7 +22,7 @@ import logging
 from typing import Any, Optional
 
 import openai as openai_sdk
-from livekit.agents import AgentSession, inference
+from livekit.agents import NOT_GIVEN, AgentSession, inference
 from livekit.agents import llm as lk_llm
 from livekit.agents import stt as lk_stt
 from livekit.agents import tts as lk_tts
@@ -32,7 +32,7 @@ from livekit.plugins import openai as lk_openai
 from agent.profile import VoiceProfile
 from agent.state import CallState
 from config import settings
-from core.voices import is_aura_model
+from core.voices import is_flux_tts, voice_for
 
 logger = logging.getLogger(__name__)
 
@@ -87,25 +87,50 @@ def build_stt(p: VoiceProfile, vad: Any = None) -> Any:
     return _openai_stt(p)
 
 
+def _own_voice(p: VoiceProfile, provider: str) -> str:
+    """The voice for `provider`: the business's own pick when made for it, else its country's default."""
+    agent = p.tenant.agent
+    return voice_for(provider, p.voice_provider, agent.voice_id, p.tenant.country)
+
+
+def _elevenlabs_settings() -> Any:
+    """Optional stability / speed from .env; unset = the voice's own settings."""
+    if not (settings.ELEVENLABS_STABILITY or settings.ELEVENLABS_SPEED):
+        return NOT_GIVEN
+    kwargs: dict[str, Any] = {"stability": settings.ELEVENLABS_STABILITY or 0.5, "similarity_boost": 0.75}
+    if settings.ELEVENLABS_SPEED:
+        kwargs["speed"] = settings.ELEVENLABS_SPEED
+    return elevenlabs.VoiceSettings(**kwargs)
+
+
 def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
     if not settings.tts_available(provider):
         return None
     if provider == "elevenlabs":
         return elevenlabs.TTS(
-            voice_id=p.voice_id,
+            voice_id=_own_voice(p, "elevenlabs") or elevenlabs.DEFAULT_VOICE_ID,
             model=settings.ELEVENLABS_TTS_MODEL,
+            encoding=settings.ELEVENLABS_ENCODING,  # type: ignore[arg-type]
+            voice_settings=_elevenlabs_settings(),
             api_key=settings.ELEVENLABS_API_KEY,
             language=p.tts_language,
             apply_text_normalization="auto",
+            enable_logging=not settings.ELEVENLABS_ZDR_ENABLED,   # zero-retention mode (enterprise)
         )
     if provider == "cartesia":
         kwargs: dict[str, Any] = {"api_key": settings.CARTESIA_API_KEY, "model": settings.CARTESIA_MODEL,
                                   "language": p.tts_language}
-        if settings.CARTESIA_VOICE_ID:
-            kwargs["voice"] = settings.CARTESIA_VOICE_ID
+        if voice := _own_voice(p, "cartesia"):
+            kwargs["voice"] = voice
+        if settings.CARTESIA_SPEED:
+            kwargs["speed"] = settings.CARTESIA_SPEED
         return cartesia.TTS(**kwargs)
-    if provider == "deepgram":     # Aura; same key as the streaming STT. The voice is the model name.
-        return deepgram.TTS(model=aura_model(p), api_key=settings.DEEPGRAM_API_KEY)
+    if provider == "deepgram":     # same key as the streaming STT. The voice is the model name.
+        model = aura_model(p)
+        if is_flux_tts(model):     # Flux TTS: /v2/speak, streamed over WebSocket
+            return deepgram.TTSv2(model=model, api_key=settings.DEEPGRAM_API_KEY,
+                                  mip_opt_out=settings.DEEPGRAM_MIP_OPT_OUT)
+        return deepgram.TTS(model=model, api_key=settings.DEEPGRAM_API_KEY, mip_opt_out=settings.DEEPGRAM_MIP_OPT_OUT)
     if provider == "kokoro":       # local Kokoro-82M behind Kokoro-FastAPI's OpenAI-compatible endpoint
         return lk_openai.TTS(model=settings.KOKORO_MODEL, voice=settings.KOKORO_VOICE,
                              base_url=settings.KOKORO_BASE_URL, api_key="not-needed")
@@ -116,20 +141,32 @@ def _tts_for(provider: str, p: VoiceProfile) -> Optional[Any]:
 
 
 def aura_model(p: VoiceProfile) -> str:
-    """The business's own Aura voice when it picked Deepgram, else the platform default. A voice id
-    chosen for another provider (an ElevenLabs id) is never sent to Deepgram."""
-    own = p.tenant.agent.voice_id
-    if p.voice_provider == "deepgram" and is_aura_model(own):
-        return own
-    return settings.DEEPGRAM_TTS_MODEL
+    """The business's own Deepgram voice (Flux or Aura) when it picked Deepgram, else the country's /
+    platform default (DEEPGRAM_TTS_MODEL[_AU / _GB]). An id chosen for another provider never reaches Deepgram."""
+    return _own_voice(p, "deepgram")
+
+
+def tts_chain(p: VoiceProfile) -> list[str]:
+    """Usable voice providers for this business, best first."""
+    primary = p.voice_provider if not p.tenant.is_legacy else settings.VOICE_TTS_PROVIDER
+    return [name for name in settings.tts_order(primary) if settings.tts_available(name)]
+
+
+def spoken_voice(p: VoiceProfile) -> str:
+    """The engine that speaks first and its voice, as "provider:voice". It is the greeting cache key,
+    so a new platform default (ELEVENLABS_VOICE_ID_AU…) re-renders greetings instead of replaying the old."""
+    chain = tts_chain(p)
+    if not chain:
+        return ""
+    fixed = {"kokoro": settings.KOKORO_VOICE, "openai": settings.OPENAI_TTS_VOICE}
+    return f"{chain[0]}:{fixed.get(chain[0]) or _own_voice(p, chain[0])}"
 
 
 def build_tts(p: VoiceProfile) -> Any:
     """Voices in the order set by .env (VOICE_TTS_PROVIDER, then VOICE_TTS_FALLBACKS); a business's own
     voice setting goes first. A voice with no key / URL is skipped; if one fails mid-call, LiveKit
     switches to the next."""
-    primary = p.voice_provider if not p.tenant.is_legacy else settings.VOICE_TTS_PROVIDER
-    order = [name for name in settings.tts_order(primary) if settings.tts_available(name)]
+    order = tts_chain(p)
     engines = [e for e in (_tts_for(name, p) for name in order) if e is not None]
     if not engines:
         raise RuntimeError("No voice configured: set DEEPGRAM_API_KEY, KOKORO_BASE_URL, CARTESIA_API_KEY, "

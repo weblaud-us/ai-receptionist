@@ -65,6 +65,9 @@ jobs:
             --build-arg VITE_TERMS_URL="$VAR_TERMS_URL" \
             --build-arg VITE_DPA_URL="$VAR_DPA_URL" \
             --build-arg VITE_CLAIM_ZDR="${VAR_CLAIM_ZDR:-false}" \
+            --build-arg VITE_WEB_DEMO="${VAR_WEB_DEMO:-false}" \
+            --build-arg VITE_API_URL="$VAR_API_URL" \
+            --build-arg VITE_GOOGLE_CLIENT_ID="$VAR_GOOGLE_SIGNIN_CLIENT_ID" \
             -t "${{ inputs.image_prefix }}-landing:${{ inputs.tag }}-${{ inputs.environment }}" .
         env:
           VAR_SITE_URL: ${{ vars.SITE_URL }}
@@ -77,6 +80,10 @@ jobs:
           VAR_TERMS_URL: ${{ vars.TERMS_URL }}
           VAR_DPA_URL: ${{ vars.DPA_URL }}
           VAR_CLAIM_ZDR: ${{ vars.CLAIM_ZDR }}
+          # Live "Talk to it now" demo: WEB_DEMO=true plus the (public) Google sign-in client id
+          VAR_WEB_DEMO: ${{ vars.WEB_DEMO }}
+          VAR_API_URL: ${{ vars.API_URL }}
+          VAR_GOOGLE_SIGNIN_CLIENT_ID: ${{ vars.GOOGLE_SIGNIN_CLIENT_ID }}
       # The server keeps a checkout of this repo only for deploy/ (compose file, Caddyfile, script).
       # Workers drain live calls one at a time, so a deploy can take up to ~2 × LIVEKIT_DRAIN_TIMEOUT.
       - name: Roll the release onto the server

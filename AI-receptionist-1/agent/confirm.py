@@ -25,7 +25,7 @@ from livekit.plugins import openai as lk_openai
 from agent.persistence import CallRecorder
 from agent.profile import resolve_profile
 from agent.prompt import build_voice_prompt
-from agent.receptionist import hang_up
+from agent.receptionist import end_call_check, hang_up
 from agent.session_factory import build_session, openai_client
 from agent.speech import clean_stream
 from agent.state import CallState
@@ -73,17 +73,21 @@ class ConfirmAgent(Agent):
         """The patient says they can make the appointment."""
         self.state.confirmed = True
         self.state.set_outcome("completed")
-        return "Confirmed. Thank them briefly, say goodbye, then end_call."
+        return "Confirmed. Thank them, ask if there's anything else, and call end_call once they're done."
 
     @function_tool()
-    async def end_call(self, context: RunContext) -> None:
-        """End the call after saying goodbye."""
+    async def end_call(self, context: RunContext) -> Optional[str]:
+        """End the call. Use only after the patient has said they need nothing else and you've said goodbye."""
+        too_soon = end_call_check(self.state, self.chat_ctx)
+        if too_soon:
+            return too_soon
         self.state.ended_reason = "agent_hangup"
         await context.wait_for_playout()
         if get_job_context(required=False) is None:
             context.session.shutdown()
-            return
+            return None
         await hang_up("agent_hangup")
+        return None
 
 
 def status_for(state: ConfirmCallState) -> str:

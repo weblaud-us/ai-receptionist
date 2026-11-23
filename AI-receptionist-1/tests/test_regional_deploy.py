@@ -64,9 +64,13 @@ def test_dental_preflight_passes_a_well_set_up_au_stack_and_flags_wrong_defaults
     good = Settings(**PROD, TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode(), VERIFY_TWILIO_SIGNATURE=True,
                     DEPLOYMENT_REGION="ap-southeast-2", TWILIO_EDGE="sydney", OPENAI_ZDR_ENABLED=True,
                     DEEPGRAM_ZDR_ENABLED=True, CLINIKO_USER_AGENT="AI Receptionist (ops@example.org)",
-                    LEGACY_TWILIO_VOICE=False)      # explicit: Settings() also reads a developer .env
+                    LEGACY_TWILIO_VOICE=False, ELEVENLABS_API_KEY="")  # explicit: Settings() also reads a developer .env
     rows = dental_preflight(good, [_practice()])
     assert all(level == "OK" for level, _, _ in rows), rows
+    # ElevenLabs as the voice: its zero-retention mode is checked too.
+    voiced = good.model_copy(update={"ELEVENLABS_API_KEY": "el-x", "ELEVENLABS_ZDR_ENABLED": False})
+    assert any(level == "WARN" and "ElevenLabs" in m for level, check, m in dental_preflight(voiced, [_practice()])
+               if check == "ZDR")
     # A UK practice on the AU stack, with US defaults: every mismatch is reported.
     wrong = _practice("GB", timezone="America/New_York", currency="USD", agent={"stt_language": "en-US"})
     msg = next(m for level, check, m in dental_preflight(good, [wrong]) if check == "Practice")

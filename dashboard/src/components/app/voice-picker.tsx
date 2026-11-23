@@ -25,8 +25,8 @@ function describe(v: Voice): string {
 }
 
 /**
- * Voice picker with audio previews (Roadmap Task 2.10). ElevenLabs and Deepgram Aura voices come from
- * the server's catalogue (Aura has no previews); any other provider falls back to a plain ID.
+ * Voice picker with audio previews (Roadmap Task 2.10). Cartesia, ElevenLabs and Deepgram Aura voices come
+ * from the server's catalogue (Aura has no previews); any other provider falls back to a plain ID.
  */
 export function VoicePicker({ provider, value, onChange, country }: Props) {
   const q = useVoices(provider)

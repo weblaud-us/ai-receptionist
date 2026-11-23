@@ -100,6 +100,10 @@ services:
     image: ${IMAGE_PREFIX}-landing:${TAG}-${DEPLOY_ENV}
     profiles: ["landing"]
     restart: unless-stopped
+    environment:
+      # The live "Talk to it now" demo calls the API and LiveKit (nginx.conf.template fills the CSP).
+      API_ORIGIN: https://${API_DOMAIN:?set API_DOMAIN}
+      LIVEKIT_CSP: wss://*.livekit.cloud https://*.livekit.cloud ${LIVEKIT_WSS_URL:-}
     logging: *logging
 
   caddy:

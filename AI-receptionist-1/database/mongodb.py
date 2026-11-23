@@ -139,7 +139,18 @@ async def create_indexes(db: AsyncIOMotorDatabase):
     await _create_tenant_indexes(db)
     await _create_outbound_indexes(db)
     await _create_billing_indexes(db)
+    await _create_web_demo_indexes(db)
     logger.info("✅ DB indexes created")
+
+
+async def _create_web_demo_indexes(db: AsyncIOMotorDatabase):
+    """Landing-page live demo leads (core/services/web_demo.py): one per Google account."""
+    await db.web_demo_leads.create_indexes([
+        IndexModel([("google_sub", ASCENDING)], unique=True, name="uniq_google_sub"),
+        IndexModel([("last_seen_at", DESCENDING)]),
+        IndexModel([("status", ASCENDING), ("last_seen_at", DESCENDING)]),
+        IndexModel([("email", ASCENDING)]),
+    ])
 
 
 async def _create_billing_indexes(db: AsyncIOMotorDatabase):

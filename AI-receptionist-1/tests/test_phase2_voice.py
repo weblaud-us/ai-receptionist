@@ -131,7 +131,11 @@ def test_dental_implant_and_cosmetic_prices_are_always_from_prices():
 
 
 def test_the_code_default_voice_matches_the_au_uk_setup():
-    assert type(settings).model_fields["VOICE_TTS_PROVIDER"].default == "deepgram"
+    # Cartesia Sonic-3 is the platform's voice; Deepgram Aura (same key as the STT) is the fallback.
+    fields = type(settings).model_fields
+    assert fields["VOICE_TTS_PROVIDER"].default == "cartesia"
+    assert fields["CARTESIA_MODEL"].default == "sonic-3"
+    assert fields["VOICE_TTS_FALLBACKS"].default == "deepgram"
 
 
 # ── 2.7 callers in other languages ─────────────────────────────────────────

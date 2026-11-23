@@ -82,6 +82,7 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "campaign_id": state.campaign_id,
         "lead_id": state.lead_id,
         "attempt_id": state.attempt_id,
+        "web_demo_lead_id": state.web_demo_lead_id,
         "business_id": state.profile.business_id,
         "tenant_id": state.profile.business_id,
         "vertical": state.profile.business_type,
@@ -163,12 +164,28 @@ class CallRecorder:
         await self._write(final=True)
         await self._record_usage()
         await self._summarise_and_notify()
+        await self._update_demo_lead()
         await self._schedule_recovery()
         latency = summarise(self.state.turns)
         logger.info("Call %s ended: outcome=%s turns=%s p50=%ss p95=%ss tool_p50=%ss greeting=%ss",
                     self.state.call_id, self.state.outcome or "completed", latency["turns"],
                     latency["p50_s"], latency["p95_s"], latency["tool_p50_s"], self.state.greeting_latency_s)
 
+
+    async def _update_demo_lead(self) -> None:
+        """Landing-page demo: the call goes on the visitor's lead (platform Demo leads). Best effort."""
+        lead_id = self.state.web_demo_lead_id
+        if not lead_id:
+            return
+        from core.services import web_demo
+
+        try:
+            await web_demo.record_session(
+                get_db(), lead_id, call_id=self.state.call_id, tenant_id=self.state.profile.business_id,
+                started_at=self.state.started_at, duration_s=(_utcnow() - self.state.started_at).total_seconds(),
+                outcome=self.state.outcome, summary=self.summary, tools_used=self.state.tools_used)
+        except Exception:
+            logger.warning("Demo lead %s not updated for call %s", lead_id, self.state.call_id, exc_info=True)
 
     async def _schedule_recovery(self) -> None:
         """A text to a caller who hung up without booking (opt-in per business; never raises)."""

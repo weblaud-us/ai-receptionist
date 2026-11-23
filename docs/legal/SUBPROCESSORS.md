@@ -17,8 +17,8 @@ hosting providers you actually use, the regions, and the transfer mechanism you 
 | Deepgram, Inc. | Speech-to-text (opted out of model improvement on every request) | Caller audio | United States | Always | [SCCs] |
 | OpenAI, L.L.C. | Language model; call summaries (`store` off; Zero Data Retention only where approved) | Transcripts, business information | United States | Always | [DPF / SCCs] |
 | Anthropic, PBC | Fallback language model | Transcripts, business information | United States | If the primary model fails | [SCCs] |
-| ElevenLabs Inc. | Text-to-speech | Assistant replies (text) | United States | When the business uses an ElevenLabs voice | [SCCs] |
-| Cartesia AI, Inc. | Text-to-speech | Assistant replies (text) | United States | Cartesia voice or as a fallback | [SCCs] |
+| ElevenLabs Inc. | Text-to-speech | Assistant replies (text) | United States | When the business picks an ElevenLabs voice | [SCCs] |
+| Cartesia AI, Inc. | Text-to-speech | Assistant replies (text) | United States | By default (the platform's main voice), unless the business picks another | [SCCs] |
 | MongoDB, Inc. (Atlas) | Database hosting | All account and call data | US / EU (by region) | Always | [DPF / SCCs] |
 | [Redis host] | Short-lived state (rate limits, call slots, job queue) | Identifiers, no transcripts | Same region as the database | Always | [ ] |
 | [Cloud host] | Application servers | All data in processing | Same region as the database | Always | [ ] |

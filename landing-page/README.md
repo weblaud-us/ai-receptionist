@@ -48,10 +48,28 @@ the dashboard's signup page already reads.
 **Prices** come only from `src/data/plans.ts`. When `plans.py` changes, update `plans.ts`.
 `check:prices` (also run in CI) fails until they match.
 
+**Live demo ("Talk to it now", `LiveDemo.astro` + `src/scripts/live-demo.ts`).** The visitor signs in
+with Google, taps the orb and talks to the receptionist of a fictional demo practice in the browser,
+with a live transcript and a countdown. Each Google account becomes a lead in the platform dashboard
+(**Demo leads**). It shows only when the build has `VITE_WEB_DEMO=true`, `VITE_API_URL` and
+`VITE_GOOGLE_CLIENT_ID`. `livekit-client` loads on the first tap, and Google's script when the panel
+nears the viewport. To switch it on:
+
+1. API: `uv run python -m scripts.seed_web_demo`, then `WEB_DEMO_ENABLED=true`, `WEB_DEMO_TENANT_AU` /
+   `_GB`, `GOOGLE_SIGNIN_CLIENT_ID`, and this site's origin in `CORS_ORIGINS` (API and worker).
+2. Google Cloud: add this site's origin to the OAuth client's "Authorized JavaScript origins".
+3. Landing build: the three `VITE_*` values above (`WEB_DEMO` and `GOOGLE_SIGNIN_CLIENT_ID` GitHub
+   variables in the deploy workflow). At container start, `API_ORIGIN` (and `LIVEKIT_CSP` for
+   self-hosted LiveKit) fill the CSP. `deploy/docker-compose.prod.yml` sets both.
+
+**Sample-call audio.** `uv run python -m scripts.render_sample_calls` (in `AI-receptionist-1/`) renders
+the scripts in `src/data/scenarios.ts` in the agent's real voice into `public/audio/`, with timings in
+`src/data/recordings/`. The next build plays them, with the transcript and trace in step.
+
 ## Deploy
 
 `landing-page/Dockerfile` builds from the repo root like the dashboards and serves `dist/` with
-`nginx.conf.template`, which sends strict security headers (`script-src 'self'`, fonts self-hosted).
+`nginx.conf.template`, which sends strict security headers (`script-src 'self'` plus Google sign-in for the live demo, fonts self-hosted).
 The landing page is optional per environment: set `SITE_URL` (GitHub environment variable) and
 `SITE_DOMAIN` (the server's `.deploy` file) on the one environment that serves it. See
 [deploy/README.md](../deploy/README.md).

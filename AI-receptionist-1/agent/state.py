@@ -34,6 +34,8 @@ class CallState:
     greeting_latency_s: Optional[float] = None
     outcome: Optional[str] = None             # booked / transferred / message / cancelled / completed
     ended_reason: Optional[str] = None
+    # end_call pushed back ("ask if there's anything else first") at this caller message (its chat id)
+    end_call_deferred_at: Optional[str] = None
     # Provider health during this call (Phase 3, Task 3.7): {"llm": 2, "tts": 1}
     provider_errors: dict[str, int] = field(default_factory=dict)
     fallbacks: dict[str, int] = field(default_factory=dict)      # switches to a fallback provider
@@ -44,6 +46,8 @@ class CallState:
     lead_id: Optional[str] = None
     attempt_id: Optional[str] = None
     summary_prompt: Optional[str] = None      # replaces the receptionist's summary instructions
+    # Landing-page live demo: the visitor's lead (web_demo_leads), from the server-signed token
+    web_demo_lead_id: Optional[str] = None
     clinical_guard_hits: int = 0              # medicine/diagnosis talk replaced before it was spoken (speech.py)
     fillers_used: list[str] = field(default_factory=list)       # "one moment…" lines already said (agent/fillers.py)
 

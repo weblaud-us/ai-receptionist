@@ -31,3 +31,15 @@ describe('sales formatting', () => {
     expect(failureText('some_new_code')).toBe('some new code')
   })
 })
+
+describe('demo leads formatting', () => {
+  it('shows talk time and where a lead came from', async () => {
+    const { sourceText, talkTime } = await import('@/lib/demo-leads')
+    expect(talkTime(0)).toBe('—')
+    expect(talkTime(45)).toBe('45s')
+    expect(talkTime(185)).toBe('3m 05s')
+    expect(sourceText({ utm: { source: 'google', medium: 'cpc', campaign: 'au-dental' }, referrer: '', page: '/' })).toBe('google / cpc · au-dental')
+    expect(sourceText({ utm: {}, referrer: 'https://www.linkedin.com/feed/', page: '/' })).toBe('linkedin.com')
+    expect(sourceText({ utm: {}, referrer: '', page: '/' })).toBe('Direct')
+  })
+})

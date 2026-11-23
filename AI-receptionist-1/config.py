@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     # scripts/check_env.py. Never claim ZDR to a customer while one is false.
     OPENAI_ZDR_ENABLED: bool = Field(default=False)
     DEEPGRAM_ZDR_ENABLED: bool = Field(default=False)
+    # ElevenLabs zero-retention mode is a request flag (enable_logging=false) that only enterprise
+    # accounts may send; true = send it, so nothing a caller hears is kept by ElevenLabs.
+    ELEVENLABS_ZDR_ENABLED: bool = Field(default=False)
 
     # ── Regional deployment (AU / UK dental stacks) ────────────────────────
     # The AWS region this stack's data lives in: ap-southeast-2 (Sydney) for AU practices, eu-west-2
@@ -197,16 +200,34 @@ class Settings(BaseSettings):
     VOICE_LANGUAGE:             str = Field(default="en-US")  # STT language; "multi" = code-switching
     # Voice (TTS). VOICE_TTS_PROVIDER is tried first, then VOICE_TTS_FALLBACKS in order; a provider
     # without a key / URL is skipped. Names: elevenlabs | cartesia | deepgram | kokoro | openai.
-    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"] = Field(default="deepgram")
-    VOICE_TTS_FALLBACKS:        str = Field(default="deepgram,cartesia,elevenlabs,kokoro,openai")
-    DEEPGRAM_TTS_MODEL:         str = Field(default="aura-2-andromeda-en")  # Aura voice; uses DEEPGRAM_API_KEY
+    # Cartesia Sonic-3 is the platform's voice; Deepgram Aura (same key as the STT) is the fallback.
+    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"] = Field(default="cartesia")
+    VOICE_TTS_FALLBACKS:        str = Field(default="deepgram")
+    # Deepgram voice (the model name is the voice): Flux TTS "flux-<voice>-en" (/v2/speak) or Aura
+    # "aura-2-<voice>-en" (/v1/speak). Uses DEEPGRAM_API_KEY. _AU / _GB: per-country, empty = this one.
+    DEEPGRAM_TTS_MODEL:         str = Field(default="flux-hannah-en")
+    DEEPGRAM_TTS_MODEL_AU:      str = Field(default="")
+    DEEPGRAM_TTS_MODEL_GB:      str = Field(default="")
     KOKORO_BASE_URL:            str = Field(default="")   # local Kokoro-FastAPI, e.g. http://kokoro:8880/v1; empty = off
     KOKORO_MODEL:               str = Field(default="kokoro")
     KOKORO_VOICE:               str = Field(default="af_heart")
-    ELEVENLABS_TTS_MODEL:       str = Field(default="eleven_flash_v2_5")
-    CARTESIA_API_KEY:           str = Field(default="")   # fallback TTS when set
+    # eleven_v4_turbo: ElevenLabs' most expressive real-time model (text-to-dialogue socket).
+    # eleven_flash_v2_5 is the faster, flatter choice if v4's first byte is too slow from AU / UK.
+    ELEVENLABS_TTS_MODEL:       str = Field(default="eleven_v4_turbo")
+    # Raw 24 kHz PCM: no 32 kbps MP3 artefacts (the plugin's default) and no decode step.
+    ELEVENLABS_ENCODING:        str = Field(default="pcm_24000")
+    ELEVENLABS_STABILITY:       float = Field(default=0.0, ge=0.0, le=1.0)  # 0 = the voice's own setting
+    ELEVENLABS_SPEED:           float = Field(default=0.0, ge=0.0, le=1.2)  # 0 = normal; Flash/Turbo only (0.8–1.2)
+    # The accent-matched voice a practice gets when it hasn't picked its own (scripts/voice_bakeoff.py).
+    ELEVENLABS_VOICE_ID_AU:     str = Field(default="")
+    ELEVENLABS_VOICE_ID_GB:     str = Field(default="")
+    CARTESIA_API_KEY:           str = Field(default="")   # the main voice
     CARTESIA_VOICE_ID:          str = Field(default="")
+    # The accent-matched voice a practice gets when it hasn't picked its own (scripts/voice_bakeoff.py).
+    CARTESIA_VOICE_ID_AU:       str = Field(default="")
+    CARTESIA_VOICE_ID_GB:       str = Field(default="")
     CARTESIA_MODEL:             str = Field(default="sonic-3")
+    CARTESIA_SPEED:             float = Field(default=0.0, ge=0.0, le=2.0)  # 0 = normal; Sonic-3 takes 0.6–2.0
     # Turn-taking (Vapi/Retell-grade feel). livekit-agents picks the small local models when running
     # `start` on our own hosts, so these are set explicitly:
     #   v1 = LiveKit's cloud end-of-turn model (falls back to the local v1-mini if the gateway fails)
@@ -233,6 +254,23 @@ class Settings(BaseSettings):
     CALL_LINK_VERSION:          int = Field(default=1)    # raise it to revoke every permanent link at once
     PUBLIC_CALL_RATE_PER_IP_HOUR: int = Field(default=10)   # calls one visitor can start per hour (permanent links)
     PUBLIC_CALL_MAX_PER_DAY:    int = Field(default=100)  # calls all visitors together can start per day
+
+    # Landing-page live demo ("Talk to it now"): a visitor signs in with Google, then talks to a demo
+    # practice in the browser. Each visitor becomes a lead in the platform dashboard (Demo leads).
+    # Off until the demo practices exist: uv run python -m scripts.seed_web_demo
+    WEB_DEMO_ENABLED:           bool = Field(default=False)
+    WEB_DEMO_TENANT_AU:         str  = Field(default="")   # tenant id of the fictional AU demo practice
+    WEB_DEMO_TENANT_GB:         str  = Field(default="")   # tenant id of the fictional UK demo practice
+    WEB_DEMO_MAX_SECONDS:       int  = Field(default=180, ge=30, le=900)  # each demo call ends after this
+    WEB_DEMO_PER_ACCOUNT_DAY:   int  = Field(default=5)    # demos one Google account can start per day
+    WEB_DEMO_PER_IP_HOUR:       int  = Field(default=10)
+    WEB_DEMO_MAX_PER_DAY:       int  = Field(default=300)  # all visitors together (cost ceiling)
+    WEB_DEMO_LEAD_RETENTION_DAYS: int = Field(default=365, ge=30)
+    WEB_DEMO_DIARY_RETENTION_HOURS: int = Field(default=24, ge=1)  # demo practices' bookings, contacts, messages
+    WEB_DEMO_TRANSCRIPT_DAYS:   int  = Field(default=30, ge=1)  # demo calls (read in Demo leads), then deleted
+    # The Google OAuth web client the landing page's "Sign in with Google" button uses (its JavaScript
+    # origins must include the landing site). Empty = GOOGLE_OAUTH_CLIENT_ID (the calendar client).
+    GOOGLE_SIGNIN_CLIENT_ID:    str  = Field(default="")
 
     # ── Telephony (SIP into LiveKit) ──────────────────────
     # Empty = decided by APP_ENV: development → softphone (free, Linphone → LiveKit SIP),
@@ -475,6 +513,15 @@ class Settings(BaseSettings):
         return tuple(p.strip() for p in self.TRANSFER_BLOCKED_PREFIXES.split(",") if p.strip().startswith("+"))
 
     @property
+    def google_signin_client_id(self) -> str:
+        return (self.GOOGLE_SIGNIN_CLIENT_ID or self.GOOGLE_OAUTH_CLIENT_ID).strip()
+
+    def web_demo_tenant(self, region: str) -> str:
+        """The demo practice for a landing-page region ("au" / "uk"); "" = none set up."""
+        return {"au": self.WEB_DEMO_TENANT_AU, "uk": self.WEB_DEMO_TENANT_GB,
+                "gb": self.WEB_DEMO_TENANT_GB}.get((region or "").lower(), "").strip()
+
+    @property
     def tts_fallbacks(self) -> list[str]:
         return [n.strip().lower() for n in self.VOICE_TTS_FALLBACKS.split(",") if n.strip()]
 
@@ -520,6 +567,9 @@ class Settings(BaseSettings):
         unknown = [n for n in self.tts_fallbacks if n not in TTS_PROVIDERS]
         if unknown:
             raise ValueError(f"VOICE_TTS_FALLBACKS has unknown voice(s) {unknown}; use {', '.join(TTS_PROVIDERS)}")
+        fmt, _, rate = self.ELEVENLABS_ENCODING.partition("_")
+        if fmt not in ("pcm", "mp3", "opus") or not rate.split("_")[0].isdigit():
+            raise ValueError(f"ELEVENLABS_ENCODING={self.ELEVENLABS_ENCODING!r}: use e.g. pcm_24000 or mp3_44100_128")
         return self
 
     @model_validator(mode="after")

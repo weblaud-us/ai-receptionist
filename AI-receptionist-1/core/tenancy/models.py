@@ -91,7 +91,7 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str = "Aria"
-    voice_provider: Literal["elevenlabs", "cartesia", "openai", "deepgram"] = "elevenlabs"
+    voice_provider: Literal["elevenlabs", "cartesia", "openai", "deepgram"] = "cartesia"   # the platform's voice
     voice_id: str = ""                       # empty → provider default from settings
     language: str = "en-US"                  # TTS / reply language
     stt_language: str = "en-US"              # "multi" for code-switching callers

@@ -130,8 +130,8 @@ export default function Assistant() {
               <Field label="Voice provider">
                 {/* A voice id belongs to one provider: switching provider starts from its default voice. */}
                 <SimpleSelect value={a.voice_provider} onChange={(v) => setAgent({ voice_provider: v as AgentConfig['voice_provider'], voice_id: '' })}
-                  options={[{ value: 'deepgram', label: 'Deepgram Aura (fastest)' }, { value: 'elevenlabs', label: 'ElevenLabs' },
-                    { value: 'cartesia', label: 'Cartesia' }, { value: 'openai', label: 'OpenAI' }]} />
+                  options={[{ value: 'cartesia', label: 'Cartesia (recommended)' }, { value: 'deepgram', label: 'Deepgram (Flux / Aura)' },
+                    { value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'openai', label: 'OpenAI' }]} />
               </Field>
               <Field label="Voice" className="sm:col-span-2">
                 <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })}

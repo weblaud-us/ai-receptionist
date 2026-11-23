@@ -145,6 +145,71 @@ async def test_a_business_aura_voice_is_used_and_other_ids_never_reach_deepgram(
     assert isinstance(tts, deepgram.TTS) and tts._opts.model == "aura-2-draco-en"
 
 
+async def test_fallback_voices_keep_the_practice_accent_and_their_own_ids(monkeypatch):
+    """An AU practice on Aura: if Aura fails, ElevenLabs and Cartesia speak in their AU voices —
+    the Aura model name is never sent to them."""
+    from types import SimpleNamespace
+
+    from livekit.agents import tts as lk_tts
+    from livekit.plugins import cartesia, deepgram, elevenlabs
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="elevenlabs", VOICE_TTS_FALLBACKS="cartesia",
+            DEEPGRAM_API_KEY="dg-test", ELEVENLABS_API_KEY="el-test", CARTESIA_API_KEY="ca-test",
+            ELEVENLABS_VOICE_ID_AU="el-au-voice", CARTESIA_VOICE_ID_AU="ca-au-voice",
+            ELEVENLABS_TTS_MODEL="eleven_v4_turbo", ELEVENLABS_ENCODING="pcm_24000",
+            DEEPGRAM_TTS_MODEL="flux-hannah-en", DEEPGRAM_TTS_MODEL_AU="")
+    base = load_profile()
+    agent = base.tenant.agent.model_copy(update={"voice_provider": "deepgram", "voice_id": "aura-2-theia-en"})
+    tenant = base.tenant.model_copy(update={"agent": agent, "country": "AU"})
+    p = SimpleNamespace(tenant=tenant, voice_provider="deepgram", voice_id="aura-2-theia-en", tts_language="en")
+
+    el = session_factory._tts_for("elevenlabs", p)
+    assert isinstance(el, elevenlabs.TTS) and el._opts.voice_id == "el-au-voice"
+    assert el._opts.encoding == "pcm_24000" and el.sample_rate == 24000
+    ca = session_factory._tts_for("cartesia", p)
+    assert isinstance(ca, cartesia.TTS) and ca._opts.voice == "ca-au-voice"
+    dg = session_factory._tts_for("deepgram", p)
+    assert isinstance(dg, deepgram.TTS) and dg._opts.model == "aura-2-theia-en"
+    assert isinstance(session_factory.build_tts(p), lk_tts.FallbackAdapter)
+
+
+async def test_a_flux_voice_uses_deepgrams_v2_endpoint_and_aura_stays_on_v1(monkeypatch):
+    from types import SimpleNamespace
+
+    from livekit.plugins import deepgram
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="deepgram", VOICE_TTS_FALLBACKS="", DEEPGRAM_API_KEY="dg-test",
+            DEEPGRAM_TTS_MODEL="flux-hannah-en", DEEPGRAM_TTS_MODEL_AU="")
+    base = load_profile()
+
+    def biz(voice_id):
+        agent = base.tenant.agent.model_copy(update={"voice_provider": "deepgram", "voice_id": voice_id})
+        return SimpleNamespace(tenant=base.tenant.model_copy(update={"agent": agent, "country": "AU"}),
+                               voice_provider="deepgram", voice_id=voice_id, tts_language="en")
+
+    flux = session_factory._tts_for("deepgram", biz(""))
+    assert isinstance(flux, deepgram.TTSv2) and flux._opts.model == "flux-hannah-en"
+    aura = session_factory._tts_for("deepgram", biz("aura-2-theia-en"))
+    assert isinstance(aura, deepgram.TTS) and not isinstance(aura, deepgram.TTSv2)
+
+
+async def test_greeting_cache_follows_the_voice_that_speaks(monkeypatch):
+    from types import SimpleNamespace
+
+    _voices(monkeypatch, VOICE_TTS_PROVIDER="elevenlabs", VOICE_TTS_FALLBACKS="deepgram",
+            ELEVENLABS_API_KEY="el-test", DEEPGRAM_API_KEY="dg-test", ELEVENLABS_VOICE_ID_GB="el-gb-1",
+            DEEPGRAM_TTS_MODEL="aura-2-andromeda-en", DEEPGRAM_TTS_MODEL_GB="aura-2-pandora-en")
+    base = load_profile()
+    agent = base.tenant.agent.model_copy(update={"voice_provider": "elevenlabs", "voice_id": ""})
+    tenant = base.tenant.model_copy(update={"agent": agent, "country": "GB"})
+    p = SimpleNamespace(tenant=tenant, voice_provider="elevenlabs", voice_id="", tts_language="en")
+    assert session_factory.spoken_voice(p) == "elevenlabs:el-gb-1"
+    monkeypatch.setattr(settings, "ELEVENLABS_VOICE_ID_GB", "el-gb-2")     # a new platform default…
+    assert session_factory.spoken_voice(p) == "elevenlabs:el-gb-2"          # …is a new greeting cache key
+    monkeypatch.setattr(settings, "ELEVENLABS_API_KEY", "")
+    assert session_factory.spoken_voice(p) == "deepgram:aura-2-pandora-en"
+
+
 async def test_kokoro_alone_points_at_the_local_server(monkeypatch):
     from livekit.plugins import openai as lk_openai
 
@@ -296,6 +361,68 @@ async def test_worker_enforces_the_per_business_call_limit(redis):
     assert await worker._line_free(one)
     assert not await worker._line_free(two)
     assert await worker._line_free(_state())          # the legacy .env hotel has no plan limit
+
+
+# ── Landing-page live demo ─────────────────────────────────────────────────
+
+def _participant(kind, attrs):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(kind=kind, attributes=attrs)
+
+
+async def test_demo_lead_comes_only_from_a_browser_token_and_only_on_a_demo_practice(monkeypatch):
+    from livekit import rtc
+
+    from agent import worker
+    from agent.profile import VoiceProfile
+
+    browser = worker._caller_attributes(_participant(rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+                                                     {"tenant_id": "ten_demo_au", "web_demo_lead": "dml_1"}))
+    sip = worker._caller_attributes(_participant(rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+                                                 {"web_demo_lead": "dml_1", "sip.trunkPhoneNumber": "+61255500123"}))
+    assert browser["web_demo_lead"] == "dml_1" and sip["web_demo_lead"] is None
+
+    monkeypatch.setattr(settings, "WEB_DEMO_TENANT_AU", "ten_demo_au")
+    demo = load_profile().tenant.model_copy(update={"id": "ten_demo_au"})
+    real = load_profile().tenant.model_copy(update={"id": "ten_real"})
+    ctx = type("Ctx", (), {"room": type("Room", (), {"name": "demo-1"})()})()
+    assert worker._call_state(ctx, browser, VoiceProfile(tenant=demo)).web_demo_lead_id == "dml_1"
+    assert worker._call_state(ctx, browser, VoiceProfile(tenant=real)).web_demo_lead_id is None
+
+
+async def test_browser_calls_get_full_band_noise_cancellation(monkeypatch):
+    from agent import worker
+
+    monkeypatch.setattr(settings, "VOICE_NOISE_CANCELLATION", True)
+    phone, browser = worker._noise_filter("phone"), worker._noise_filter("browser")
+    assert phone is not None and browser is not None
+    assert phone.options["modelPath"] != browser.options["modelPath"]     # telephony model vs full-band BVC
+    monkeypatch.setattr(settings, "VOICE_NOISE_CANCELLATION", False)
+    assert worker._noise_filter("browser") is None
+
+
+async def test_demo_cap_says_the_wrap_up_then_ends_the_call():
+    import asyncio
+
+    from agent import web_demo as demo_calls
+
+    said, ended = [], []
+
+    class Session:
+        def say(self, text, **kw):
+            said.append((text, kw.get("allow_interruptions")))
+
+    async def end(reason):
+        ended.append(reason)
+
+    wrap_up, cap = demo_calls.start_timers(Session(), 180, on_end=end)
+    assert round(cap.when() - wrap_up.when()) == demo_calls.WRAP_UP_BEFORE_S
+    for handle in (wrap_up, cap):          # run them now rather than wait three minutes
+        handle._run()
+        handle.cancel()                    # (cancel clears the callback, so only after running it)
+    await asyncio.sleep(0)
+    assert said == [(demo_calls.WRAP_UP_LINE, False)] and ended == ["demo_time_limit"]
 
 
 # ── Phase 2.2: warm transfer ───────────────────────────────────────────────

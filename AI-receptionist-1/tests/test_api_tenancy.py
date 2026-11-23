@@ -279,7 +279,7 @@ async def test_settings_update_is_validated_audited_and_applies_to_next_lookup(w
     assert client.patch("/t/settings", headers=h, json={"status": "active"}).status_code == 422   # platform-only field
     ok = client.patch("/t/settings", headers=h, json={"agent": {"name": "Mia", "greeting": ""}, "transfer": {"number": "+15125550199"}})
     assert ok.status_code == 200 and "this is Mia" in ok.json()["greeting"]
-    assert ok.json()["tenant"]["agent"]["voice_provider"] == "elevenlabs"     # nested merge kept other fields
+    assert ok.json()["tenant"]["agent"]["voice_provider"] == "cartesia"       # nested merge kept other fields
     ctx = client.get("/t/context", headers=h).json()
     assert ctx["tenant"]["agent"]["name"] == "Mia"
     entry = (await db.audit_log.find_one({"tenant_id": "ten_A", "action": "settings.update"}))

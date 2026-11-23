@@ -1,6 +1,6 @@
 import { Suspense, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
+import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, MessageSquareText, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -23,6 +23,7 @@ const NAV: NavItem[] = [
   { to: '/numbers', label: 'Numbers', icon: Hash },
   { to: '/economics', label: 'Unit economics', icon: ChartNoAxesCombined },
   { to: '/dialer', label: 'Sales dialer', icon: PhoneOutgoing },
+  { to: '/demo-leads', label: 'Demo leads', icon: MessageSquareText },
   { to: '/pilots', label: 'Pilots', icon: Rocket },
   { to: '/reviews', label: 'Transcript review', icon: ClipboardCheck },
   { to: '/compliance', label: 'Compliance', icon: Scale },

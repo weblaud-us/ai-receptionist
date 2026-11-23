@@ -29,10 +29,14 @@ ARG VITE_PRIVACY_URL=""
 ARG VITE_TERMS_URL=""
 ARG VITE_DPA_URL=""
 ARG VITE_CLAIM_ZDR=false
+ARG VITE_API_URL=""
+ARG VITE_GOOGLE_CLIENT_ID=""
+ARG VITE_WEB_DEMO=false
 ENV VITE_SITE_URL=$VITE_SITE_URL VITE_DASHBOARD_SIGNUP_URL=$VITE_DASHBOARD_SIGNUP_URL VITE_DASHBOARD_LOGIN_URL=$VITE_DASHBOARD_LOGIN_URL
 ENV VITE_DEMO_CALL_URL=$VITE_DEMO_CALL_URL VITE_BOOK_DEMO_URL=$VITE_BOOK_DEMO_URL
 ENV VITE_DEMO_PHONE_AU=$VITE_DEMO_PHONE_AU VITE_DEMO_PHONE_UK=$VITE_DEMO_PHONE_UK
 ENV VITE_PRIVACY_URL=$VITE_PRIVACY_URL VITE_TERMS_URL=$VITE_TERMS_URL VITE_DPA_URL=$VITE_DPA_URL VITE_CLAIM_ZDR=$VITE_CLAIM_ZDR
+ENV VITE_API_URL=$VITE_API_URL VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID VITE_WEB_DEMO=$VITE_WEB_DEMO
 ENV ASTRO_TELEMETRY_DISABLED=1
 RUN test -n "$VITE_SITE_URL" || (echo "VITE_SITE_URL build arg is required" >&2; exit 1)
 RUN test -n "$VITE_DASHBOARD_SIGNUP_URL" || (echo "VITE_DASHBOARD_SIGNUP_URL build arg is required" >&2; exit 1)
@@ -41,6 +45,9 @@ RUN npm run build -w landing-page
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
 COPY landing-page/nginx.conf.template /etc/nginx/templates/default.conf.template
+# Filled into the CSP at container start (docker run -e API_ORIGIN=https://api.example.com …).
+# Always defined, so envsubst never leaves a literal ${…} in the header.
+ENV API_ORIGIN="" LIVEKIT_CSP="wss://*.livekit.cloud https://*.livekit.cloud"
 COPY --from=build /repo/landing-page/dist /usr/share/nginx/html
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1

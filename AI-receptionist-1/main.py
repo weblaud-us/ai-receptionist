@@ -74,6 +74,8 @@ _ROUTERS = [
     ("routers.launch", "platform_launch_router"),     # Phase 7: pilots, transcript review, eval cases, margins
     ("routers.escalations", "escalations_router"),          # Plan 2.3: on-call escalation (dashboard)
     ("routers.escalations", "public_escalations_router"),   # Plan 2.3: acknowledge link from the alert
+    ("routers.web_demo", "public_web_demo_router"),         # Landing page "Talk to it now" (Google sign-in)
+    ("routers.web_demo", "demo_leads_router"),              # Platform: Demo leads
 ]
 
 

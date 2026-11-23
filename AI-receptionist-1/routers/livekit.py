@@ -113,6 +113,45 @@ async def talk_page(tenant_ref: str, request: Request):
     return _render_call_page(*await _link_tenant(request, tenant_ref, permanent=True))
 
 
+def livekit_configured() -> bool:
+    return bool(settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET and settings.LIVEKIT_URL)
+
+
+def mint_browser_token(tenant: TenantConfig, room: str, attributes: Optional[dict[str, str]] = None,
+                       ttl_s: int = CALL_LINK_TTL_SECONDS) -> tuple[str, str]:
+    """A LiveKit JWT that lets one browser join `room` with a microphone and summons the receptionist
+    for `tenant`. Returns (jwt, identity). Raises 503 when LiveKit isn't configured."""
+    if not livekit_configured():
+        logger.error("LiveKit not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)")
+        raise HTTPException(status_code=503, detail="Calling is temporarily unavailable.")
+
+    from livekit import api
+
+    identity = f"guest_{uuid.uuid4().hex[:8]}"  # server-chosen; never trust a client identity
+    token = (
+        api.AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
+        .with_identity(identity)
+        .with_ttl(timedelta(seconds=ttl_s))
+        # Server-signed, so the worker can trust it: which business this browser call is for (and,
+        # for the landing-page demo, which lead). The tenant id always wins over extra attributes.
+        .with_attributes({**(attributes or {}), "tenant_id": tenant.id})
+        .with_grants(api.VideoGrants(
+            room_join=True,
+            room=room,                # this room only
+            can_publish=True,         # microphone
+            can_subscribe=True,
+            can_publish_data=False,
+        ))
+        # The worker registers under an explicit agent name, so rooms aren't auto-dispatched:
+        # joining with this token asks LiveKit to send the receptionist into the room.
+        .with_room_config(api.RoomConfiguration(
+            agents=[api.RoomAgentDispatch(agent_name=settings.LIVEKIT_AGENT_NAME)],
+        ))
+        .to_jwt()
+    )
+    return token, identity
+
+
 async def _allow_public_call(request: Request) -> bool:
     # Shared by every API replica (Redis). The daily cap covers all visitors together, so a forged
     # client-IP header can only dodge the per-visitor limit.
@@ -148,34 +187,7 @@ async def livekit_token(
     if tenant is None:
         raise HTTPException(status_code=404, detail="This business is no longer available.")
 
-    if not settings.LIVEKIT_API_KEY or not settings.LIVEKIT_API_SECRET or not settings.LIVEKIT_URL:
-        logger.error("LiveKit not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)")
-        raise HTTPException(status_code=503, detail="Calling is temporarily unavailable.")
-
-    from livekit import api
-
-    identity = f"guest_{uuid.uuid4().hex[:8]}"  # server-chosen; never trust a client identity
-
-    token = (
-        api.AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
-        .with_identity(identity)
-        .with_ttl(timedelta(seconds=CALL_LINK_TTL_SECONDS))
-        # Server-signed, so the worker can trust it: which business this browser call is for.
-        .with_attributes({"tenant_id": tenant.id})
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room=room,                # this room only
-            can_publish=True,         # microphone
-            can_subscribe=True,
-            can_publish_data=False,
-        ))
-        # The worker registers under an explicit agent name, so rooms aren't auto-dispatched:
-        # joining with this token asks LiveKit to send the receptionist into the room.
-        .with_room_config(api.RoomConfiguration(
-            agents=[api.RoomAgentDispatch(agent_name=settings.LIVEKIT_AGENT_NAME)],
-        ))
-        .to_jwt()
-    )
+    token, identity = mint_browser_token(tenant, room)
 
     return JSONResponse({
         "token": token,

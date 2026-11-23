@@ -263,7 +263,10 @@ def dental_preflight(cfg: Settings, tenants: Sequence[TenantConfig]) -> list[tup
         add("FAIL", "No training", "set DEEPGRAM_MIP_OPT_OUT=true and OPENAI_STORE=false")
     else:
         add("OK", "No training", "Deepgram model-improvement opt-out on, OpenAI storage off")
-    for flag, vendor in (("OPENAI_ZDR_ENABLED", "OpenAI"), ("DEEPGRAM_ZDR_ENABLED", "Deepgram")):
+    zdr = [("OPENAI_ZDR_ENABLED", "OpenAI"), ("DEEPGRAM_ZDR_ENABLED", "Deepgram")]
+    if cfg.ELEVENLABS_API_KEY:                  # ElevenLabs hears every reply when it is the voice
+        zdr.append(("ELEVENLABS_ZDR_ENABLED", "ElevenLabs"))
+    for flag, vendor in zdr:
         if getattr(cfg, flag):
             add("OK", "ZDR", f"{vendor} Zero Data Retention recorded as approved")
         else:

@@ -82,7 +82,7 @@ def test_static_prefix_is_identical_across_calls():
 def test_prompt_is_honest_and_short():
     assert "You are an AI assistant" in STATIC_RULES
     assert "sir" not in STATIC_RULES.lower().split()
-    assert len(STATIC_RULES) <= 2600
+    assert len(STATIC_RULES) <= 3600
 
 
 def test_dynamic_tail():

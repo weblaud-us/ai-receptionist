@@ -62,15 +62,17 @@ from agent.session_factory import build_session, endpointing  # noqa: E402
 from agent.state import CallState  # noqa: E402
 from agent.telemetry import attach_telemetry  # noqa: E402
 from agent.turn_tuning import attach_turn_tuning  # noqa: E402
+from agent import web_demo as web_demo_calls  # noqa: E402
 from core import concurrency  # noqa: E402
 from core.billing.usage import gate as billing_gate  # noqa: E402
 from core.phone import mask_phone  # noqa: E402
 from core.services import confirmation_calls  # noqa: E402
 from core.services.scheduling import prefetch_availability  # noqa: E402
+from core.services.web_demo import is_demo_tenant  # noqa: E402
 
 logger = logging.getLogger("agent.worker")
 
-CONTACT_LOAD_TIMEOUT_S = 2.0
+CONTACT_LOAD_TIMEOUT_S = 5.0     # background; the caller's first reply waits at most HISTORY_WAIT_S of it
 TENANT_RESOLVE_TIMEOUT_S = 3.0
 
 
@@ -131,6 +133,7 @@ def _caller_attributes(participant: rtc.RemoteParticipant) -> dict[str, Any]:
         "sip_call_id": attrs.get("sip.callID"),
         "sip_trunk_id": attrs.get("sip.trunkID"),
         "tenant_id": None if is_sip else attrs.get("tenant_id"),   # browser calls: from the signed token
+        "web_demo_lead": None if is_sip else attrs.get("web_demo_lead"),   # landing-page demo (signed too)
     }
 
 
@@ -153,6 +156,8 @@ def _call_state(ctx: JobContext, caller: dict[str, Any], profile: VoiceProfile) 
         dialed_number=caller["dialed"],
         sip_call_id=caller["sip_call_id"],
         sip_trunk_id=caller["sip_trunk_id"],
+        # Only on a demo practice: a lead id is never attached to a real practice's call.
+        web_demo_lead_id=caller.get("web_demo_lead") if is_demo_tenant(profile.business_id) else None,
     )
 
 
@@ -219,6 +224,14 @@ async def _run_unavailable(ctx: JobContext, state: CallState, gate: str) -> None
                         room_options=room_io.RoomOptions(delete_room_on_close=True))
 
 
+def _noise_filter(channel: str) -> Any:
+    """LiveKit Cloud background-voice cancellation: the telephony model for 8 kHz SIP audio, the
+    full-band one for browser calls (the landing-page demo is often a laptop in an open office)."""
+    if not settings.VOICE_NOISE_CANCELLATION:
+        return None
+    return noise_cancellation.BVCTelephony() if channel == "phone" else noise_cancellation.BVC()
+
+
 def _tag_sentry(state: CallState) -> None:
     set_tenant(state.profile.business_id)                 # every log line of this call
     try:
@@ -280,28 +293,33 @@ async def entrypoint(ctx: JobContext) -> None:
     if state.channel == "phone":
         DtmfWatcher(ctx.room, session, state)      # "press 0 for a person" (Phase 6)
     agent = ReceptionistAgent(state)
+    # Look the caller up now, while the session starts and the greeting plays; their first reply
+    # waits briefly for it (ReceptionistAgent.on_user_turn_completed).
+    agent.history_task = asyncio.create_task(_load_history(agent, state))
+
+    demo_timers: list[asyncio.TimerHandle] = []
 
     async def _on_shutdown(reason: str) -> None:
+        for handle in demo_timers:
+            handle.cancel()
         await concurrency.release(profile.business_id, state.call_id)
         await recorder.finish(reason)
     ctx.add_shutdown_callback(_on_shutdown)
 
-    use_nc = state.channel == "phone" and settings.VOICE_NOISE_CANCELLATION
     await session.start(
         agent=agent,
         room=ctx.room,
         room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=noise_cancellation.BVCTelephony() if use_nc else None,
-            ),
+            audio_input=room_io.AudioInputOptions(noise_cancellation=_noise_filter(state.channel)),
             delete_room_on_close=True,        # caller hangs up → room (and job) closes
         ),
     )
 
     recorder.start()
+    if state.web_demo_lead_id:                     # landing-page demo: a hard cap with a wrap-up line
+        demo_timers.extend(web_demo_calls.start_timers(session, settings.WEB_DEMO_MAX_SECONDS))
     # While the greeting plays: fetch this week's diary so "when can I come in?" doesn't wait on the PMS.
     asyncio.create_task(prefetch_availability(state.tool_context().repos(), profile.tenant))
-    asyncio.create_task(_load_history(agent, state))
     asyncio.create_task(record_contact_call(state))
     asyncio.create_task(_start_background_audio(ctx, session, profile))
 

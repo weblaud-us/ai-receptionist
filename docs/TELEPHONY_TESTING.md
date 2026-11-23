@@ -176,7 +176,7 @@ META_WA_ACCESS_TOKEN=
 
 Then run `uv run python -m scripts.check_env` and fix every ❌ before going on.
 
-## 0.5 The agent's voice: Deepgram first, Kokoro as backup
+## 0.5 The agent's voice: Deepgram in dev, Cartesia in production
 
 The voice order is set entirely in `.env`. Nothing is hard-coded.
 
@@ -190,10 +190,11 @@ error, out of credit, server down), LiveKit switches to the next one without dro
 
 | Voice | Setting | Needs | Cost | Notes |
 |---|---|---|---|---|
-| `deepgram` (Aura-2) | `DEEPGRAM_TTS_MODEL` | `DEEPGRAM_API_KEY` (the same key as speech-to-text) | Free starting credit, then pay per use | Streaming, low latency. English voices; see Deepgram's [model list](https://developers.deepgram.com/docs/tts-models) |
+| `deepgram` (Flux TTS / Aura-2) | `DEEPGRAM_TTS_MODEL` (`flux-hannah-en`), `_AU` / `_GB` | `DEEPGRAM_API_KEY` (the same key as speech-to-text) | Pay per use | **The production fallback.** `flux-<voice>-en` uses Flux TTS (/v2/speak), `aura-2-<voice>-en` Aura; see Deepgram's [Flux voices](https://developers.deepgram.com/docs/flux-tts/voices) |
 | `kokoro` (Kokoro-82M) | `KOKORO_VOICE`, `KOKORO_MODEL` | `KOKORO_BASE_URL` and the Docker container | Free, runs on your PC | CPU only on most laptops, so slower than a cloud voice (first sound often 1 to 3 s on older CPUs). A backup, not the first choice |
 | `openai` | `OPENAI_TTS_VOICE` | `OPENAI_API_KEY` | Cents per call | Slowest first sound |
-| `elevenlabs`, `cartesia` | see `.env.example` | their API keys | | Optional extras |
+| `cartesia` (Sonic-3) | `CARTESIA_MODEL`, `CARTESIA_VOICE_ID_AU` / `_GB`, `CARTESIA_SPEED` | `CARTESIA_API_KEY` | Pay per use, more than Aura | **The production default**: natural, low latency |
+| `elevenlabs` | `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_VOICE_ID_AU` / `_GB` | `ELEVENLABS_API_KEY` | | Optional: only for a business that picks it |
 
 **Recommended dev setup:**
 
@@ -201,7 +202,7 @@ error, out of credit, server down), LiveKit switches to the next one without dro
 VOICE_TTS_PROVIDER=deepgram
 VOICE_TTS_FALLBACKS=kokoro,openai
 DEEPGRAM_API_KEY=<your key>
-DEEPGRAM_TTS_MODEL=aura-2-andromeda-en       # the model name is the voice, e.g. aura-2-luna-en, aura-2-orion-en
+DEEPGRAM_TTS_MODEL=flux-hannah-en            # the model name is the voice: flux-kit-en, or Aura (aura-2-luna-en)
 KOKORO_BASE_URL=http://kokoro:8880/v1         # empty = Kokoro off
 KOKORO_VOICE=af_heart
 ELEVENLABS_API_KEY=                           # empty, otherwise businesses still prefer ElevenLabs first
@@ -209,6 +210,19 @@ ELEVENLABS_API_KEY=                           # empty, otherwise businesses stil
 
 So calls speak with Deepgram Aura. If Deepgram has a problem, Kokoro takes over. If Kokoro isn't
 running, OpenAI does.
+
+**Production (and to hear the premium voice in dev):** the code default is Cartesia first, then
+Deepgram Aura (`VOICE_TTS_PROVIDER=cartesia`, `VOICE_TTS_FALLBACKS=deepgram`). Pick the Australian and
+British voices by ear first:
+
+```bash
+uv run python -m scripts.voice_bakeoff          # writes scratch/bakeoff/<time>/index.html
+```
+
+Judge by the **phone** column (8 kHz G.711, what callers hear), then set `CARTESIA_VOICE_ID_AU` /
+`CARTESIA_VOICE_ID_GB`. Each provider gets its own voice in the practice's accent (Aura falls back to
+Theia / Pandora), so a fallback never sounds like a different country. Practices still
+on the stock Aura voice move over with `uv run python -m scripts.upgrade_voices --apply`.
 
 ### Start the Kokoro backup
 

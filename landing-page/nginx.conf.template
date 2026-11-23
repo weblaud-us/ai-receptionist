@@ -1,6 +1,7 @@
 # Static multi-page site (Astro build): /, /uk/, /404.html. Rendered at container start by the
-# nginx image's envsubst step; this file has no variables yet, which keeps the image identical to
-# the dashboards' layout.
+# nginx image's envsubst step, which fills in (the Dockerfile gives both a default):
+#   API_ORIGIN   the API the live demo calls, e.g. https://api.example.com ("" = demo off)
+#   LIVEKIT_CSP  where the live demo's call connects, e.g. "wss://*.livekit.cloud https://*.livekit.cloud"
 server {
     listen 8080;
     server_name _;
@@ -11,14 +12,17 @@ server {
 
     # Every script, style, font and image is a same-origin file, so the CSP needs no 'unsafe-inline'
     # for scripts. Inline style attributes (Tailwind arbitrary values) need style-src 'unsafe-inline'.
-    set $csp "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests";
+    # The live demo adds: Google sign-in (accounts.google.com/gsi), the API, and the LiveKit call.
+    set $csp "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self' ${API_ORIGIN} ${LIVEKIT_CSP} https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests";
+    # The demo needs the microphone on this page only; Google sign-in may use the browser's FedCM prompt.
+    set $permissions 'camera=(), geolocation=(), microphone=(self), payment=(), identity-credentials-get=(self "https://accounts.google.com")';
 
     add_header Content-Security-Policy $csp always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=()" always;
+    add_header Permissions-Policy $permissions always;
 
     gzip on;
     gzip_types text/css application/javascript image/svg+xml application/xml text/plain;
@@ -45,7 +49,7 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=()" always;
+        add_header Permissions-Policy $permissions always;
         try_files $uri $uri/index.html $uri.html =404;
     }
 

@@ -4,12 +4,14 @@
  * timed transcript); right, the agent's tool calls in step with it. demo-player.ts runs it; without
  * JavaScript every transcript and trace is still fully readable.
  */
+import LiveDemo from './LiveDemo.astro';
 import Regional from './Regional.astro';
 import SectionRule from './SectionRule.astro';
 import Wave from './Wave.astro';
+import { withRecording } from '../data/recordings';
 import { REGIONS } from '../data/regions';
 import { SCENARIOS, SPEAKER_LABEL } from '../data/scenarios';
-import { LINKS } from '../data/site';
+import { LINKS, WEB_DEMO } from '../data/site';
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const stamp = (s: number) => `+${s.toFixed(1).padStart(4, '0')}s`;
@@ -25,7 +27,7 @@ const statusClass = {
 ---
 <section id="demo" data-tone="dark" data-orb="demo" class="tone-dark overflow-hidden" aria-labelledby="demo-title">
   <div class="container-page section-pad">
-    <SectionRule idx="02" label="Sample calls">Four scenarios · one rulebook</SectionRule>
+    <SectionRule idx="02" label={WEB_DEMO.enabled ? 'Live demo' : 'Sample calls'}>{WEB_DEMO.enabled ? 'Talk to it · or hear four calls' : 'Four scenarios · one rulebook'}</SectionRule>
     <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
       <h2 id="demo-title" class="h2 lg:col-span-8">Hear it handle real dental calls. <span class="hl">Then see every step it took.</span></h2>
       <p class="lede lg:col-span-4">
@@ -33,7 +35,12 @@ const statusClass = {
       </p>
     </div>
 
-    <div role="tablist" aria-label="Sample calls" class="mt-[max(3rem,4.5vw)] grid grid-cols-2 border-l border-t border-[var(--line)] lg:grid-cols-4" data-demo-tabs>
+    <div class="mt-[max(3rem,4.5vw)]">
+      <LiveDemo />
+      {WEB_DEMO.enabled && <p class="ord-label mb-3 text-[var(--fg-3)]">Or hear four sample calls · no microphone needed</p>}
+    </div>
+
+    <div role="tablist" aria-label="Sample calls" class="grid grid-cols-2 border-l border-t border-[var(--line)] lg:grid-cols-4" data-demo-tabs>
       {
         SCENARIOS.map((s, i) => (
           <button
@@ -48,7 +55,7 @@ const statusClass = {
             <span class="absolute inset-x-0 top-0 h-px bg-aqua opacity-0 transition-opacity duration-300 group-aria-selected:opacity-100" aria-hidden="true" />
             <span class="flex items-center justify-between gap-2 ord-label">
               <span class="text-[var(--fg-3)] transition-colors group-aria-selected:text-aqua-light">{String(i + 1).padStart(2, '0')}</span>
-              <span class="text-[var(--fg-3)] tnum">{fmt(s.script.au.duration)}</span>
+              <span class="text-[var(--fg-3)] tnum">{fmt(withRecording(s.id, 'au', s.script.au).duration)}</span>
             </span>
             <span class="t-24 text-[var(--fg-2)] transition-colors group-aria-selected:text-[var(--fg)]">
               {s.tab.au === s.tab.uk ? s.tab.au : <Fragment><span class="r-au">{s.tab.au}</span><span class="r-uk">{s.tab.uk}</span></Fragment>}
@@ -63,7 +70,7 @@ const statusClass = {
         SCENARIOS.map((s, i) => (
           <div role="tabpanel" id={`panel-${s.id}`} aria-labelledby={`tab-${s.id}`} hidden={i !== 0} tabindex="0">
             {REGIONS.map((r) => {
-              const sc = s.script[r];
+              const sc = withRecording(s.id, r, s.script[r]);    // real audio + timing once rendered
               const tid = `transcript-${s.id}-${r}`;
               return (
                 <div class={`r-${r} card grid grid-cols-1 overflow-hidden lg:grid-cols-12`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>

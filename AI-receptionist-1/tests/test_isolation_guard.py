@@ -39,9 +39,12 @@ PLATFORM = {
     "sales_leads", "campaigns", "call_attempts", "dnc_list", "consent_records", "dnc_registry", "dnc_registry_meta",
     # Phase 6/7: the platform's consent-revocation evidence, transcript reviews and eval cases
     "consent_events", "call_reviews", "eval_cases",
+    # Landing-page demo: visitors who signed in with Google are the platform's own leads, not a business's
+    "web_demo_leads",
 }
 # Module constants that name platform collections in `db[...]` access.
-PLATFORM_CONSTANTS = {"EVENTS", "optout.EVENTS", "REVIEWS", "CASES", "reviews.REVIEWS", "reviews.CASES"}
+PLATFORM_CONSTANTS = {"EVENTS", "optout.EVENTS", "REVIEWS", "CASES", "reviews.REVIEWS", "reviews.CASES",
+                      "DEMO_LEADS", "wd.DEMO_LEADS"}
 
 OPS = (r"find|find_one|insert_one|insert_many|update_one|update_many|delete_one|delete_many|count_documents|"
        r"aggregate|distinct|find_one_and_update|replace_one|bulk_write|estimated_document_count")
