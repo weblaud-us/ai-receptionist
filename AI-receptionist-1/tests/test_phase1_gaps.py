@@ -111,3 +111,17 @@ def test_production_needs_a_real_encryption_key():
     for bad in ("", "not-a-fernet-key", f"{Fernet.generate_key().decode()},broken"):
         with pytest.raises(ValidationError, match="TOKEN_ENCRYPTION_KEY"):
             Settings(_env_file=None, **safe, TOKEN_ENCRYPTION_KEY=bad)
+
+
+def test_key_rotation_reencrypts_every_enc_field_and_counts_unreadable():
+    from cryptography.fernet import Fernet, MultiFernet
+
+    from scripts.rotate_encryption_key import rotate_doc
+
+    old, new, other = Fernet(Fernet.generate_key()), Fernet(Fernet.generate_key()), Fernet(Fernet.generate_key())
+    doc = {"_id": "x", "mfa": {"secret_enc": old.encrypt(b"s1").decode()},
+           "items": [{"problem_enc": old.encrypt(b"p").decode()}, {"name": "keep"}],
+           "api_key_enc": other.encrypt(b"k").decode(), "plain": "untouched"}
+    sets, bad = rotate_doc(doc, MultiFernet([new, old]))
+    assert set(sets) == {"mfa.secret_enc", "items.0.problem_enc"} and bad == 1
+    assert new.decrypt(sets["mfa.secret_enc"].encode()) == b"s1"      # now readable with the new key alone
