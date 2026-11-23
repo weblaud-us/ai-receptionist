@@ -144,10 +144,10 @@ function VerifyPhoneCard({ b }: { b: BillingData }) {
               onClick={() => start.mutate(phone, {
                 onSuccess: (r) => {
                   setAsked(true)
-                  toast.success(r.dev_code ? `Development code: ${r.dev_code}` : 'Code sent by text')
+                  toast.success(r.dev_code ? `Development code: ${r.dev_code}` : 'Calling you now. Answer to hear your code.')
                 },
               })}>
-              {start.isPending && <Loader2 className="animate-spin" />} Text me a code
+              {start.isPending && <Loader2 className="animate-spin" />} Call me with a code
             </Button>
           </div>
         ) : (

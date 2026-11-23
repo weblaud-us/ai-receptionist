@@ -210,6 +210,16 @@ export function useAppointmentMutations() {
   }
 }
 
+/** Practitioners free at the same time as this appointment (the "Change dentist" dialog). */
+export const useFreePractitioners = (appointmentId: string | undefined) =>
+  useQuery({
+    queryKey: ['t-free-practitioners', appointmentId],
+    queryFn: () => api<{ practitioners: { _id: string; name: string }[] }>(
+      `/t/appointments/${appointmentId}/free-practitioners`),
+    enabled: !!appointmentId,
+    staleTime: 0,
+  })
+
 /** A dentist's patients today or tomorrow. Dentists always get their own; staff pass `resourceId`. */
 export const useMyDay = (day: 'today' | 'tomorrow', resourceId?: string) =>
   useQuery({

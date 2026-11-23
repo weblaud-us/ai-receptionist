@@ -89,6 +89,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck:shared
       - run: npm run build
+      - name: Smoke tests (Vitest, both dashboards)
+        run: npm test
       - name: Landing-page prices match core/billing/plans.py
         run: npm run check:prices -w landing-page
       - name: Landing-page colours meet WCAG AA

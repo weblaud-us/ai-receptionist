@@ -16,7 +16,7 @@ import { addDaysISO, dateOnly, isValidPhone, normalizePhone, titleCase } from '@
 import { regionFor } from '@/lib/region'
 import { useCtx } from '@/lib/tenant'
 import { APPOINTMENT_STYLE, inZone, zoneDateKey, zoneDay, zoneTime, zoneToday } from '@/lib/tenant-format'
-import { useAppointmentMutations, useAppointments, useContacts, useResources, useServices, useSlots } from '@/lib/tenant-hooks'
+import { useAppointmentMutations, useAppointments, useContacts, useFreePractitioners, useResources, useServices, useSlots } from '@/lib/tenant-hooks'
 import type { Appointment, Contact, Slot } from '@/lib/tenant-types'
 import { cn } from '@receptionist/shared/lib/utils'
 
@@ -161,12 +161,11 @@ function ChangeResourceDialog({ appointment, onClose }: { appointment: Appointme
   const ctx = useCtx()
   const tz = ctx.tenant.timezone
   const L = ctx.vertical.labels
-  const resources = useResources()
+  const free = useFreePractitioners(appointment?.appointment_id)
   const m = useAppointmentMutations()
   const [to, setTo] = useState('')
-  const options = (resources.data?.resources ?? [])
-    .filter((r) => r.active && r.id !== appointment?.resource_id)
-    .map((r) => ({ value: r.id, label: r.name }))
+  // Only who is actually free at that time (the server re-checks when moving).
+  const options = (free.data?.practitioners ?? []).map((r) => ({ value: r._id, label: r.name }))
   const close = () => { setTo(''); onClose() }
   return (
     <Dialog open={!!appointment} onOpenChange={(o) => !o && close()}>
@@ -179,7 +178,15 @@ function ChangeResourceDialog({ appointment, onClose }: { appointment: Appointme
           </DialogDescription>
         </DialogHeader>
         <Field label={`New ${L.resource.toLowerCase()}`}>
-          <SimpleSelect value={to} onChange={setTo} placeholder="Choose" options={options} />
+          {free.isLoading ? (
+            <p className="text-sm text-muted-foreground"><Loader2 className="mr-1 inline size-4 animate-spin" />Checking who's free…</p>
+          ) : options.length ? (
+            <SimpleSelect value={to} onChange={setTo} placeholder="Choose" options={options} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {free.isError ? "Couldn't check the diary. Try again in a moment." : `No other ${L.resource.toLowerCase()} is free at that time.`}
+            </p>
+          )}
         </Field>
         <DialogFooter>
           <Button variant="outline" onClick={close}>Keep as is</Button>
@@ -268,6 +275,12 @@ function NewAppointmentDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     setPhone(c.phone)
     setEmail(c.email ?? '')
     setSearching(false)
+    // Book with the patient's regular dentist by default (still changeable), as the assistant does.
+    const regular = c.preferred_resource_id
+    if (resourceId === 'any' && regular && activeResources.some((r) => r.id === regular)) {
+      setResourceId(regular)
+      changeSearch()
+    }
   }
   const reset = () => {
     setWindowStart(zoneToday(tz))
