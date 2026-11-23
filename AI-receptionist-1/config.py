@@ -168,8 +168,8 @@ class Settings(BaseSettings):
     VOICE_LANGUAGE:             str = Field(default="en-US")  # STT language; "multi" = code-switching
     # Voice (TTS). VOICE_TTS_PROVIDER is tried first, then VOICE_TTS_FALLBACKS in order; a provider
     # without a key / URL is skipped. Names: elevenlabs | cartesia | deepgram | kokoro | openai.
-    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"] = Field(default="elevenlabs")
-    VOICE_TTS_FALLBACKS:        str = Field(default="elevenlabs,cartesia,deepgram,kokoro,openai")
+    VOICE_TTS_PROVIDER:         Literal["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"] = Field(default="deepgram")
+    VOICE_TTS_FALLBACKS:        str = Field(default="deepgram,cartesia,elevenlabs,kokoro,openai")
     DEEPGRAM_TTS_MODEL:         str = Field(default="aura-2-andromeda-en")  # Aura voice; uses DEEPGRAM_API_KEY
     KOKORO_BASE_URL:            str = Field(default="")   # local Kokoro-FastAPI, e.g. http://kokoro:8880/v1; empty = off
     KOKORO_MODEL:               str = Field(default="kokoro")

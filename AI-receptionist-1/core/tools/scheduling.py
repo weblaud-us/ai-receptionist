@@ -182,12 +182,13 @@ async def check_availability(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[s
         return {"available": False, "slots": [],
                 "alternatives": [{"slot_id": s.slot_id, "say": svc.describe(s, by_id, today=today)} for s in later],
                 "message": "Nothing free then. Offer the alternatives, or another day."}
-    price = (service or {}).get("price") or {}
+    from core.prompts.builder import price_text
+
     return {
         "available": True,
         "service": (service or {}).get("name"),
         "duration_min": (service or {}).get("duration_min"),
-        "price": price.get("display") or None,
+        "price": price_text(service or {}, ctx.tenant_cfg.vertical) or None,
         "slots": [{"slot_id": s.slot_id, "say": svc.describe(s, by_id, today=today),
                    "resource": (by_id.get(s.resource_id) or {}).get("name")} for s in slots],
         "message": "Offer these times in words. When they choose, confirm name (and number) then book_appointment.",

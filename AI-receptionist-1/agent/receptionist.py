@@ -87,7 +87,10 @@ class ReceptionistAgent(Agent):
     # ── Speech clean-up ─────────────────────────────────────────────────
 
     def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> Any:
-        return Agent.default.tts_node(self, clean_stream(text), model_settings)
+        return Agent.default.tts_node(self, clean_stream(text, on_guard=self._guard_hit), model_settings)
+
+    def _guard_hit(self, matched: str) -> None:
+        self.state.clinical_guard_hits += 1
 
     # ── Voice-only tools ────────────────────────────────────────────────
 

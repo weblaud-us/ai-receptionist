@@ -11,6 +11,7 @@ identical per tenant; owner free text is fenced; the dynamic "Right now" block i
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -143,7 +144,7 @@ def _services_text(t: TenantConfig, snap: BusinessSnapshot) -> str:
         extras = []
         if s.get("duration_min"):
             extras.append(f"{s['duration_min']} min")
-        price = (s.get("price") or {}).get("display")
+        price = price_text(s, t.vertical)
         if price:
             extras.append(price)
         if extras:
@@ -154,6 +155,20 @@ def _services_text(t: TenantConfig, snap: BusinessSnapshot) -> str:
     if staff:
         text += f"\n- {spec.labels.get('resources', 'Staff')}: {', '.join(staff[:12])}. Callers may ask for one or say anyone."
     return text
+
+
+_FROM_RE = re.compile(r"^\s*(from|starting|starts)\b", re.I)
+
+
+def price_text(service: Dict[str, Any], vertical: str) -> str:
+    """A service's price as the assistant may say it. Dental implant and cosmetic fees are always a
+    "from" price with "exact quote after an examination" (audit VOICE-06), whatever the owner typed."""
+    display = " ".join(str((service.get("price") or {}).get("display") or "").split())
+    if not display or vertical != "dental" or service.get("category") not in ("implant", "cosmetic"):
+        return display
+    if not _FROM_RE.match(display):
+        display = f"from {display}"
+    return f"{display}, exact quote after an examination"
 
 
 def _knowledge_text(snap: BusinessSnapshot) -> str:
@@ -211,6 +226,23 @@ def render_business_facts(t: TenantConfig, snap: BusinessSnapshot) -> str:
         lines.append("- You can text the caller a link to: " + ", ".join(kinds) +
                      " (send_info_link, only after they say yes to a text).")
     return "\n".join(lines)
+
+
+# Voices that can speak the caller's language. Deepgram Aura (the AU/UK default) is English only.
+MULTILINGUAL_VOICES = frozenset({"elevenlabs", "cartesia", "openai"})
+
+
+def voice_language_text(t: TenantConfig) -> str:
+    """Plan 2.7: only when the speech-to-text listens for any language ("multi"). Stable per tenant,
+    so it sits in the cached part of the prompt."""
+    if (t.agent.stt_language or "").lower() != "multi":
+        return ""
+    if t.agent.voice_provider in MULTILINGUAL_VOICES:
+        return ("# Languages\nCallers may speak any language. Answer in the language they use, and keep "
+                "names, dates, times and prices especially clear.")
+    return ("# Languages\nYour voice can only speak English, whatever the general rules say. If a caller speaks "
+            "another language, answer in short, slow, simple English. If they still struggle, take a message "
+            "with take_message, noting which language they speak, so someone can call them back.")
 
 
 def fence_owner_text(text: str) -> str:
@@ -348,6 +380,7 @@ def _assemble(base: str, t: TenantConfig, snap: BusinessSnapshot, now: Optional[
         base,
         spec.rules,
         render_business_facts(t, snap),
+        voice_language_text(t) if voice else "",
         _knowledge_text(snap),
         fence_owner_text(t.agent.custom_instructions),
         render_right_now(t, now, caller_phone, contact, voice=voice, snap=snap),   # always LAST

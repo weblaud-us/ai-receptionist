@@ -96,6 +96,7 @@ def call_document(state: CallState, *, final: bool) -> dict[str, Any]:
         "provider_errors": state.provider_errors,
         "fallbacks": state.fallbacks,
         "transfer": state.transfer,
+        "clinical_guard_hits": state.clinical_guard_hits,   # > 0: worth a look in transcript review
         "after_hours": _after_hours(state),
         "answer_window": _answer_window(state),
         "overflow": _overflow(state),

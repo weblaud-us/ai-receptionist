@@ -71,3 +71,80 @@ async def test_only_announced_notices_in_the_next_two_weeks_are_loaded(db):
                                            "date_from": "2026-12-01", "date_to": "2026-12-02"})
     snap = await load_snapshot(repos, t)
     assert [n["_id"] for n in snap.notices] == ["exc_0"]
+
+
+# ── 2.6 safer speech ───────────────────────────────────────────────────────
+
+def _speak(chunks):
+    from agent.speech import ClinicalGuard
+
+    hits: list = []
+    g = ClinicalGuard(hits.append)
+    out = "".join(g.push(c) for c in chunks) + g.flush()
+    return out, hits
+
+
+def test_medicine_and_dose_advice_never_reaches_the_voice():
+    from agent.speech import SAFE_LINE
+
+    out, hits = _speak(["Sorry to hear that. ", "You could ", "take 400 ", "mg of ibu", "profen every ", "six hours. ",
+                        "Shall I book you in?"])
+    assert "ibuprofen" not in out and "400" not in out and "mg" not in out
+    assert out.startswith("Sorry to hear that.") and SAFE_LINE.strip() in out and out.endswith("Shall I book you in?")
+    assert hits
+
+
+def test_guard_catches_phrases_split_token_by_token():
+    text = "Thanks Sam. You have probably got an abscess, so let's see you today. Is 2 p.m. okay?"
+    tokens = [t for t in text.replace(" ", " \0").split("\0")]      # one word per chunk, like an LLM
+    out, hits = _speak(tokens)
+    assert "abscess" not in out and hits and out.startswith("Thanks Sam.") and out.endswith("Is 2 p.m. okay?")
+
+
+def test_ordinary_words_are_not_held_back():
+    from agent.speech import ClinicalGuard
+
+    g = ClinicalGuard()
+    assert g.push("Great, I've booked ") == "Great, I've booked "            # released at once
+    assert g.push("Dr Lee") == "Dr "                                            # "Lee" may still be growing
+    assert g.push(" for ") == "Lee for "
+
+
+def test_diagnosis_language_is_replaced_but_normal_talk_passes_untouched():
+    out, hits = _speak(["That sounds like ", "an abscess to me. ", "Let's get you seen today."])
+    assert "abscess" not in out and out.endswith("Let's get you seen today.") and hits
+    normal = ["I've got Tuesday at 10 30 a.m. with Dr Lee. ", "Would that work for you?"]
+    out, hits = _speak(normal)
+    assert out == "".join(normal) and not hits
+
+
+def test_dental_implant_and_cosmetic_prices_are_always_from_prices():
+    from core.prompts.builder import price_text
+
+    implant = {"name": "Single implant", "category": "implant", "price": {"display": "$4,500"}}
+    assert price_text(implant, "dental") == "from $4,500, exact quote after an examination"
+    already = {"category": "cosmetic", "price": {"display": "From $650 per tooth"}}
+    assert price_text(already, "dental") == "From $650 per tooth, exact quote after an examination"
+    exam = {"category": "routine", "price": {"display": "$150"}}
+    assert price_text(exam, "dental") == "$150"                         # fixed fees stay as they are
+    assert price_text(implant, "salon") == "$4,500"
+
+
+def test_the_code_default_voice_matches_the_au_uk_setup():
+    assert type(settings).model_fields["VOICE_TTS_PROVIDER"].default == "deepgram"
+
+
+# ── 2.7 callers in other languages ─────────────────────────────────────────
+
+def test_language_rule_follows_the_voice():
+    from core.prompts.builder import build_chat_prompt, build_voice_prompt
+
+    t = _dental()
+    assert "# Languages" not in build_voice_prompt(t)                       # English-only STT: no rule
+    t.agent.stt_language = "multi"
+    t.agent.voice_provider = "elevenlabs"
+    assert "Answer in the language they use" in build_voice_prompt(t)
+    t.agent.voice_provider = "deepgram"
+    english_only = build_voice_prompt(t)
+    assert "can only speak English" in english_only and "take_message" in english_only.split("# Languages")[1]
+    assert "# Languages" not in build_chat_prompt(t)                        # WhatsApp text has no voice limit

@@ -113,7 +113,8 @@ async def test_clean_stream_drops_empty_chunks():
         for c in ["Let", " me", "**", " check."]:
             yield c
 
-    assert [c async for c in clean_stream(chunks())] == ["Let", " me", " ", " check."]
+    out = [c async for c in clean_stream(chunks())]
+    assert all(out) and "".join(out).split() == ["Let", "me", "check."]   # symbols gone, words intact
 
 
 # ── Telemetry ────────────────────────────────────────────

@@ -44,6 +44,7 @@ class CallState:
     lead_id: Optional[str] = None
     attempt_id: Optional[str] = None
     summary_prompt: Optional[str] = None      # replaces the receptionist's summary instructions
+    clinical_guard_hits: int = 0              # medicine/diagnosis talk replaced before it was spoken (speech.py)
     fillers_used: list[str] = field(default_factory=list)       # "one moment…" lines already said (agent/fillers.py)
 
     @property

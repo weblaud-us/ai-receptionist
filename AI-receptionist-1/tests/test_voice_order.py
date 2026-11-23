@@ -26,10 +26,13 @@ def test_duplicates_and_case_are_handled():
     assert s.tts_order("kokoro") == ["kokoro", "openai"]
 
 
-def test_default_order_keeps_the_old_behaviour_and_adds_the_new_voices():
-    s = _s()
-    assert s.VOICE_TTS_PROVIDER == "elevenlabs"
-    assert s.tts_order("elevenlabs") == ["elevenlabs", "cartesia", "deepgram", "kokoro", "openai"]
+def test_default_order_starts_with_deepgram_aura_and_keeps_every_fallback():
+    # Plan 2.6 / VOICE-04: Deepgram Aura is the AU/UK default; the others stay as fallbacks.
+    fields = Settings.model_fields         # code defaults (tests/conftest.py overrides the env order)
+    assert fields["VOICE_TTS_PROVIDER"].default == "deepgram"
+    assert fields["VOICE_TTS_FALLBACKS"].default == "deepgram,cartesia,elevenlabs,kokoro,openai"
+    s = _s(VOICE_TTS_FALLBACKS=fields["VOICE_TTS_FALLBACKS"].default)
+    assert s.tts_order("elevenlabs") == ["elevenlabs", "deepgram", "cartesia", "kokoro", "openai"]
 
 
 def test_typo_in_fallbacks_fails_at_startup():

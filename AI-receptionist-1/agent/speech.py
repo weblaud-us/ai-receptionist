@@ -18,8 +18,11 @@ normalisation holds back only a trailing run that could still be part of a numbe
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import AsyncIterable, AsyncIterator, List
+from typing import AsyncIterable, AsyncIterator, Callable, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+")
 _SYMBOLS_RE = re.compile(r"[*#_`~|<>\[\]{}•▪◦●]")
@@ -128,12 +131,100 @@ class NumberBuffer:
         return normalize_numbers(rest)
 
 
-async def clean_stream(text: AsyncIterable[str]) -> AsyncIterator[str]:
+# ── Clinical guard (audit VOICE-05) ──────────────────────────────────────────
+# The prompt forbids medicines, doses and diagnoses; this is the last line of defence if the model
+# says one anyway. It holds back only the last couple of words (no sentence buffering, so no added
+# latency), and on a hit says one safe line instead and drops the rest of that sentence.
+
+_MEDICINES = (r"ibuprofen|paracetamol|acetaminophen|panadol|panadeine|nurofen|advil|aspirin|codeine|tramadol|"
+              r"oxycodone|amoxicillin|amoxycillin|augmentin|metronidazole|penicillin|clindamycin|antibiotics?|"
+              r"painkillers?|pain ?killers?|anti-?inflammator(?:y|ies)|orajel|bonjela|clove oil")
+_CONDITIONS = r"abscess|infection|infected|cavity|cavities|decay|gum disease|periodontitis|gingivitis|a crack|cracked|dry socket|pulpitis"
+_GUARD_RE = re.compile(
+    rf"\b(?:{_MEDICINES})\b"
+    r"|\b\d+(?:\.\d+)?\s?(?:mg|milligrams?|mcg|micrograms?|ml|millilitres?|milliliters?)\b"
+    r"|\b(?:\d+|one|two|three|four)\s(?:tablets?|capsules?|pills?)\b"
+    rf"|\b(?:you(?:'ve| have)?|it(?:'s| is)|that(?:'s| is)|sounds like|could be|might be|probably)\s+"
+    rf"(?:(?:probably|likely|just|definitely|possibly|got|have|has|an?|be|like)\s+){{0,3}}(?:{_CONDITIONS})\b",
+    re.I)
+_SENTENCE_END_RE = re.compile(r"[.!?](?:\s|$)")
+SAFE_LINE = " The dentist will advise you on that when they see you."
+GUARD_WINDOW_WORDS = 6          # the longest phrase: "you have probably got an abscess"
+_WORD_RE = re.compile(r"\S+")
+_STARTER_RE = re.compile(r"^(?:you(?:'ve)?|it(?:'s)?|that(?:'s)?|sounds|could|might|probably|take|"
+                         r"\d[\d.,]*|one|two|three|four)$", re.I)
+
+
+def _hold_from(buf: str) -> int:
+    """Where to stop releasing text: the earliest word in the window that could start a match, or
+    the last word if it may still be growing ("ibu" → "ibuprofen"). Everything else goes now."""
+    words = list(_WORD_RE.finditer(buf))
+    if not words:
+        return len(buf)
+    hold = len(buf) if buf[-1].isspace() else words[-1].start()
+    for w in words[-GUARD_WINDOW_WORDS:]:
+        if _STARTER_RE.match(w.group(0).strip(".,!?;:")):
+            return min(hold, w.start())
+    return hold
+
+
+class ClinicalGuard:
+    """Feed it stream chunks; it replaces medicine / dose / diagnosis talk with SAFE_LINE."""
+
+    def __init__(self, on_hit: Optional[Callable[[str], None]] = None) -> None:
+        self._buf = ""
+        self._skipping = False
+        self._on_hit = on_hit
+
+    def _scan(self, final: bool) -> str:
+        out = ""
+        while True:
+            if self._skipping:
+                end = _SENTENCE_END_RE.search(self._buf)
+                if not end:
+                    if final:
+                        self._buf = ""
+                    return out
+                self._buf = self._buf[end.end():]
+                self._skipping = False
+                out += " " if self._buf and not self._buf.startswith(" ") else ""
+                continue
+            m = _GUARD_RE.search(self._buf)
+            if m:
+                logger.warning("Clinical guard replaced speech (matched %r)", m.group(0)[:40])
+                if self._on_hit:
+                    self._on_hit(m.group(0))
+                start = max(self._buf.rfind(".", 0, m.start()), self._buf.rfind("?", 0, m.start()),
+                            self._buf.rfind("!", 0, m.start()))
+                out += self._buf[:start + 1] + SAFE_LINE   # what came before this sentence, then the safe line
+                self._buf = self._buf[m.end():]
+                self._skipping = True
+                continue
+            if final:
+                out, self._buf = out + self._buf, ""
+                return out
+            # Release everything except what could still turn into a match: from the earliest
+            # trigger word in the last few words ("you…", "sounds…", "400…"), or an unfinished word.
+            cut = _hold_from(self._buf)
+            out, self._buf = out + self._buf[:cut], self._buf[cut:]
+            return out
+
+    def push(self, chunk: str) -> str:
+        self._buf += chunk
+        return self._scan(final=False)
+
+    def flush(self) -> str:
+        return self._scan(final=True)
+
+
+async def clean_stream(text: AsyncIterable[str], on_guard: Optional[Callable[[str], None]] = None
+                       ) -> AsyncIterator[str]:
+    guard = ClinicalGuard(on_guard)
     numbers = NumberBuffer()
     async for chunk in text:
-        ready = numbers.push(clean_for_speech(chunk))
+        ready = numbers.push(guard.push(clean_for_speech(chunk)))
         if ready:
             yield ready
-    rest = numbers.flush()
+    rest = numbers.push(guard.flush()) + numbers.flush()
     if rest:
         yield rest
