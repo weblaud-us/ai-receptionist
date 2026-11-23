@@ -307,6 +307,9 @@ function BusinessTab() {
               <label className="flex items-center gap-2">
                 <Switch checked={n.monthly_report ?? true} onCheckedChange={(v) => set({ notifications: { ...n, monthly_report: v } })} /> Monthly results e-mail
               </label>
+              <label className="flex items-center gap-2">
+                <Switch checked={n.weekly_report ?? true} onCheckedChange={(v) => set({ notifications: { ...n, weekly_report: v } })} /> Monday summary of last week
+              </label>
               <Field label="Which calls reach your assistant?" hint="Used to count the calls it caught that you would have missed (Results).">
                 <SimpleSelect value={draft.answering_mode ?? 'all_calls'} options={ANSWERING_MODES}
                   onChange={(v) => set({ answering_mode: v as Draft['answering_mode'] })} />

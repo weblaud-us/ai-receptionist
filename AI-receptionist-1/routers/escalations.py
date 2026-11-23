@@ -5,6 +5,7 @@ On-call escalations (plan Phase 2.3).
     POST /public/escalations/{tenant}/{id}?sig=…   acknowledge
     GET  /t/escalations                            recent escalations with who was alerted when (staff+)
     POST /t/escalations/{id}/ack                   acknowledge from the dashboard (staff+)
+    GET  /public/appointments/{tenant}/{id}.ics?sig=…   a patient's "add to calendar" link (plan 4.5)
 
 The public link is signed (core/signed_links). GET never changes anything, so e-mail link scanners
 that open every link can't acknowledge an emergency on someone's behalf.
@@ -69,6 +70,28 @@ async def ack_from_link(tenant_id: str, escalation_id: str, sig: str = Query("",
     await escalation.acknowledge(tenant, escalation_id, by="on-call (alert link)")
     return _page("Thanks, it's yours", f"Nobody else will be alerted about this call for {tenant.name}. "
                                        "The patient's details are in the alert and on the dashboard.")
+
+
+@public_escalations_router.get("/appointments/{tenant_id}/{appointment_id}.ics")
+async def appointment_calendar(tenant_id: str, appointment_id: str, sig: str = Query("", max_length=64)):
+    """Plan 4.5: the patient's "add to calendar" link from the booking confirmation."""
+    from fastapi.responses import Response
+
+    from core.repositories import Repos
+    from core.services import appointment_ics
+    from database.mongodb import get_db
+
+    if not appointment_ics.verify(tenant_id, appointment_id, sig):
+        raise HTTPException(404, "Not found")
+    tenant = await resolve_by_id(tenant_id)
+    appt = await Repos(get_db(), tenant_id).appointments.find_one({"appointment_id": appointment_id}) if tenant else None
+    if tenant is None or appt is None:
+        raise HTTPException(404, "Not found")
+    if appt.get("status") not in ("pending", "confirmed"):
+        raise HTTPException(410, "This appointment was cancelled or moved")
+    return Response(appointment_ics.ics_text(tenant, appt), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{appointment_id}.ics"',
+                             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @escalations_router.get("/escalations")

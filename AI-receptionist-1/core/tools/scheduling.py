@@ -243,7 +243,11 @@ async def book_appointment(ctx: "ToolContext", args: Dict[str, Any]) -> Dict[str
         await ctx.repos().contacts.update_one({"_id": appt.get("contact_id")}, {"$set": {"consent.sms": {
             "granted": True, "at": datetime.now(timezone.utc), "source": f"booking_{ctx.channel}", "call_id": ctx.call_id,
             "scope": "transactional"}}})
-        fire(notify_contact(t, phone, f"{t.name}: your {label} is booked for {when}. Reply here or call {t.phone} to change it."))
+        from core.services.appointment_ics import ics_url
+
+        cal = ics_url(t.id, appt["appointment_id"])          # plan 4.5: add it to their calendar
+        fire(notify_contact(t, phone, f"{t.name}: your {label} is booked for {when}. Reply here or call {t.phone} "
+                                      "to change it." + (f" Add it to your calendar: {cal}" if cal else "")))
     return {"success": True, "appointment_id": appt["appointment_id"], "when": when, "service": label,
             "with": appt.get("resource_name"),
             "message": f"Booked: {label} {when}. Tell them a confirmation is on its way, then ask if there's anything else."}

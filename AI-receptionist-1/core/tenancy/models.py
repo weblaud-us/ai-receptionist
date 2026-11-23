@@ -198,6 +198,7 @@ class NotificationsConfig(BaseModel):
     on_urgent: List[str] = Field(default_factory=lambda: ["sms", "call"])
     daily_digest: bool = True
     monthly_report: bool = True              # "your assistant this month" (Phase 7)
+    weekly_report: bool = True               # Monday summary of last week (plan 4.5)
 
 
 class OnCallContact(BaseModel):

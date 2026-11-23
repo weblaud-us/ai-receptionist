@@ -123,6 +123,7 @@ export interface Tenant {
     on_urgent: string[]
     daily_digest: boolean
     monthly_report?: boolean
+    weekly_report?: boolean
   }
   scheduling: {
     min_notice_minutes: number

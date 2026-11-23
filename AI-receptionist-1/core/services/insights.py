@@ -76,6 +76,7 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
     else:
         missed = sum(1 for c in answered if c.get("after_hours") is True)
     transfers = sum(1 for c in answered if c.get("transfer") == "ok" or c.get("outcome") == "transferred")
+    transfers_failed = sum(1 for c in answered if c.get("transfer") == "failed")
     p50s: List[float] = []
     for c in answered:
         p50 = (c.get("latency") or {}).get("p50_s")
@@ -112,7 +113,7 @@ async def value_report(db: Any, tenant: TenantConfig, since: datetime, until: da
         "would_have_missed": missed,
         "bookings": len(appts), "est_booking_value": round(value_cents / 100, 2), "currency": tenant.currency,
         "leads": leads, "messages": messages,
-        "transfers": transfers,
+        "transfers": transfers, "transfers_failed": transfers_failed,
         "handled_without_human_pct": _pct(len(answered) - transfers, len(answered)),
         "latency_p50_s": round(statistics.median(p50s), 2) if p50s else None,
         "unanswered_questions": unanswered,
@@ -212,6 +213,8 @@ def report_text(tenant: TenantConfig, r: Dict[str, Any], title: str, *, unanswer
                   f"• {r['bookings']} bookings made by your assistant" + (f", worth about {money}" if money else ""),
                   f"• {r['leads'] + r['messages']} messages and job requests taken",
                   f"• {r['transfers']} calls passed to your team"]
+        if r.get("transfers_failed"):
+            lines.append(f"• {r['transfers_failed']} transfers nobody picked up: check who answers your staff line")
         if r["handled_without_human_pct"] is not None:
             lines.append(f"• {r['handled_without_human_pct']:.0f}% handled start to finish without your team")
         if r["latency_p50_s"] is not None:
@@ -224,8 +227,9 @@ def report_text(tenant: TenantConfig, r: Dict[str, Any], title: str, *, unanswer
                       f"({w['lunch_break']} at lunch, {w['after_hours']} after hours, {w['busy_overflow']} while busy)",
                       f"• {d['consultations_booked']} implant and cosmetic consultations booked",
                       f"• {d['cosmetic_leads']} treatment enquiries qualified for your coordinator",
-                      f"• {d['emergency_triages_captured']} dental emergencies triaged",
-                      f"• {d['missed_call_sms_recoveries']} missed callers texted a booking link"]
+                      f"• {d['emergency_triages_captured']} dental emergencies triaged"]
+            if d.get("missed_call_sms_recoveries"):
+                lines.append(f"• {d['missed_call_sms_recoveries']} missed callers texted a booking link")
             if d.get("recall_texts_sent"):
                 lines.append(f"• {d['recall_texts_sent']} overdue patients sent a recall text, "
                              f"{d['reactivation_bookings_attributed']} booked within 14 days")

@@ -16,6 +16,7 @@ jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process
 - recording purge — deletes audio stored before calls stopped being recorded (RECORDING_RETENTION_DAYS).
 - monthly report  — "your assistant this month" on the 1st (Phase 7, Task 7.3).
 - pilot report    — weekly scorecard to pilot businesses on Mondays (Phase 7, Task 7.1).
+- weekly report   — Monday summary of last week for everyone else (plan 4.5).
 - confirmation calls — the day before, for patients the WhatsApp reminder missed (Phase 2.5).
 - escalations     — alerts the next on-call person when an urgent call isn't acknowledged (Phase 2.3).
 - PMS rollbacks   — retries cancelling practice-diary bookings that couldn't be saved here (P0-09).
@@ -299,6 +300,29 @@ async def maybe_send_monthly_report(t: TenantConfig, now: datetime) -> bool:
     return await send_email(t.notifications.owner_email, f"{t.name}: your assistant in {month}", text)
 
 
+async def maybe_send_weekly_report(t: TenantConfig, now: datetime) -> bool:
+    """Plan 4.5: Monday morning, last week's calls, bookings, pipeline, emergencies and missed
+    transfers. Pilots get their own weekly report instead."""
+    from core.services import insights
+
+    if t.pilot.active or not (t.notifications.weekly_report and t.notifications.owner_email):
+        return False
+    local = now.astimezone(ZoneInfo(t.timezone))
+    if local.weekday() != 0 or local.hour < settings.REPORT_HOUR:
+        return False
+    if t.created_at and now - (t.created_at if t.created_at.tzinfo else t.created_at.replace(tzinfo=timezone.utc)) \
+            < timedelta(days=7):
+        return False                     # not a full week yet
+    iso = local.isocalendar()
+    if not await _claim(t, "weekly_report_week", f"{iso[0]}-W{iso[1]:02d}"):
+        return False
+    since, until = now - timedelta(days=7), now
+    report = await insights.value_report(get_db(), t, since, until)
+    text = insights.report_text(t, report, f"Last week at {t.name}:",
+                                unanswered=await _unanswered_questions(t, since, until))
+    return await send_email(t.notifications.owner_email, f"{t.name}: your assistant last week", text)
+
+
 async def maybe_send_pilot_report(t: TenantConfig, now: datetime) -> bool:
     from core.services import insights
 
@@ -327,7 +351,7 @@ async def maybe_send_pilot_report(t: TenantConfig, now: datetime) -> bool:
 async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
     stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
-             "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0, "chats_purged": 0,
+             "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0, "chats_purged": 0, "weekly_reports": 0,
              "recall_texts": 0, "pms_rollbacks": 0, "escalations": 0,
              "confirmation_calls": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
@@ -343,6 +367,7 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
                           ("recordings_deleted", purge_recordings(t, now)),
                           ("monthly_reports", maybe_send_monthly_report(t, now)),
                           ("pilot_reports", maybe_send_pilot_report(t, now)),
+                          ("weekly_reports", maybe_send_weekly_report(t, now)),
                           ("pms_rollbacks", retry_pms_rollbacks(t, now)),
                           ("escalations", advance_escalations(t, now)),
                           ("confirmation_calls", start_confirmation_calls(t, now))):
