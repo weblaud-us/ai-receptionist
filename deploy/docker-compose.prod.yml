@@ -129,7 +129,7 @@ services:
   # noeviction stays on purpose: the job queue lives here too, and evicting a queued job loses it;
   # cache and rate-limit keys all expire on their own.
   redis:
-    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    image: redis:8-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
     env_file: ["${ENV_FILE:?set ENV_FILE}"]
     command: ["sh", "-c", "exec redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy noeviction --requirepass \"$${REDIS_PASSWORD:?set REDIS_PASSWORD in the env file}\""]
     volumes: [redis_data:/data]
