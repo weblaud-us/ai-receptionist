@@ -12,7 +12,7 @@ from scripts.check_env import dental_preflight
 ROOT = Path(__file__).resolve().parents[2]
 PROD = dict(APP_ENV="production", SECRET_KEY="s" * 40, CORS_ORIGINS="https://app.example.org",
             WEBHOOK_BASE_URL="https://api.example.org", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True,
-            REDIS_URL="redis://redis:6379/0")
+            REDIS_URL="redis://:test-redis-pw@redis:6379/0")
 
 
 def _practice(country="AU", **kw) -> TenantConfig:

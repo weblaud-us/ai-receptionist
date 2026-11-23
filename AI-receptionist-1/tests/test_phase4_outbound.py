@@ -744,7 +744,7 @@ def test_production_refuses_a_dialer_on_the_customers_trunk():
     from config import Settings
 
     base = dict(APP_ENV="production", SECRET_KEY="x" * 40, CORS_ORIGINS="https://app.example.com",
-                WEBHOOK_BASE_URL="https://api.example.com", META_APP_SECRET="s", REDIS_URL="redis://r:6379/0",
+                WEBHOOK_BASE_URL="https://api.example.com", META_APP_SECRET="s", REDIS_URL="redis://:pw@r:6379/0",
                 REQUIRE_ADMIN_MFA=True, LOG_LEVEL="INFO", TELEPHONY_PROVIDER="twilio", _env_file=None)
     Settings(**base)                                                       # the dialer is off: fine
     with pytest.raises(ValueError, match="SALES_SIP_OUTBOUND_TRUNK_ID"):

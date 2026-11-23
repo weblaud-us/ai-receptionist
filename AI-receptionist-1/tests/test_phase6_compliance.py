@@ -324,7 +324,7 @@ async def test_public_legal_and_site(db, client, monkeypatch):
 def test_public_signup_needs_published_legal_documents():
     base = dict(APP_ENV="production", SECRET_KEY="x" * 40, CORS_ORIGINS="https://app.example.com",
                 WEBHOOK_BASE_URL="https://api.example.com", META_APP_SECRET="s", REQUIRE_ADMIN_MFA=True,
-                REDIS_URL="redis://r:6379/0", TELEPHONY_PROVIDER="livekit", SIGNUP_ENABLED=True,
+                REDIS_URL="redis://:pw@r:6379/0", TELEPHONY_PROVIDER="livekit", SIGNUP_ENABLED=True,
                 STRIPE_SECRET_KEY="sk_live_x", STRIPE_WEBHOOK_SECRET="whsec_x", STRIPE_PRICE_GROWTH_MONTHLY="price_x",
                 RESEND_API_KEY="re_x", EMAIL_FROM="hi@example.com", DASHBOARD_URL="https://app.example.com",
                 LOG_LEVEL="INFO", DEBUG=False)

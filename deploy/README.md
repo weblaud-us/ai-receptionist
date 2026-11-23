@@ -31,7 +31,8 @@ Production refuses to boot without the safe values ([PRODUCTION_CHECKLIST](../do
 Phase 3 additions:
 
 ```
-REDIS_URL=redis://redis:6379/0          # or the managed Redis URL
+REDIS_PASSWORD=…                         # 32+ random chars; the bundled Redis requires it
+REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379/0   # or the managed Redis URL (with its password)
 METRICS_TOKEN=…                          # 24+ random chars
 LOG_FORMAT=json
 LIVEKIT_NUM_IDLE_PROCESSES=2

@@ -105,7 +105,7 @@ def test_production_needs_a_real_encryption_key():
     from config import Settings
 
     safe = dict(APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
-                REDIS_URL="redis://redis:6379/0", VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
+                REDIS_URL="redis://:test-redis-pw@redis:6379/0", VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
                 META_APP_SECRET="s", LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True)
     assert Settings(_env_file=None, **safe, TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode()).is_production
     for bad in ("", "not-a-fernet-key", f"{Fernet.generate_key().decode()},broken"):
@@ -153,3 +153,18 @@ async def test_the_audit_log_is_a_hash_chain_that_shows_tampering(db):
     await db.audit_log.delete_one({"tenant_id": "ten_audit", "seq": 3})
     ok, problems = await verify(db, "ten_audit")
     assert not ok and "seq 3: missing" in problems[0]
+
+
+def test_production_refuses_a_redis_without_a_password():
+    from cryptography.fernet import Fernet
+    from pydantic import ValidationError
+
+    from config import Settings
+
+    safe = dict(APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
+                VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com", META_APP_SECRET="s",
+                LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True,
+                TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode())
+    assert Settings(_env_file=None, **safe, REDIS_URL="rediss://default:pw@managed.example:6380/0").is_production
+    with pytest.raises(ValidationError, match="REDIS_URL needs a password"):
+        Settings(_env_file=None, **safe, REDIS_URL="redis://redis:6379/0")

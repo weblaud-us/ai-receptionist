@@ -56,6 +56,8 @@ CMD ["python", "-m", "jobs"]
 FROM runtime AS worker
 ENV LIVEKIT_WORKER_PORT=8081
 EXPOSE 8081
+# LiveKit's worker health endpoint answers 503 once the worker has failed to (re)connect to LiveKit
+# or its inference process (turn detector) has died, so this is more than a port check (audit SRE-03).
 HEALTHCHECK --interval=15s --timeout=4s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/', timeout=3)"
 # SIGTERM = drain: stop taking calls, wait up to LIVEKIT_DRAIN_TIMEOUT for live ones. The platform's

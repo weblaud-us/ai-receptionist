@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from config import Settings
 
 SAFE = dict(APP_ENV="production", DEBUG=False, SECRET_KEY="x" * 48, CORS_ORIGINS="https://app.example.com",
-            REDIS_URL="redis://redis:6379/0", VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
+            REDIS_URL="redis://:test-redis-pw@redis:6379/0", VERIFY_TWILIO_SIGNATURE=True, WEBHOOK_BASE_URL="https://api.example.com",
             META_APP_SECRET="s", LOG_LEVEL="INFO", REQUIRE_ADMIN_MFA=True, COOKIE_SECURE=True)
 
 

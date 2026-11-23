@@ -118,16 +118,20 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # REDIS_URL in the env file points here by default (redis://redis:6379/0). A managed Redis
-  # (Upstash, Redis Cloud, ElastiCache) is better for production: put its URL in the env file
-  # and this container simply goes unused.
+  # REDIS_URL in the env file points here by default (redis://:<REDIS_PASSWORD>@redis:6379/0). A
+  # managed Redis (Upstash, Redis Cloud, ElastiCache) is better for production: put its URL in the env
+  # file and this container simply goes unused.
+  # Audit SRE-04 / QA-04: a password (REDIS_PASSWORD, from the same env file as REDIS_URL), and 1 GB.
+  # noeviction stays on purpose: the job queue lives here too, and evicting a queued job loses it;
+  # cache and rate-limit keys all expire on their own.
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    env_file: ["${ENV_FILE:?set ENV_FILE}"]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy noeviction --requirepass \"$${REDIS_PASSWORD:?set REDIS_PASSWORD in the env file}\""]
     volumes: [redis_data:/data]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 12

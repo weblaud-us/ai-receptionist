@@ -26,6 +26,15 @@ TWILIO_EDGE_REGIONS = {"sydney": "au1", "dublin": "ie1", "ashburn": "us1", "umat
 TWILIO_REGION_EDGES = {"au1": "sydney", "ie1": "dublin", "jp1": "tokyo"}
 
 
+def _url_has_password(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        return bool(urlparse(url.strip()).password)
+    except ValueError:
+        return False
+
+
 def _fernet_keys_ok(value: str) -> bool:
     keys = [k.strip() for k in (value or "").split(",") if k.strip()]
     if not keys:
@@ -63,6 +72,9 @@ class Settings(BaseSettings):
     # Rate limits, WhatsApp dedupe, per-business call counters and the arq job queue. Empty = each
     # process keeps its own state and the API runs the background jobs itself (one API process only).
     REDIS_URL:               str = Field(default="")   # redis://host:6379/0 or rediss://… (TLS)
+    # Read by the bundled Redis container (deploy/docker-compose.prod.yml requirepass), not the app,
+    # which uses the password inside REDIS_URL. Keep the two the same.
+    REDIS_PASSWORD:          str = Field(default="")
     API_RATE_PER_TENANT_MIN: int = Field(default=600)  # dashboard API requests per business per minute; 0 = off
     AUTH_RATE_PER_IP_MIN:    int = Field(default=30)   # sign-in / reset / invite POSTs per IP per minute; 0 = off
     METRICS_TOKEN:           str = Field(default="")   # Bearer token for GET /metrics; empty = off outside development
@@ -552,6 +564,8 @@ class Settings(BaseSettings):
             problems.append("LOG_LEVEL=DEBUG would log transcripts; use INFO")
         if not self.redis_enabled and not self.TELEPHONY_FALLBACK_ONLY:
             problems.append("REDIS_URL is required (shared rate limits, call limits and the job queue)")
+        if self.redis_enabled and not _url_has_password(self.REDIS_URL):
+            problems.append("REDIS_URL needs a password (redis://:<REDIS_PASSWORD>@redis:6379/0), audit SRE-04")
         if self.METRICS_TOKEN and len(self.METRICS_TOKEN) < 24:
             problems.append("METRICS_TOKEN must be empty or 24+ random chars")
         if self.OUTBOUND_DIALER_ENABLED:
