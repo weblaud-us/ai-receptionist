@@ -76,10 +76,10 @@ async def test_prompt_renders_history_with_fenced_notes(db):
     tail = p.split("# Right now")[1]
     assert "returning patient named Mia" in tail and "Confirm their name" in tail
     assert "Next booked: Check-up and clean with Dr Lee" in tail
-    assert "Previous call 2 days ago" in tail and "left a message yesterday" in tail
+    assert "Previous call 2 days ago" in tail and "Message still waiting for the team: yesterday" in tail
     assert "Open enquiries with the team: dental emergency" in tail
     assert "missed 2 appointments" in tail and "asked not to be contacted" in tail
-    notes = tail.split("<<<")[1].split(">>>")[0]
+    notes = tail.split("<<<")[1].split(">>>")[0]                   # staff notes: the first fence
     assert "Very nervous" in notes and "anxious" in notes and "never read them out" in tail
 
 

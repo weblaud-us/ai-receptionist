@@ -91,7 +91,7 @@ def test_dynamic_tail():
     phone = build_voice_prompt(_profile(), now=MORNING, caller_phone="+8801711111111",
                                contact={"name": "Rahim Uddin", "summary": "suite booking"})
     assert "+8801711111111" in phone and "Rahim" in phone and "Uddin" not in phone
-    assert phone.rstrip().endswith("History: suite booking")
+    assert "<<<\nHistory: suite booking\n>>>" in phone              # caller words fenced (SEC-14)
     assert "Saturday, 14 November 2026" in phone and "10:00 AM" in phone
     assert "# Hotel rules" in phone and "Check-in from 14:00" in phone   # vertical plug-in facts
 
