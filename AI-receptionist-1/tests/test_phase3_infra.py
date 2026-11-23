@@ -408,3 +408,35 @@ def test_job_arguments_never_reach_the_logs():
                               (1, "whatsapp_inbound"), None)
     jobs_worker.HideJobArguments().filter(other)
     assert other.getMessage() == "Starting worker for 1 functions: whatsapp_inbound"
+
+
+async def test_a_whatsapp_message_that_failed_is_retried_and_one_that_worked_is_not(monkeypatch):
+    # Audit SRE-05: marked done only after it was handled; released on failure.
+    from core.tenancy.models import TenantConfig
+    from whatsapp import meta_handler as mh
+
+    dedupe.reset()
+    tenant = TenantConfig.model_validate({"_id": "default", "name": "Hotel", "slug": "hotel", "status": "active"})
+
+    async def resolve(_):
+        return tenant
+
+    handled: list = []
+    fail_once = {"wamid.B"}
+
+    async def one(msg, profile_name, phone_number_id, t):
+        if msg["id"] in fail_once:
+            fail_once.discard(msg["id"])
+            raise RuntimeError("LLM timeout")
+        handled.append(msg["id"])
+
+    monkeypatch.setattr(mh, "resolve_by_whatsapp_phone_number_id", resolve)
+    monkeypatch.setattr(mh, "_handle_one_message", one)
+    payload = {"entry": [{"changes": [{"value": {"metadata": {"phone_number_id": "pn"},
+                                                 "messages": [{"id": "wamid.A", "from": "1"}, {"id": "wamid.B", "from": "1"}]}}]}]}
+    with pytest.raises(RuntimeError):
+        await mh._handle_webhook_payload(payload, raise_errors=True)      # the job sees the error and retries
+    await mh._handle_webhook_payload(payload, raise_errors=True)
+    assert handled == ["wamid.A", "wamid.B"]                               # A once, B on the retry
+    await mh._handle_webhook_payload(payload, raise_errors=True)
+    assert handled == ["wamid.A", "wamid.B"]                               # Meta resending changes nothing

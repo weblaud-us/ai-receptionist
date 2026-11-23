@@ -131,13 +131,13 @@ async def booking_reminders_tick(ctx: Dict[str, Any]) -> None:
     await get_booking_reminder_service().run_once()
 
 
-@job("whatsapp_inbound")
+@job("whatsapp_inbound", max_tries=3)
 async def whatsapp_inbound(ctx: Dict[str, Any], payload: Dict[str, Any]) -> None:
-    # Not retried: each message id is marked as seen before it is processed, so a retry would
-    # skip it anyway, and replying twice is worse than a rare missed reply.
+    # Retried (audit SRE-05): a message is marked done only after it was handled, and released if
+    # handling failed, so a retry replies to the ones that failed and skips the ones that worked.
     from whatsapp.meta_handler import _handle_webhook_payload
 
-    await _handle_webhook_payload(payload)
+    await _handle_webhook_payload(payload, raise_errors=True)
 
 
 @job("sales_dialer_tick")
@@ -209,7 +209,7 @@ def every_minutes(step: float) -> Set[int]:
 
 class WorkerSettings:
     # keep_result=0: arq stores a job's arguments with its result; a WhatsApp payload must not linger in Redis.
-    functions = [func(whatsapp_inbound, name="whatsapp_inbound", max_tries=1, timeout=180, keep_result=0),
+    functions = [func(whatsapp_inbound, name="whatsapp_inbound", max_tries=3, timeout=180, keep_result=0),
                  func(provision_number, name="provision_number", max_tries=5, timeout=120),
                  func(missed_call_recovery, name="missed_call_recovery", max_tries=3, timeout=60, keep_result=0)]
     cron_jobs = [

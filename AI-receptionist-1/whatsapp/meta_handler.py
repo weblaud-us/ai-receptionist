@@ -41,11 +41,16 @@ from voice.stt_tts import get_stt, get_tts
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["WhatsApp Meta"])
 
+WA_LEASE_S = 300      # long enough to transcribe a voice note and reply
+
+
 async def _seen_meta_message_recently(message_id: Optional[str]) -> bool:
-    """Meta retries webhooks; each message id is handled once across all API replicas (24 h)."""
+    """Meta retries webhooks; each message id is handled once across all API replicas (24 h).
+    Claimed with a short lease only: `_handle_webhook_payload` marks it done once the reply went
+    out, or releases it on an error so the job's retry handles it (audit SRE-05)."""
     if not message_id:
         return False
-    return not await dedupe.first_time("wa", message_id)
+    return not await dedupe.claim("wa", message_id, WA_LEASE_S)
 
 
 def _get_meta_base_url() -> str:
@@ -447,7 +452,8 @@ async def inbound_webhook(background: BackgroundTasks, body: bytes = Depends(ver
     return Response(content="ok", media_type="text/plain")
 
 
-async def _handle_webhook_payload(payload: dict) -> None:
+async def _handle_webhook_payload(payload: dict, *, raise_errors: bool = False) -> None:
+    """`raise_errors`: the job queue retries a failed payload; already-handled messages are skipped."""
     try:
         entries = payload.get("entry", [])
         for entry in entries:
@@ -484,36 +490,46 @@ async def _handle_webhook_payload(payload: dict) -> None:
                         continue
                     if await _seen_meta_message_recently(msg_id):
                         continue
-
-                    from_id = msg.get("from") or ""
-                    phone = _normalize_wa_phone(from_id)
-                    msg_type = msg.get("type", "text")
-                    text_body = ""
-                    mime_type = None
-
-                    if msg_type == "text":
-                        text_body = (msg.get("text") or {}).get("body", "")
-                    elif msg_type == "audio":
-                        audio = msg.get("audio") or {}
-                        media_id = audio.get("id")
-                        audio_bytes, mime_type = await _download_meta_media(media_id)
-                        text_body = await _transcribe_audio_bytes(audio_bytes or b"", mime_type)
-                        if not text_body:
-                            logger.warning("Audio transcription empty for %s", phone)
-
-                    logger.info("Meta inbound | from=%s | type=%s | chars=%s",
-                                phone, msg_type, len(text_body or ""))
-                    logger.debug("Meta inbound text: %s", (text_body or "")[:120])  # DEBUG only
-                    await _process_incoming_message(
-                        phone=phone,
-                        message_body=text_body,
-                        msg_type=msg_type,
-                        profile_name=profile_name,
-                        phone_number_id=phone_number_id,
-                        tenant=tenant,
-                    )
+                    try:
+                        await _handle_one_message(msg, profile_name, phone_number_id, tenant)
+                    except Exception:
+                        await dedupe.release("wa", msg_id)     # not lost: the retry picks it up again
+                        raise
+                    await dedupe.complete("wa", msg_id)
     except Exception as e:
         logger.error("Meta webhook processing error: %s", e, exc_info=True)
+        if raise_errors:
+            raise
+
+
+async def _handle_one_message(msg: dict, profile_name: Optional[str], phone_number_id: str,
+                              tenant: TenantConfig) -> None:
+    from_id = msg.get("from") or ""
+    phone = _normalize_wa_phone(from_id)
+    msg_type = msg.get("type", "text")
+    text_body = ""
+    mime_type = None
+
+    if msg_type == "text":
+        text_body = (msg.get("text") or {}).get("body", "")
+    elif msg_type == "audio":
+        audio = msg.get("audio") or {}
+        media_id = audio.get("id")
+        audio_bytes, mime_type = await _download_meta_media(media_id)
+        text_body = await _transcribe_audio_bytes(audio_bytes or b"", mime_type)
+        if not text_body:
+            logger.warning("Audio transcription empty for %s", phone)
+
+    logger.info("Meta inbound | from=%s | type=%s | chars=%s", phone, msg_type, len(text_body or ""))
+    logger.debug("Meta inbound text: %s", (text_body or "")[:120])  # DEBUG only
+    await _process_incoming_message(
+        phone=phone,
+        message_body=text_body,
+        msg_type=msg_type,
+        profile_name=profile_name,
+        phone_number_id=phone_number_id,
+        tenant=tenant,
+    )
 
 
 async def _process_incoming_message(

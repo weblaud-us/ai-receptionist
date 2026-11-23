@@ -48,5 +48,43 @@ async def first_time(namespace: str, item_id: Optional[str], ttl_s: int = DEFAUL
     return _first_time_memory(key, ttl_s)
 
 
+# ── Two-step: claim while working, mark done only when it worked (audit SRE-05) ──────────────
+# `first_time` marks an item as handled before the work starts, so a crash in between loses it.
+# For work that must not be lost, claim it with a short lease, then `complete` (done for `ttl_s`)
+# or `release` (a retry may take it again). A crashed worker's lease simply runs out.
+
+async def claim(namespace: str, item_id: Optional[str], lease_s: int = 300) -> bool:
+    return await first_time(namespace, item_id, lease_s)
+
+
+async def complete(namespace: str, item_id: Optional[str], ttl_s: int = DEFAULT_TTL_S) -> None:
+    if not item_id:
+        return
+    key = f"seen:{namespace}:{item_id}"
+    r = redis_store.get_redis()
+    if r is not None:
+        try:
+            await r.set(key, "done", ex=ttl_s)
+            return
+        except Exception:
+            redis_store.warn_unavailable("dedupe")
+    _seen[key] = time.time() + ttl_s
+    _seen.move_to_end(key)
+
+
+async def release(namespace: str, item_id: Optional[str]) -> None:
+    if not item_id:
+        return
+    key = f"seen:{namespace}:{item_id}"
+    r = redis_store.get_redis()
+    if r is not None:
+        try:
+            await r.delete(key)
+            return
+        except Exception:
+            redis_store.warn_unavailable("dedupe")
+    _seen.pop(key, None)
+
+
 def reset() -> None:
     _seen.clear()
