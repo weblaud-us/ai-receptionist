@@ -1171,6 +1171,41 @@ async def list_leads(status: Optional[str] = None, tp: TenantPrincipal = Depends
     return {"leads": [_clean(unseal(r)) for r in rows], "new": await tp.repos().leads.count({"status": "new"})}
 
 
+@tenant_router.get("/inbox")
+async def inbox(tp: TenantPrincipal = Depends(_staff)):
+    """Plan 4.1: callbacks, leads, unacknowledged emergencies and missed confirmations in one list."""
+    from core.services import inbox as inbox_svc
+
+    rows = await inbox_svc.items(tp.repos(), tp.tenant, utcnow())
+    return {"items": to_jsonable(rows), "overdue": sum(1 for r in rows if r["overdue"]),
+            "unassigned": sum(1 for r in rows if not r["assignee_id"])}
+
+
+class InboxPatch(BaseModel):
+    assignee_id: Optional[str] = Field(default=None, max_length=60)   # null = unassign
+    done: bool = False
+
+
+@tenant_router.patch("/inbox/{kind}/{item_id}")
+async def update_inbox_item(kind: str, item_id: str, body: InboxPatch, request: Request,
+                            tp: TenantPrincipal = Depends(_staff)):
+    from core.services import inbox as inbox_svc
+
+    if kind not in inbox_svc.KINDS:
+        raise _not_found("No such item")
+    assignee: Any = ...
+    if "assignee_id" in body.model_fields_set:
+        assignee = body.assignee_id
+        if assignee and assignee not in {u["_id"] for u in await UsersStore(get_db()).for_tenant(tp.tenant.id)}:
+            raise HTTPException(422, "That person isn't on your team")
+    if not await inbox_svc.update(tp.repos(), kind, item_id, assignee_id=assignee, done=body.done,
+                                  by=tp.user.name or tp.user.email or tp.user.user_id, now=utcnow()):
+        raise _not_found("No such item")
+    await _audit(tp, request, f"inbox.{'done' if body.done else 'assign'}", kind, item_id,
+                 {"assignee_id": body.assignee_id} if assignee is not ... else {})
+    return {"success": True}
+
+
 @tenant_router.patch("/leads/{lead_id}")
 async def update_lead(lead_id: str, body: StatusBody, tp: TenantPrincipal = Depends(_staff)):
     res = await tp.repos().leads.update_one({"_id": lead_id}, {"$set": {"status": body.status, "updated_at": utcnow()}})

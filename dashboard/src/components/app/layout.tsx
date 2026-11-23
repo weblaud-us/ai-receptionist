@@ -14,6 +14,7 @@ import {
   ConciergeBell,
   Contact,
   CreditCard,
+  Inbox,
   LifeBuoy,
   LayoutDashboard,
   Loader2,
@@ -41,6 +42,7 @@ import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { usePublicSite } from '@/lib/compliance'
 import { useLiveCalls } from '@/lib/hooks'
+import { useInbox } from '@/lib/tenant-hooks'
 import { useTenant } from '@/lib/tenant'
 import { ROLE_LABEL } from '@/lib/tenant-format'
 import type { Role, TenantContext } from '@/lib/tenant-types'
@@ -53,6 +55,8 @@ interface NavItem {
   icon: ComponentType<{ className?: string }>
   end?: boolean
   live?: boolean
+  /** Shows how many inbox items are overdue. */
+  inbox?: boolean
   role?: Role
 }
 
@@ -86,6 +90,7 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
     {
       items: [
         { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
+        ...(isHotel || ctx.legacy ? [] : [{ to: '/inbox', label: 'Inbox', icon: Inbox, inbox: true }]),
         ...(ctx.legacy ? [] : [{ to: '/results', label: 'Results', icon: TrendingUp }]),
         { to: '/calls', label: 'Calls & messages', icon: PhoneCall, live: true },
         ...work,
@@ -132,6 +137,9 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const { ctx, can } = useTenant()
   const live = useLiveCalls(!!ctx && can('staff'))
   const liveCount = live.data?.total ?? 0
+  const inboxOn = !!ctx && can('staff') && ctx.vertical.key !== 'hotel' && !ctx.legacy
+  const inbox = useInbox(inboxOn)
+  const overdue = inbox.data?.overdue ?? 0
   const groups = ctx ? navFor(ctx) : []
   return (
     <nav className="flex flex-col gap-4 px-3">
@@ -140,7 +148,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
           {g.title && <div className="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/50">{g.title}</div>}
           {g.items
             .filter((item) => can(item.role ?? 'staff'))
-            .map(({ to, label, icon: Icon, end, live: isLive }) => (
+            .map(({ to, label, icon: Icon, end, live: isLive, inbox: isInbox }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -157,6 +165,9 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
               >
                 <Icon className="size-4" />
                 <span className="flex-1">{label}</span>
+                {isInbox && overdue > 0 && (
+                  <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-300" title="Overdue">{overdue}</span>
+                )}
                 {isLive && liveCount > 0 && (
                   <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-300">
                     <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" />

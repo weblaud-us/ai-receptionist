@@ -383,6 +383,21 @@ export interface Overview {
   upcoming: Appointment[]
 }
 
+/** One follow-up in the front-desk inbox (plan 4.1); the original record is `kind` + `id`. */
+export interface InboxItem {
+  kind: 'message' | 'lead' | 'escalation' | 'confirmation'
+  id: string
+  title: string
+  detail: string
+  created_at: string | null
+  due_at: string | null
+  assignee_id: string | null
+  urgent: boolean
+  overdue: boolean
+  phone: string
+  link: string
+}
+
 export interface TeamMember {
   id: string
   email: string

@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@receptionist/shared/lib/api'
 import type { SiteDraft } from '@receptionist/shared/lib/site-import'
-import type { Appointment, Contact, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
+import type { Appointment, Contact, InboxItem, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
 
@@ -104,6 +104,24 @@ export const usePhoneNumbers = () =>
     queryKey: ['t-phone'],
     queryFn: () => api<{ numbers: PhoneNumberInfo[]; forwarding: ForwardingRow[]; note: string }>('/t/phone-numbers'),
   })
+
+/** The front-desk inbox (plan 4.1). Polled so the badge stays current. */
+export const useInbox = (enabled = true) =>
+  useQuery({
+    queryKey: ['t-inbox'],
+    queryFn: () => api<{ items: InboxItem[]; overdue: number; unassigned: number }>('/t/inbox'),
+    enabled,
+    refetchInterval: 60_000,
+  })
+
+export function useInboxMutation() {
+  const done = useInvalidate('t-inbox', 't-leads', 't-overview')
+  return useMutation({
+    mutationFn: ({ kind, id, ...body }: { kind: string; id: string; assignee_id?: string | null; done?: boolean }) =>
+      api(`/t/inbox/${kind}/${id}`, { method: 'PATCH', body }),
+    onSuccess: done,
+  })
+}
 
 export const useTeam = () =>
   useQuery({

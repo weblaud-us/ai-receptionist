@@ -25,6 +25,7 @@ const MyDay = lazy(() => import('@/pages/MyDay'))
 const Services = lazy(() => import('@/pages/Services'))
 const Contacts = lazy(() => import('@/pages/Contacts'))
 const Leads = lazy(() => import('@/pages/Leads'))
+const InboxPage = lazy(() => import('@/pages/Inbox'))
 const Knowledge = lazy(() => import('@/pages/Knowledge'))
 const Assistant = lazy(() => import('@/pages/Assistant'))
 const PhoneNumbers = lazy(() => import('@/pages/PhoneNumbers'))
@@ -113,6 +114,7 @@ export default function App() {
           <Route path="services" element={<Only scheduling role="admin"><Services /></Only>} />
           <Route path="contacts" element={<Only scheduling><Contacts /></Only>} />
           <Route path="leads" element={<Only scheduling><Leads /></Only>} />
+          <Route path="inbox" element={<Only scheduling><InboxPage /></Only>} />
           {/* everyone */}
           <Route path="knowledge" element={<Only><Knowledge /></Only>} />
           <Route path="assistant" element={<Only role="admin"><Assistant /></Only>} />
