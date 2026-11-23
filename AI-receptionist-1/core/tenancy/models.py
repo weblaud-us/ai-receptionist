@@ -380,6 +380,7 @@ class BillingState(BaseModel):
     stripe_customer_id: str = ""
     stripe_subscription_id: str = ""
     subscription_status: str = ""            # Stripe's own word: trialing, active, past_due, canceled…
+    last_subscription_event: int = 0         # `created` of the last subscription event applied (BACK-04)
     trial_used: bool = False                 # one trial per business
     trial_ends_at: Optional[datetime] = None
     period_start: Optional[datetime] = None

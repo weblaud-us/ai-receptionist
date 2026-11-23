@@ -10,8 +10,10 @@ Subscription lifecycle (Roadmap Task 5.3): Stripe webhooks → tenant status and
 | customer.subscription.deleted         | cancelled; data kept CANCEL_RETENTION_DAYS, then deleted     |
 
 Idempotent by event id: each event is claimed in `stripe_events` before it is handled. A handler
-that fails releases its claim and the endpoint answers 500, so Stripe delivers it again. Handlers
-only ever move a tenant to the state Stripe says it is in, so an old event replayed late is harmless.
+that fails releases its claim and the endpoint answers 500, so Stripe delivers it again; a claim a
+crashed process left behind expires after PROCESSING_LEASE (audit SRE-06). Subscription events
+created before the last one applied are ignored, so an old event delivered late can't undo a newer
+state (audit BACK-04).
 
 Status that *we* set is respected: a business suspended by the 7-day job stays suspended on a
 `past_due` update and is reactivated only by a payment.
@@ -247,7 +249,16 @@ async def on_subscription_changed(db: Any, sub: Dict[str, Any]) -> str:
             and tenant.status not in ("cancelled", "incomplete"):
         # An old subscription (e.g. replaced on reactivation) must not overwrite the current one.
         raise Ignored("not the tenant's current subscription")
-    return await sync_subscription(db, tenant, sub)
+    # Audit BACK-04: Stripe doesn't promise order. An update created before the one we last applied
+    # carries an older state (e.g. "past_due" arriving after "active"): don't let it win.
+    created = int(sub.get(EVENT_CREATED) or 0)
+    if created and created < tenant.billing.last_subscription_event:
+        raise Ignored("older than the last subscription event applied")
+    status = await sync_subscription(db, tenant, sub)
+    if created:
+        refreshed = await load(db, tenant.id) or tenant
+        await apply(db, refreshed, {"last_subscription_event": created})
+    return status
 
 
 async def on_subscription_deleted(db: Any, sub: Dict[str, Any]) -> str:
@@ -328,21 +339,38 @@ class InProgress(Exception):
     """The same event is being handled right now by another request; Stripe should retry later."""
 
 
+EVENT_CREATED = "_event_created"          # the event's `created`, handed to subscription handlers
+PROCESSING_LEASE = timedelta(minutes=5)   # a claim older than this was left by a crashed process (SRE-06)
+
+
 async def handle_event(db: Any, event: Dict[str, Any]) -> Dict[str, Any]:
     """Claim → handle → mark done. Returns a small result for the webhook response and logs."""
     event_id, kind = str(event["id"]), str(event["type"])
     handler = HANDLERS.get(kind)
     if handler is None:
         return {"status": "ignored", "type": kind}
+    now = utcnow()
     try:
         await db.stripe_events.insert_one({"_id": event_id, "type": kind, "status": "processing",
-                                           "received_at": utcnow(), "livemode": bool(event.get("livemode"))})
+                                           "received_at": now, "claimed_at": now,
+                                           "livemode": bool(event.get("livemode"))})
     except DuplicateKeyError:
         row = await db.stripe_events.find_one({"_id": event_id}) or {}
-        if row.get("status") == "processing":
+        if row.get("status") != "processing":
+            return {"status": "duplicate", "type": kind}
+        claimed = row.get("claimed_at") or row.get("received_at")
+        if claimed is not None and now - aware(claimed) < PROCESSING_LEASE:
             raise InProgress(event_id)
-        return {"status": "duplicate", "type": kind}
+        # The process that claimed it died mid-way: take the claim over (only one retry can).
+        taken = await db.stripe_events.update_one({"_id": event_id, "status": "processing",
+                                                   "claimed_at": row.get("claimed_at")},
+                                                  {"$set": {"claimed_at": now, "reclaimed": True}})
+        if not taken.modified_count:
+            raise InProgress(event_id)
+        logger.warning("Stripe %s %s: took over a stale claim", kind, event_id)
     obj = ((event.get("data") or {}).get("object")) or {}
+    if kind.startswith("customer.subscription.") and event.get("created"):
+        obj = {**obj, EVENT_CREATED: int(event["created"])}
     try:
         result = await handler(db, obj)
     except Ignored as why:

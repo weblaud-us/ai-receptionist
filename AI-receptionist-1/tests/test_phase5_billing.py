@@ -196,6 +196,34 @@ async def test_failed_handler_releases_its_claim_so_stripe_can_retry(db, client,
     assert await db.stripe_events.find_one({"_id": "evt_R"}) is None
 
 
+async def test_a_claim_left_by_a_crashed_process_is_taken_over(db):
+    # Audit SRE-06: "processing" forever would block every Stripe retry.
+    from datetime import timedelta
+
+    await _tenant(db)
+    stale = datetime.now(timezone.utc) - timedelta(minutes=10)
+    await db.stripe_events.insert_one({"_id": "evt_S", "type": "invoice.paid", "status": "processing",
+                                       "received_at": stale, "claimed_at": stale})
+    out = await lifecycle.handle_event(db, _event("invoice.paid", {"customer": "cus_1"}, "evt_S"))
+    assert out["status"] == "ok" and (await db.stripe_events.find_one({"_id": "evt_S"}))["status"] == "done"
+    fresh = datetime.now(timezone.utc)
+    await db.stripe_events.insert_one({"_id": "evt_T", "type": "invoice.paid", "status": "processing",
+                                       "received_at": fresh, "claimed_at": fresh})
+    with pytest.raises(lifecycle.InProgress):                        # still being handled elsewhere
+        await lifecycle.handle_event(db, _event("invoice.paid", {"customer": "cus_1"}, "evt_T"))
+
+
+async def test_an_older_subscription_event_arriving_late_doesnt_win(db):
+    # Audit BACK-04: Stripe doesn't guarantee order.
+    await _tenant(db)
+    newer = {**_event("customer.subscription.updated", _sub(status="active"), "evt_new"), "created": 2_000}
+    older = {**_event("customer.subscription.updated", _sub(status="past_due"), "evt_old"), "created": 1_000}
+    assert (await lifecycle.handle_event(db, newer))["status"] == "ok"
+    assert (await lifecycle.handle_event(db, older))["status"] == "ignored"
+    t = await _reload(db)
+    assert t.status == "active" and t.billing.last_subscription_event == 2_000
+
+
 async def test_failed_payment_past_due_suspended_then_paid(db, client):
     """Acceptance: failed payment → past_due → suspended → calls forwarded, never silence."""
     await _tenant(db)
