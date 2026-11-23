@@ -87,7 +87,7 @@ jobs:
       # The server keeps a checkout of this repo only for deploy/ (compose file, Caddyfile, script).
       # Workers drain live calls one at a time, so a deploy can take up to ~2 × LIVEKIT_DRAIN_TIMEOUT.
       - name: Roll the release onto the server
-        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
