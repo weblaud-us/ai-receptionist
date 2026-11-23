@@ -1,9 +1,18 @@
 # TLS termination and load balancing. Certificates come from Let's Encrypt automatically.
 # Put Cloudflare in front for WAF / DDoS protection / rate limits (docs/PRODUCTION_CHECKLIST.md).
 
+# Security headers for responses Caddy makes itself (e.g. a 502 when every replica is down). The apps
+# set their own (main.py middleware, the nginx templates); `?` only fills in what they didn't (FRONT-06).
+(secure) {
+	header -Server
+	header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	header ?X-Content-Type-Options "nosniff"
+	header ?Referrer-Policy "strict-origin-when-cross-origin"
+}
+
 {$API_DOMAIN} {
 	encode gzip
-	header -Server
+	import secure
 	reverse_proxy api-a:8002 api-b:8002 {
 		lb_policy round_robin
 		lb_try_duration 5s
@@ -11,17 +20,17 @@
 		health_uri /readyz
 		health_interval 5s
 		health_timeout 3s
-		# Passive checks too (audit SRE-11): two 502/503 answers or connection errors in a row take a
-		# replica out for 10 s without waiting for the next active check.
+		# Passive checks too (audit SRE-11): two failed connections in a row take a replica out for 10 s
+		# without waiting for the next active check. Not by status code: the API answers 502/503 on
+		# purpose when a practice's diary or a phone provider is down, which says nothing about the replica.
 		fail_duration 10s
 		max_fails 2
-		unhealthy_status 502 503
 	}
 }
 
 {$APP_DOMAIN} {
 	encode gzip
-	header -Server
+	import secure
 	reverse_proxy dashboard:8080
 }
 
@@ -31,7 +40,7 @@
 	# @outside not remote_ip 203.0.113.0/24
 	# respond @outside 403
 	encode gzip
-	header -Server
+	import secure
 	header X-Robots-Tag "noindex, nofollow"
 	reverse_proxy platform-dashboard:8080
 }
@@ -40,6 +49,6 @@
 # http://localhost, so this block requests no certificate and the landing container isn't running.
 {$SITE_DOMAIN} {
 	encode zstd gzip
-	header -Server
+	import secure
 	reverse_proxy landing:8080
 }

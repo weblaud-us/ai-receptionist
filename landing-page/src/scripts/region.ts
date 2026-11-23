@@ -1,7 +1,8 @@
 /**
  * AU | UK switch. Content for both regions is already in the HTML (see R.astro / Regional.astro);
- * this only flips `data-region`, keeps the URL, `lang`, title and signup links in step, remembers
- * the choice and tells interactive widgets (`regionchange`).
+ * this flips `data-region`, keeps `lang`, title and signup links in step, remembers the choice and
+ * tells interactive widgets (`regionchange`). A region that doesn't match the page's own path loads
+ * that region's page, so the canonical link and structured data always match (audit FRONT-05).
  */
 export type Region = 'au' | 'uk';
 
@@ -37,8 +38,14 @@ function apply(region: Region, { announce }: { announce: boolean }) {
   const title = document.querySelector<HTMLMetaElement>(`meta[name="title-${region}"]`)?.content;
   if (title) document.title = title;
 
+  // Audit FRONT-05: go to the regional page itself instead of rewriting the URL, so its canonical
+  // link and structured data match what is shown. Once there the path matches, so no loop.
   const target = PATH[region] + location.search + location.hash;
-  if (location.pathname !== PATH[region]) history.replaceState(null, '', target);
+  if (location.pathname !== PATH[region]) {
+    if (announce) location.assign(target);      // the visitor chose: a normal navigation
+    else location.replace(target);              // a saved preference on load: no extra history entry
+    return;
+  }
 
   if (announce) {
     const live = document.getElementById('region-status');

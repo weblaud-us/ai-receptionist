@@ -28,7 +28,9 @@ const facts = [
           <span class="h-1.5 w-1.5 bg-aqua" aria-hidden="true"></span>
           <R v={{ au: 'AI overflow receptionist · Australian dental practices', uk: 'AI overflow receptionist · UK dental practices' }} />
         </p>
-        <h1 id="hero-title" class="display hero-title mt-[max(1.25rem,1.8vw)] text-[var(--fg)]" data-hide>
+        <!-- No data-hide (audit FRONT-03): the headline paints at once under the preloader, so it counts
+             for LCP; heroIntro() moves its lines to their start position as the preloader lifts. -->
+        <h1 id="hero-title" class="display hero-title mt-[max(1.25rem,1.8vw)] text-[var(--fg)]">
           Stop losing <R v={headlineValue} /> implant patients <span class="hl">to voicemail.</span>
         </h1>
 

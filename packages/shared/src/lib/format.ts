@@ -83,10 +83,10 @@ export function toISODate(d: Date): string {
   return format(d, 'yyyy-MM-dd')
 }
 
+/** `YYYY-MM-DD` + n days, as calendar arithmetic in UTC: the browser's timezone and DST never shift it. */
 export function addDaysISO(iso: string, days: number): string {
-  const d = parseISO(iso)
-  d.setDate(d.getDate() + days)
-  return toISODate(d)
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
 }
 
 /**

@@ -34,3 +34,13 @@ describe('settings copy', () => {
     expect(JSON.stringify(regionFor('US'))).not.toContain('announces recording')
   })
 })
+
+describe('calendar arithmetic', () => {
+  it('adds days to a YYYY-MM-DD date without the browser timezone getting involved', async () => {
+    const { addDaysISO } = await import('@receptionist/shared/lib/format')
+    expect(addDaysISO('2026-01-31', 1)).toBe('2026-02-01')
+    expect(addDaysISO('2028-02-28', 1)).toBe('2028-02-29')
+    expect(addDaysISO('2026-12-31', 1)).toBe('2027-01-01')
+    expect(addDaysISO('2026-04-05', -7)).toBe('2026-03-29')
+  })
+})
