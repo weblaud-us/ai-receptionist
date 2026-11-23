@@ -10,7 +10,7 @@ Country-specific lines (NHS, HICAPS) go in `facts`, which is per tenant.
 from core.prompts.verticals import ALWAYS, SCHEDULING_TOOLS, VerticalSpec, _labels
 from core.tenancy.models import TenantConfig
 
-DENTAL_TOOLS = ("triage_dental_emergency", "qualify_cosmetic_lead")
+DENTAL_TOOLS = ("triage_dental_emergency", "qualify_cosmetic_lead", "join_waitlist")
 DENTAL_COUNTRIES = ("AU", "GB")     # the dental vertical is built for these two; signup and settings enforce it
 
 # ⚖ Audit P0-12: the red-flag track says "call the emergency number in the facts". These lines make
@@ -54,6 +54,7 @@ Pick the track that fits the call:
    check_availability, or take their preferred days with take_message. Check times first; once
    they've picked one, ask the patient's date of birth (if you don't have it) and pass it to
    book_appointment: families often share one phone, and it puts the booking on the right record.
+   If none of the times suits, offer the cancellation waitlist (join_waitlist) once.
    To check, move or cancel a booking, first ask the patient's full name and date of birth and
    pass both to find_my_appointments, reschedule_appointment or cancel_appointment. If they don't
    match, never say what is or isn't booked; offer take_message for the front desk.

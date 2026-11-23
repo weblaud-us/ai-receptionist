@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@receptionist/shared/lib/api'
 import type { SiteDraft } from '@receptionist/shared/lib/site-import'
-import type { Appointment, Contact, InboxItem, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
+import type { Appointment, Contact, InboxItem, WaitlistEntry, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
 
@@ -104,6 +104,15 @@ export const usePhoneNumbers = () =>
     queryKey: ['t-phone'],
     queryFn: () => api<{ numbers: PhoneNumberInfo[]; forwarding: ForwardingRow[]; note: string }>('/t/phone-numbers'),
   })
+
+/** The cancellation waitlist (plan 4.2). */
+export const useWaitlist = (enabled = true) =>
+  useQuery({ queryKey: ['t-waitlist'], queryFn: () => api<{ waitlist: WaitlistEntry[] }>('/t/waitlist'), enabled })
+
+export function useRemoveFromWaitlist() {
+  const done = useInvalidate('t-waitlist')
+  return useMutation({ mutationFn: (id: string) => api(`/t/waitlist/${id}`, { method: 'DELETE' }), onSuccess: done })
+}
 
 /** The front-desk inbox (plan 4.1). Polled so the badge stays current. */
 export const useInbox = (enabled = true) =>

@@ -60,9 +60,10 @@ SOURCES: Dict[str, tuple[str, tuple[str, ...]]] = {
     "whatsapp": ("wa_outbox", ("to",)),
     "unanswered": ("unanswered_questions", ("caller_phone",)),
     "call_sessions": ("call_sessions", ("phone",)),
+    "waitlist": ("waitlist", ("phone",)),
 }
 DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls", "whatsapp", "unanswered",
-                "call_sessions")
+                "call_sessions", "waitlist")
 FUTURE_STATUSES = ("confirmed", "pending")
 
 RequestKind = Literal["access", "erasure"]

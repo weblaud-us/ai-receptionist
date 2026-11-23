@@ -487,6 +487,7 @@ class SchedulingService:
         appt["cancel_reason"] = (reason or "")[:300]
         self._calendar("remove", appt)
         webhooks.emit(self.tenant, "appointment.cancelled", self._public(appt))
+        self._offer_to_waitlist(appt)               # plan 4.2
         return appt
 
     async def reschedule(self, appointment_id: str, *, resource_id: str, start: datetime,
@@ -518,11 +519,23 @@ class SchedulingService:
         webhooks.emit(self.tenant, "appointment.cancelled",
                       self._public({**appt, "status": "cancelled", "cancel_reason": "rescheduled",
                                     "rescheduled_to": new["appointment_id"]}))
+        # The moved booking keeps the patient's DOB fingerprint, so name + DOB still finds it (SEC-06).
         await self.repos.appointments.update_one({"appointment_id": new["appointment_id"]},
-                                                 {"$set": {"rescheduled_from": appointment_id}})
+                                                 {"$set": {"rescheduled_from": appointment_id,
+                                                           "dob_check": appt.get("dob_check")}})
         await self.repos.contacts.update_one({"_id": new.get("contact_id")}, {"$inc": {"stats.appointments": -1}})
         new["rescheduled_from"] = appointment_id
+        self._offer_to_waitlist(appt)               # plan 4.2: the old time is free now
         return new
+
+    def _offer_to_waitlist(self, freed: Dict[str, Any]) -> None:
+        """A freed dental slot goes to the first patients on the cancellation waitlist. Never blocks."""
+        if self.tenant.vertical != "dental":
+            return
+        from core.notifications import fire
+        from core.services import waitlist
+
+        fire(waitlist.offer_freed_slot(self.tenant, freed))
 
     async def _pms_cancel(self, appt: Dict[str, Any], reason: str) -> bool:
         """Cancel the PMS copy of an appointment. True when done (or there is none to cancel)."""

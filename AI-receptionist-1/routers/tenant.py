@@ -1171,6 +1171,23 @@ async def list_leads(status: Optional[str] = None, tp: TenantPrincipal = Depends
     return {"leads": [_clean(unseal(r)) for r in rows], "new": await tp.repos().leads.count({"status": "new"})}
 
 
+@tenant_router.get("/waitlist")
+async def list_waitlist(tp: TenantPrincipal = Depends(_staff)):
+    """Plan 4.2: patients waiting for a cancellation."""
+    rows = await tp.repos().waitlist.find({"status": "waiting"}, sort=[("created_at", 1)], limit=200)
+    return {"waitlist": [_clean(r) for r in rows]}
+
+
+@tenant_router.delete("/waitlist/{entry_id}")
+async def remove_waitlist(entry_id: str, request: Request, tp: TenantPrincipal = Depends(_staff)):
+    res = await tp.repos().waitlist.update_one({"_id": entry_id, "status": "waiting"},
+                                               {"$set": {"status": "removed", "removed_at": utcnow()}})
+    if not res.matched_count:
+        raise _not_found("Not on the waitlist")
+    await _audit(tp, request, "waitlist.remove", "waitlist", entry_id)
+    return {"success": True}
+
+
 @tenant_router.get("/inbox")
 async def inbox(tp: TenantPrincipal = Depends(_staff)):
     """Plan 4.1: callbacks, leads, unacknowledged emergencies and missed confirmations in one list."""

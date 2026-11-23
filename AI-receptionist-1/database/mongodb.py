@@ -229,6 +229,12 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
     await db.schedule_exceptions.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("start", ASCENDING)]),
     ])
+    await db.waitlist.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("created_at", ASCENDING)]),
+    ])
+    await db.waitlist_offers.create_indexes([
+        IndexModel([("tenant_id", ASCENDING), ("slot_key", ASCENDING), ("status", ASCENDING)]),
+    ])
     await db.escalations.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("status", ASCENDING), ("next_at", ASCENDING)]),
         IndexModel([("tenant_id", ASCENDING), ("created_at", DESCENDING)]),

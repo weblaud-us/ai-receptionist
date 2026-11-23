@@ -384,6 +384,19 @@ export interface Overview {
   upcoming: Appointment[]
 }
 
+/** A patient waiting for a cancellation (plan 4.2). */
+export interface WaitlistEntry {
+  id: string
+  name: string
+  phone: string
+  service_name?: string | null
+  resource_name?: string | null
+  date_from: string
+  date_to: string
+  part_of_day: string
+  last_offered_at?: string | null
+}
+
 /** One follow-up in the front-desk inbox (plan 4.1); the original record is `kind` + `id`. */
 export interface InboxItem {
   kind: 'message' | 'lead' | 'escalation' | 'confirmation'

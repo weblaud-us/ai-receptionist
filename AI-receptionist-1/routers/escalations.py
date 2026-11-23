@@ -30,9 +30,10 @@ public_escalations_router = APIRouter(prefix="/public", tags=["Public"])
 _staff = require_tenant("staff")
 
 
-def _page(title: str, body: str, *, button: bool = False) -> HTMLResponse:
+def _page(title: str, body: str, *, button: str = "") -> HTMLResponse:
+    """A tiny page. `button`: a label for a POST button to the same URL (empty = none)."""
     form = ('<form method="post"><button style="font-size:18px;padding:12px 20px;border-radius:8px;'
-            'border:0;background:#0f766e;color:#fff">I\'m handling it</button></form>') if button else ""
+            f'border:0;background:#0f766e;color:#fff">{html.escape(button)}</button></form>') if button else ""
     return HTMLResponse(
         f"<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<meta name='robots' content='noindex'><title>{html.escape(title)}</title></head>"
@@ -61,7 +62,8 @@ async def ack_page(tenant_id: str, escalation_id: str, sig: str = Query("", max_
     tenant, esc = await _load(tenant_id, escalation_id, sig)
     if esc.get("status") == escalation.ACKED:
         return _page("Already being handled", f"{esc.get('acked_by') or 'Someone'} is handling this call for {tenant.name}.")
-    return _page(f"Urgent call for {tenant.name}", esc.get("headline") or "Urgent dental call", button=True)
+    return _page(f"Urgent call for {tenant.name}", esc.get("headline") or "Urgent dental call",
+                 button="I'm handling it")
 
 
 @public_escalations_router.post("/escalations/{tenant_id}/{escalation_id}", response_class=HTMLResponse)
@@ -92,6 +94,50 @@ async def appointment_calendar(tenant_id: str, appointment_id: str, sig: str = Q
     return Response(appointment_ics.ics_text(tenant, appt), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{appointment_id}.ics"',
                              "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@public_escalations_router.get("/waitlist/{tenant_id}/{offer_id}", response_class=HTMLResponse)
+async def waitlist_page(tenant_id: str, offer_id: str, sig: str = Query("", max_length=64)):
+    """Plan 4.2: the "a time came up" link. GET only shows it (link scanners), POST books it."""
+    from core.repositories import Repos
+    from core.services import waitlist
+    from database.mongodb import get_db
+
+    if not waitlist.verify(tenant_id, offer_id, sig):
+        raise HTTPException(404, "Not found")
+    tenant = await resolve_by_id(tenant_id)
+    offer = await Repos(get_db(), tenant_id).waitlist_offers.find_one({"_id": offer_id}) if tenant else None
+    if tenant is None or offer is None:
+        raise HTTPException(404, "Not found")
+    if offer.get("status") != "open":
+        return _page("Sorry, that time has gone", f"Someone else took it. {tenant.name} will message you if "
+                                                         "another time comes up.")
+    return _page(f"A time at {tenant.name}", "Tap below to book it. First come, first served.",
+                       button="Book this time")
+
+
+@public_escalations_router.post("/waitlist/{tenant_id}/{offer_id}", response_class=HTMLResponse)
+async def waitlist_offer_accept(tenant_id: str, offer_id: str, sig: str = Query("", max_length=64)):
+    from core.services import availability as av
+    from core.services import waitlist
+
+    if not waitlist.verify(tenant_id, offer_id, sig):
+        raise HTTPException(404, "Not found")
+    tenant = await resolve_by_id(tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Not found")
+    status, appt = await waitlist.accept(tenant, offer_id)
+    if status == "booked" and appt:
+        when = av.spoken(appt["start"], tenant.timezone)
+        return _page("You're booked", f"See you {when} at {tenant.name}. To change it, call {tenant.phone or 'us'}.")
+    if status == "booked":
+        return _page("You're booked", f"This time is already yours at {tenant.name}.")
+    if status == "expired":
+        return _page("This offer has ended", f"{tenant.name} will message you if another time comes up.")
+    if status == "unknown":
+        raise HTTPException(404, "Not found")
+    return _page("Sorry, that time has gone", f"Someone else took it. {tenant.name} will message you if "
+                                                     "another time comes up.")
 
 
 @escalations_router.get("/escalations")

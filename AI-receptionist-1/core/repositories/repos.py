@@ -132,6 +132,14 @@ class EscalationsRepo(TenantRepo):
     collection = "escalations"             # urgent calls being passed down the on-call list (escalation.py)
 
 
+class WaitlistRepo(TenantRepo):
+    collection = "waitlist"                # patients waiting for a cancellation (plan 4.2)
+
+
+class WaitlistOffersRepo(TenantRepo):
+    collection = "waitlist_offers"         # a freed time offered to a waitlisted patient
+
+
 class WaOutboxRepo(TenantRepo):
     collection = "wa_outbox"               # WhatsApp messages staff sent from the dashboard + Meta delivery status
 
@@ -164,6 +172,8 @@ class Repos:
         self.wa_outbox = WaOutboxRepo(db, tenant_id)
         self.pms_compensations = PmsCompensationsRepo(db, tenant_id)
         self.escalations = EscalationsRepo(db, tenant_id)
+        self.waitlist = WaitlistRepo(db, tenant_id)
+        self.waitlist_offers = WaitlistOffersRepo(db, tenant_id)
 
 
 # ── Platform-level collections (not tenant-scoped) ───────────────────────────

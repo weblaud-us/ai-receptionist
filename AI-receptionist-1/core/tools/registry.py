@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from core.prompts.verticals import get_vertical
 from core.repositories import Repos
 from core.tenancy.models import TenantConfig, legacy_hotel_tenant
-from core.tools import dental, knowledge, leads, links, messages, scheduling
+from core.tools import dental, knowledge, leads, links, messages, scheduling, waitlist
 from core.tools.hotel import HOTEL_TOOLS, HotelToolExecutor, run_in_background
 from database.mongodb import get_db
 
@@ -130,6 +130,7 @@ register_tool(leads.CAPTURE_LEAD_SCHEMA, leads.capture_lead, write=True)
 register_tool(links.SEND_INFO_LINK_SCHEMA, links.send_info_link, write=True)
 register_tool(dental.TRIAGE_SCHEMA, dental.triage_dental_emergency, write=True)
 register_tool(dental.QUALIFY_SCHEMA, dental.qualify_cosmetic_lead, write=True)
+register_tool(waitlist.JOIN_WAITLIST_SCHEMA, waitlist.join_waitlist, write=True)
 for _schema in cast(List[Dict[str, Any]], scheduling.SCHEDULING_TOOLS):
     _n = _schema["function"]["name"]
     register_tool(_schema, getattr(scheduling, _n),

@@ -16,7 +16,7 @@ import { addDaysISO, dateOnly, isValidPhone, normalizePhone, titleCase } from '@
 import { regionFor } from '@/lib/region'
 import { useCtx } from '@/lib/tenant'
 import { APPOINTMENT_STYLE, inZone, zoneDateKey, zoneDay, zoneTime, zoneToday } from '@/lib/tenant-format'
-import { useAppointmentMutations, useAppointments, useContacts, useFreePractitioners, useResources, useServices, useSlots } from '@/lib/tenant-hooks'
+import { useAppointmentMutations, useAppointments, useContacts, useFreePractitioners, useRemoveFromWaitlist, useResources, useServices, useSlots, useWaitlist } from '@/lib/tenant-hooks'
 import type { Appointment, Contact, Slot } from '@/lib/tenant-types'
 import { cn } from '@receptionist/shared/lib/utils'
 
@@ -138,6 +138,8 @@ export default function Appointments() {
         )}
       </Card>
 
+      {ctx.vertical.key === 'dental' && <WaitlistCard />}
+
       <AppointmentSheet appointment={viewing} onClose={() => setViewingId(null)} onCancel={setCancelling} />
       <NewAppointmentDialog open={creating} onOpenChange={setCreating} />
       <ChangeResourceDialog appointment={moving} onClose={() => setMoving(null)} />
@@ -155,6 +157,35 @@ export default function Appointments() {
         }
       />
     </>
+  )
+}
+
+/** Plan 4.2: who is waiting for a cancellation. A freed time is offered to them automatically. */
+function WaitlistCard() {
+  const q = useWaitlist()
+  const remove = useRemoveFromWaitlist()
+  const rows = q.data?.waitlist ?? []
+  if (!rows.length) return null
+  return (
+    <Card className="mt-4 gap-0 py-0">
+      <div className="border-b px-4 py-3">
+        <div className="font-medium">Cancellation waitlist</div>
+        <p className="text-sm text-muted-foreground">When a matching time frees up, these patients get a WhatsApp message; the first to tap the link gets it.</p>
+      </div>
+      <ul className="divide-y">
+        {rows.map((w) => (
+          <li key={w.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+            <span className="font-medium">{w.name}</span>
+            <span className="text-muted-foreground">{w.service_name ?? 'Any treatment'}{w.resource_name ? ` with ${w.resource_name}` : ''}</span>
+            <span className="text-muted-foreground">{dateOnly(w.date_from)}{w.date_to !== w.date_from ? ` – ${dateOnly(w.date_to)}` : ''}{w.part_of_day !== 'any' ? `, ${w.part_of_day}` : ''}</span>
+            <Button size="sm" variant="ghost" className="ml-auto" disabled={remove.isPending}
+              onClick={() => remove.mutate(w.id, { onSuccess: () => toast.success('Removed from the waitlist') })}>
+              Remove
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
