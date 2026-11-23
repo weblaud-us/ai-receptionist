@@ -3,6 +3,7 @@ The billing tick (Roadmap Tasks 5.3 and 5.5) — every 15 minutes in the jobs wo
 (`billing_tick`), or in the API process when there is no Redis.
 
 Per business, each step independent and idempotent:
+0. calls a crashed worker left without a usage event get one (core/billing/reconcile.py, BACK-06)
 1. refresh this period's usage from `usage_events` (the cached `billing.period_seconds`)
 2. usage alerts at 80 % and 100 % of included minutes — each claimed once per period
 3. overage → Stripe meter events (core/billing/metering.py)
@@ -18,6 +19,7 @@ from typing import Any, Dict, Optional
 
 from config import settings
 from core.billing import metering
+from core.billing.reconcile import reconcile_usage
 from core.billing.lifecycle import apply, dashboard, email_owners, owner_emails
 from core.integrations.email import send_email
 from core.billing.usage import (
@@ -129,7 +131,7 @@ async def offboard(db: Any, tenant: TenantConfig, now: datetime) -> Dict[str, in
 async def run_once(db: Any, now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
     stats = {"tenants": 0, "alerts": 0, "reported_minutes": 0, "suspended": 0, "warned": 0, "released": 0,
-             "deleted": 0, "errors": 0}
+             "deleted": 0, "errors": 0, "reconciled": 0}
     async for doc in db.tenants.find({"_id": {"$ne": LEGACY_TENANT_ID}, "billing.deleted_at": None}):
         try:
             tenant = TenantConfig.from_doc(doc)
@@ -138,6 +140,7 @@ async def run_once(db: Any, now: Optional[datetime] = None) -> Dict[str, int]:
         stats["tenants"] += 1
         try:
             seconds: Optional[float] = None
+            stats["reconciled"] += await reconcile_usage(db, tenant, now)     # before usage is summed
             if tenant.status in LIVE:
                 seconds = await refresh_period_usage(db, tenant, now)
                 stats["alerts"] += await usage_alerts(db, tenant, seconds, now)

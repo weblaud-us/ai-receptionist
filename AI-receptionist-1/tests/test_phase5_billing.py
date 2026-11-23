@@ -733,3 +733,27 @@ async def test_billing_view_for_owner(db, client):
     assert body["plan"] == "growth" and body["usage"]["used_minutes"] == 20.0 and body["usage"]["included_minutes"] == 400
     ctx = client.get("/t/context", headers=_h(tok)).json()
     assert ctx["billing"]["gate"] == "ok" and "stripe_customer_id" not in json.dumps(ctx)
+
+
+async def test_calls_a_crashed_worker_never_billed_are_reconciled_once(db):
+    # Audit BACK-06.
+    from datetime import timedelta
+
+    from core.billing.reconcile import reconcile_usage
+
+    t = await _tenant(db)
+    repos = Repos(db, t.id)
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(hours=2)
+    await repos.calls.insert_one({"call_id": "c_lost", "started_at": old, "ended_at": old + timedelta(seconds=125)})
+    await repos.calls.insert_one({"call_id": "c_billed", "started_at": old, "ended_at": old + timedelta(seconds=60)})
+    await repos.usage.insert_one({"call_id": "c_billed", "kind": "voice_minute", "seconds": 60, "quantity": 1})
+    await repos.calls.insert_one({"call_id": "c_live", "started_at": now - timedelta(minutes=3)})     # may still be on
+    await repos.calls.insert_one({"call_id": "c_stuck", "started_at": old, "updated_at": old + timedelta(hours=5)})
+    assert await reconcile_usage(db, t, now) == 2
+    lost = await repos.usage.find_one({"call_id": "c_lost"})
+    assert lost["seconds"] == 125 and lost["quantity"] == 3 and lost["source"] == "reconciled" and lost["billable"]
+    stuck = await repos.usage.find_one({"call_id": "c_stuck"})
+    assert stuck["seconds"] == t.agent.max_call_minutes * 60                 # capped at the call length limit
+    assert await repos.usage.find_one({"call_id": "c_live"}) is None
+    assert await reconcile_usage(db, t, now) == 0                             # once only
