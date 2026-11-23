@@ -21,6 +21,7 @@ const Calls = lazy(() => import('@/pages/Calls'))
 const Reminders = lazy(() => import('@/pages/Reminders'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 const Appointments = lazy(() => import('@/pages/Appointments'))
+const MyDay = lazy(() => import('@/pages/MyDay'))
 const Services = lazy(() => import('@/pages/Services'))
 const Contacts = lazy(() => import('@/pages/Contacts'))
 const Leads = lazy(() => import('@/pages/Leads'))
@@ -44,16 +45,19 @@ const Fallback = () => (
 function Home() {
   const { ctx } = useTenant()
   if (!ctx) return <ToPlatform />
+  if (ctx.role === 'dentist' && !ctx.platform_admin) return <Navigate to="/my-day" replace />
   return ctx.vertical.key === 'hotel' ? <HotelOverview /> : <TenantOverview />
 }
 
-/** Pages that only exist for some businesses or roles. */
-function Only({ hotel, scheduling, role, children }: { hotel?: boolean; scheduling?: boolean; role?: Role; children: ReactNode }) {
+/** Pages that only exist for some businesses or roles. Every page needs staff unless it says otherwise
+ * (a dentist reaches only "My day"). */
+function Only({ hotel, scheduling, role = 'staff', children }: { hotel?: boolean; scheduling?: boolean; role?: Role; children: ReactNode }) {
   const { ctx, can } = useTenant()
   if (!ctx) return <ToPlatform />
-  if (hotel && ctx.vertical.key !== 'hotel') return <Navigate to="/" replace />
-  if (scheduling && !ctx.vertical.uses_scheduling) return <Navigate to="/" replace />
-  if (role && !can(role)) return <Navigate to="/" replace />
+  const home = ctx.role === 'dentist' && !ctx.platform_admin ? '/my-day' : '/'
+  if (hotel && ctx.vertical.key !== 'hotel') return <Navigate to={home} replace />
+  if (scheduling && !ctx.vertical.uses_scheduling) return <Navigate to={home} replace />
+  if (!can(role)) return <Navigate to={home} replace />
   return <>{children}</>
 }
 
@@ -105,6 +109,7 @@ export default function App() {
           <Route path="reminders" element={<Only hotel><Reminders /></Only>} />
           {/* every other vertical */}
           <Route path="appointments" element={<Only scheduling><Appointments /></Only>} />
+          <Route path="my-day" element={<Only scheduling role="dentist"><MyDay /></Only>} />
           <Route path="services" element={<Only scheduling role="admin"><Services /></Only>} />
           <Route path="contacts" element={<Only scheduling><Contacts /></Only>} />
           <Route path="leads" element={<Only scheduling><Leads /></Only>} />

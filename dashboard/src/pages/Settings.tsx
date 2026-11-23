@@ -34,6 +34,8 @@ const RECOVERY_DEFAULTS = { enabled: false, template: '', channel: 'sms' as cons
 const ENTITY_DEFAULTS = { registered_name: '', abn: '', company_number: '' }
 
 const CHANNELS = [{ key: 'sms', label: 'Text' }, { key: 'email', label: 'E-mail' }, { key: 'whatsapp', label: 'WhatsApp' }]
+/** Without SMS on the platform, an alert set to "Text" is delivered by e-mail instead. */
+const channelsFor = (sms: boolean) => (sms ? CHANNELS : CHANNELS.filter((c) => c.key !== 'sms'))
 
 const ANSWERING_MODES = [
   { value: 'all_calls', label: 'Every call goes to the assistant' },
@@ -64,7 +66,7 @@ export default function SettingsPage() {
   )
 }
 
-function DentalCard({ draft, set, country }: { draft: Draft; set: (p: Partial<Draft>) => void; country: string }) {
+function DentalCard({ draft, set, country, sms }: { draft: Draft; set: (p: Partial<Draft>) => void; country: string; sms: boolean }) {
   const d = draft.dental ?? DENTAL_DEFAULTS
   const r = draft.missed_call_recovery ?? RECOVERY_DEFAULTS
   const e = draft.legal_entity ?? ENTITY_DEFAULTS
@@ -100,7 +102,7 @@ function DentalCard({ draft, set, country }: { draft: Draft; set: (p: Partial<Dr
             (v) => set({ dental: { ...d, accepts_private_health_funds: v } }))}
           {toggle('Payment plans or treatment finance', d.finance_available, (v) => set({ dental: { ...d, finance_available: v } }))}
         </div>
-        <div className="space-y-2 md:col-span-2">
+        {sms && <div className="space-y-2 md:col-span-2">
           <div className="text-sm font-medium">Missed-call text</div>
           {toggle('Text callers who hang up before booking (at most once a day, never after a STOP)', r.enabled,
             (v) => set({ missed_call_recovery: { ...r, enabled: v } }))}
@@ -111,7 +113,7 @@ function DentalCard({ draft, set, country }: { draft: Draft; set: (p: Partial<Dr
                 onChange={(ev) => set({ missed_call_recovery: { ...r, template: ev.target.value } })} />
             </Field>
           )}
-        </div>
+        </div>}
         <div className="grid gap-3 sm:grid-cols-2 md:col-span-2">
           <Field label="Registered business name" hint="For your phone number's regulatory registration">
             <Input value={e.registered_name} onChange={(ev) => set({ legal_entity: { ...e, registered_name: ev.target.value } })} />
@@ -202,7 +204,7 @@ function BusinessTab() {
         </Card>
 
         {ctx.vertical.key === 'dental' && (
-          <DentalCard draft={draft} set={set} country={t.country} />
+          <DentalCard draft={draft} set={set} country={t.country} sms={ctx.sms_enabled !== false} />
         )}
 
         {ctx.vertical.uses_scheduling ? (
@@ -275,7 +277,7 @@ function BusinessTab() {
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-3">
-              <Field label="Your mobile (texts)"><Input value={n.owner_phone} placeholder="+1…" onChange={(e) => set({ notifications: { ...n, owner_phone: e.target.value } })} /></Field>
+              <Field label={ctx.sms_enabled === false ? 'Your mobile' : 'Your mobile (texts)'}><Input value={n.owner_phone} placeholder="+1…" onChange={(e) => set({ notifications: { ...n, owner_phone: e.target.value } })} /></Field>
               <Field label="Your e-mail"><Input value={n.owner_email} onChange={(e) => set({ notifications: { ...n, owner_email: e.target.value } })} /></Field>
               <Field label="WhatsApp numbers" hint="Comma-separated"><Input value={n.owner_whatsapp} onChange={(e) => set({ notifications: { ...n, owner_whatsapp: e.target.value } })} /></Field>
             </div>
@@ -284,7 +286,7 @@ function BusinessTab() {
                 <div key={event}>
                   <div className="mb-1 font-medium">{label}</div>
                   <div className="flex gap-4">
-                    {CHANNELS.map((c) => (
+                    {channelsFor(ctx.sms_enabled !== false).map((c) => (
                       <label key={c.key} className="flex items-center gap-2">
                         <Checkbox checked={n[event].includes(c.key)} onCheckedChange={(on) => toggleChannel(event, c.key, !!on)} /> {c.label}
                       </label>
@@ -306,7 +308,9 @@ function BusinessTab() {
           </CardContent>
         </Card>
       </fieldset>
-      {ctx.vertical.key === 'dental' && !ctx.legacy && <div className="grid gap-4 lg:grid-cols-2"><RecallCard /></div>}
+      {ctx.vertical.key === 'dental' && !ctx.legacy && ctx.sms_enabled !== false && (
+        <div className="grid gap-4 lg:grid-cols-2"><RecallCard /></div>
+      )}
     </div>
   )
 }

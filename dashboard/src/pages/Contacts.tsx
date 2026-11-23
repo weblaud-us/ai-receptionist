@@ -13,9 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { useDebounced } from '@receptionist/shared/hooks/use-debounced'
+import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { useCtx } from '@/lib/tenant'
 import { zoneDateTime } from '@/lib/tenant-format'
-import { useContact, useContacts, useUpdateContact } from '@/lib/tenant-hooks'
+import { useContact, useContacts, useResources, useUpdateContact } from '@/lib/tenant-hooks'
 import type { Contact } from '@/lib/tenant-types'
 import { OutcomeBadge } from './TenantOverview'
 import { ContactWhatsApp } from '@/components/app/contact-whatsapp'
@@ -172,6 +173,11 @@ function Stat({ label, value, warn }: { label: string; value: number; warn?: boo
 
 function ContactForm({ contact }: { contact: Contact }) {
   const save = useUpdateContact()
+  const ctx = useCtx()
+  const L = ctx.vertical.labels
+  // The patient's regular dentist: the assistant books them with this person first (plan E4).
+  const resources = (useResources().data?.resources ?? []).filter((r) => r.active)
+  const [regular, setRegular] = useState(contact.preferred_resource_id ?? '')
   const [name, setName] = useState(contact.name ?? '')
   const [email, setEmail] = useState(contact.email ?? '')
   const [notes, setNotes] = useState(contact.notes ?? '')
@@ -183,9 +189,16 @@ function ContactForm({ contact }: { contact: Contact }) {
       <Field label="E-mail"><Input value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
       <Field label="Tags" hint="Comma-separated, e.g. vip, regular"><Input value={tags} onChange={(e) => setTags(e.target.value)} /></Field>
       <Field label="Notes"><Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+      {resources.length > 1 && (
+        <Field label={`Regular ${L.resource.toLowerCase()}`} hint="Your assistant offers this person first when they call to book.">
+          <SimpleSelect value={regular} onChange={setRegular}
+            options={[{ value: '', label: 'No preference' }, ...resources.map((r) => ({ value: r.id, label: r.name }))]} />
+        </Field>
+      )}
       <label className="flex items-center gap-2 text-sm"><Switch checked={dnc} onCheckedChange={setDnc} /> Do not contact (no reminders or marketing)</label>
       <Button disabled={save.isPending} onClick={() => save.mutate(
-        { id: contact.id, name, email: email || null, notes, tags: tags.split(',').map((t) => t.trim()).filter(Boolean), do_not_contact: dnc },
+        { id: contact.id, name, email: email || null, notes, tags: tags.split(',').map((t) => t.trim()).filter(Boolean), do_not_contact: dnc,
+          ...(resources.length > 1 ? { preferred_resource_id: regular } : {}) },
         { onSuccess: () => toast.success('Saved') })}>
         {save.isPending && <Loader2 className="animate-spin" />} Save
       </Button>

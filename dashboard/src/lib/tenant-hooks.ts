@@ -1,34 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@receptionist/shared/lib/api'
 import type { SiteDraft } from '@receptionist/shared/lib/site-import'
-import type {
-  Appointment,
-  Contact,
-  ContactDetail,
-  ForwardingRow,
-  KnowledgeItem,
-  KnowledgeList,
-  KnowledgeSuggestion,
-  KnowledgeTestResult,
-  Lead,
-  Overview,
-  PhoneNumberInfo,
-  Resource,
-  ScheduleException,
-  Service,
-  Slot,
-  Tenant,
-  TeamMember,
-  TenantCall,
-  UnansweredItem,
-  VerticalInfo,
-  VoiceCatalogue,
-  WebhookEndpoint,
-  WhatsAppStatus,
-  WhatsAppTemplate,
-  ContactWhatsApp,
-  WhatsAppOutboxItem,
-} from './tenant-types'
+import type { Appointment, Contact, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
 
@@ -50,8 +23,8 @@ export const useVerticals = () =>
 export const useServices = () =>
   useQuery({ queryKey: ['t-services'], queryFn: () => api<{ services: Service[] }>('/t/services') })
 
-export const useResources = () =>
-  useQuery({ queryKey: ['t-resources'], queryFn: () => api<{ resources: Resource[] }>('/t/resources') })
+export const useResources = (enabled = true) =>
+  useQuery({ queryKey: ['t-resources'], enabled, queryFn: () => api<{ resources: Resource[] }>('/t/resources') })
 
 export const useExceptions = () =>
   useQuery({ queryKey: ['t-exceptions'], queryFn: () => api<{ exceptions: ScheduleException[] }>('/t/exceptions') })
@@ -136,7 +109,7 @@ export const useTeam = () =>
   useQuery({
     queryKey: ['t-team'],
     queryFn: () =>
-      api<{ members: TeamMember[]; invites: { email: string; role: string; expires_at: string }[] }>('/t/team'),
+      api<{ members: TeamMember[]; invites: { email: string; role: string; resource_id?: string | null; expires_at: string }[] }>('/t/team'),
   })
 
 export const useAudit = () =>
@@ -228,7 +201,30 @@ export function useAppointmentMutations() {
         api<Appointment>(`/t/appointments/${id}`, { method: 'PATCH', body }),
       onSuccess: done,
     }),
+    /** Same time, another dentist (books the new one first, then cancels the old, in the PMS too). */
+    reassign: useMutation({
+      mutationFn: ({ id, resource_id }: { id: string; resource_id: string }) =>
+        api<Appointment>(`/t/appointments/${id}/reassign`, { method: 'POST', body: { resource_id } }),
+      onSuccess: done,
+    }),
   }
+}
+
+/** A dentist's patients today or tomorrow. Dentists always get their own; staff pass `resourceId`. */
+export const useMyDay = (day: 'today' | 'tomorrow', resourceId?: string) =>
+  useQuery({
+    queryKey: ['t-my-day', day, resourceId ?? null],
+    queryFn: () => api<DayView>('/t/my-day', { params: { day, resource_id: resourceId } }),
+    refetchInterval: 60_000,
+  })
+
+export function useMarkMyDay() {
+  const done = useInvalidate('t-my-day', 't-appointments')
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'completed' | 'no_show' }) =>
+      api(`/t/my-day/${id}`, { method: 'PATCH', body: { status } }),
+    onSuccess: done,
+  })
 }
 
 export function useUpdateContact() {
@@ -280,13 +276,13 @@ export function useTeamMutations() {
   const done = useInvalidate('t-team')
   return {
     invite: useMutation({
-      mutationFn: (body: { email: string; role: string }) =>
+      mutationFn: (body: { email: string; role: string; resource_id?: string }) =>
         api<{ emailed: boolean; link: string }>('/t/team/invite', { method: 'POST', body }),
       onSuccess: done,
     }),
     role: useMutation({
-      mutationFn: ({ id, role }: { id: string; role: string }) =>
-        api(`/t/team/${id}`, { method: 'PATCH', body: { role } }),
+      mutationFn: ({ id, role, resource_id }: { id: string; role: string; resource_id?: string }) =>
+        api(`/t/team/${id}`, { method: 'PATCH', body: { role, resource_id } }),
       onSuccess: done,
     }),
     remove: useMutation({ mutationFn: (id: string) => api(`/t/team/${id}`, { method: 'DELETE' }), onSuccess: done }),
@@ -387,8 +383,6 @@ export const useVoices = (provider: string) =>
     staleTime: 60 * 60_000,
   })
 
-export const useRecordingUrl = () =>
-  useMutation({ mutationFn: (callId: string) => api<{ url: string; expires_in: number }>(`/t/calls/${callId}/recording`) })
 
 export const useWhatsAppStatus = () =>
   useQuery({ queryKey: ['t-wa-status'], queryFn: () => api<WhatsAppStatus>('/t/whatsapp/status'), staleTime: 60_000 })

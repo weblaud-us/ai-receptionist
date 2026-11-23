@@ -128,8 +128,10 @@ export default function Assistant() {
                 <SimpleSelect value={a.stt_language} onChange={(v) => setAgent({ stt_language: v, language: v === 'multi' ? 'en-US' : v })} options={languageOptions(a.stt_language)} />
               </Field>
               <Field label="Voice provider">
-                <SimpleSelect value={a.voice_provider} onChange={(v) => setAgent({ voice_provider: v as AgentConfig['voice_provider'] })}
-                  options={[{ value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'cartesia', label: 'Cartesia' }, { value: 'openai', label: 'OpenAI' }]} />
+                {/* A voice id belongs to one provider: switching provider starts from its default voice. */}
+                <SimpleSelect value={a.voice_provider} onChange={(v) => setAgent({ voice_provider: v as AgentConfig['voice_provider'], voice_id: '' })}
+                  options={[{ value: 'deepgram', label: 'Deepgram Aura (fastest)' }, { value: 'elevenlabs', label: 'ElevenLabs' },
+                    { value: 'cartesia', label: 'Cartesia' }, { value: 'openai', label: 'OpenAI' }]} />
               </Field>
               <Field label="Voice" className="sm:col-span-2">
                 <VoicePicker provider={a.voice_provider} value={a.voice_id} onChange={(voice_id) => setAgent({ voice_id })}
@@ -206,19 +208,14 @@ export default function Assistant() {
               onChange={(e) => setAgent({ custom_instructions: e.target.value })} />
             <p className="text-right text-xs text-muted-foreground">{a.custom_instructions.length} / 1500</p>
             <div className="space-y-2 rounded-lg border p-3">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <Switch checked={a.recording.enabled} onCheckedChange={(v) => setAgent({ recording: { ...a.recording, enabled: v } })} />
-                Record calls
-              </label>
-              <p className="text-xs text-muted-foreground">
-                ⚖ {region.recordingNote}
-              </p>
-              {a.recording.enabled && (
-                <Field label="Delete recordings after (days)">
-                  <Input type="number" min={1} max={3650} className="w-32" value={a.recording.retention_days}
-                    onChange={(e) => setAgent({ recording: { ...a.recording, retention_days: Number(e.target.value) } })} />
-                </Field>
-              )}
+              <p className="text-sm font-medium">Calls are transcribed, never recorded</p>
+              <p className="text-xs text-muted-foreground">⚖ {region.callNote}</p>
+              <Field label="What callers are told" hint="Leave empty for the standard sentence.">
+                <Input maxLength={200} value={a.call_notice ?? ''} placeholder={dental
+                  ? 'Just so you know, this call is transcribed for the practice.'
+                  : 'This call is transcribed for the team.'}
+                  onChange={(e) => setAgent({ call_notice: e.target.value })} />
+              </Field>
               <Field label="Delete call transcripts after (days)" hint="The call itself (who, when, outcome, summary) is kept.">
                 <Input type="number" min={1} max={3650} className="w-32" value={a.transcript_retention_days ?? 90}
                   onChange={(e) => setAgent({ transcript_retention_days: Number(e.target.value) })} />
@@ -231,7 +228,7 @@ export default function Assistant() {
           <CardHeader>
             <CardTitle>Links your assistant can text</CardTitle>
             <CardDescription>
-              When a caller says yes to a text, the assistant sends one of these by SMS or WhatsApp. Leave a field empty and it won't be offered.
+              When a caller says yes to a message, the assistant sends one of these{ctx.sms_enabled === false ? ' on WhatsApp' : ' by SMS or WhatsApp'}. Leave a field empty and it won't be offered.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">

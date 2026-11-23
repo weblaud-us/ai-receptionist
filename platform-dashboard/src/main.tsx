@@ -8,6 +8,7 @@ import { Toaster } from '@receptionist/shared/components/ui/sonner'
 import { TooltipProvider } from '@receptionist/shared/components/ui/tooltip'
 import { ApiError } from '@receptionist/shared/lib/api'
 import { initSentry } from '@receptionist/shared/lib/sentry'
+import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { ThemeProvider } from '@receptionist/shared/providers/theme'
 import App from './App.tsx'
 import './index.css'
@@ -33,6 +34,7 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <ErrorBoundary scope="app">
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
@@ -45,5 +47,6 @@ createRoot(document.getElementById('root')!).render(
         </BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

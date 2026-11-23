@@ -4,7 +4,7 @@ import { useAuth } from '@receptionist/shared/auth/auth'
 import { api, ApiError } from '@receptionist/shared/lib/api'
 import type { Role, TenantContext } from './tenant-types'
 
-const RANK: Record<Role, number> = { staff: 1, admin: 2, owner: 3 }
+const RANK: Record<Role, number> = { dentist: 0, staff: 1, admin: 2, owner: 3 }
 
 interface TenantState {
   ctx: TenantContext | null

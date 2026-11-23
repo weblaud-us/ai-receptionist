@@ -25,8 +25,8 @@ function describe(v: Voice): string {
 }
 
 /**
- * Voice picker with audio previews (Roadmap Task 2.10). ElevenLabs voices come from the server's
- * catalogue; any other provider, or a server without an ElevenLabs key, falls back to a plain ID.
+ * Voice picker with audio previews (Roadmap Task 2.10). ElevenLabs and Deepgram Aura voices come from
+ * the server's catalogue (Aura has no previews); any other provider falls back to a plain ID.
  */
 export function VoicePicker({ provider, value, onChange, country }: Props) {
   const q = useVoices(provider)
@@ -100,7 +100,7 @@ export function VoicePicker({ provider, value, onChange, country }: Props) {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        {selected?.description ? `${selected.description}. ` : ''}Press play to hear a sample.{' '}
+        {selected?.description ? `${selected.description}. ` : ''}{selected?.preview_url ? 'Press play to hear a sample. ' : 'Make a test call to hear it. '}
         <button type="button" className="underline" onClick={() => setCustom(true)}>Use a voice ID instead</button>
       </p>
     </div>

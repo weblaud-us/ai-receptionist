@@ -213,7 +213,7 @@ export const useAttempt = (id: string | null) =>
   useQuery({
     queryKey: ['s-attempt', id],
     queryFn: () =>
-      get<{ attempt: Attempt; lead: SalesLead | null; transcript: { role: string; text: string }[]; recording_url: string | null }>(
+      get<{ attempt: Attempt; lead: SalesLead | null; transcript: { role: string; text: string }[] }>(
         `/attempts/${id}`),
     enabled: !!id,
   })

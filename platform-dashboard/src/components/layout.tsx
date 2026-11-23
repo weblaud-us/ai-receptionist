@@ -2,6 +2,7 @@ import { Suspense, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '@receptionist/shared/auth/auth'
+import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { CLIENT_URL } from '@receptionist/shared/lib/urls'
@@ -94,6 +95,7 @@ const PageLoading = () => (
 )
 
 export function PlatformLayout() {
+  const { pathname } = useLocation()
   const { user, logout } = useAuth()
   const [menu, setMenu] = useState(false)
 
@@ -136,7 +138,7 @@ export function PlatformLayout() {
         </header>
         <main className="flex-1 px-4 py-6 lg:px-8">
           <Suspense fallback={<PageLoading />}>
-            <Outlet />
+            <ErrorBoundary scope="page" key={pathname}><Outlet /></ErrorBoundary>
           </Suspense>
         </main>
       </div>

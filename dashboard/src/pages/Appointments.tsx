@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { AppointmentSheet } from '@/components/appointments/AppointmentSheet'
-import { CalendarClock, ChevronLeft, ChevronRight, CircleCheck, CircleX, FileText, Loader2, Plus, UserCheck, UserX, WifiOff } from 'lucide-react'
+import { ArrowLeftRight, CalendarClock, ChevronLeft, ChevronRight, CircleCheck, CircleX, FileText, Loader2, Plus, UserCheck, UserX, WifiOff } from 'lucide-react'
 import { ConfirmDialog, EmptyState, ErrorBanner, Field, PageHeader, TableSkeleton } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Badge } from '@receptionist/shared/components/ui/badge'
@@ -28,6 +28,7 @@ export default function Appointments() {
   const [resource, setResource] = useState('all')
   const [creating, setCreating] = useState(false)
   const [cancelling, setCancelling] = useState<Appointment | null>(null)
+  const [moving, setMoving] = useState<Appointment | null>(null)
   const [viewingId, setViewingId] = useState<string | null>(null)
   const end = addDaysISO(start, 6)
   const q = useAppointments({ date_from: start, date_to: end, resource_id: resource === 'all' ? undefined : resource })
@@ -111,6 +112,10 @@ export default function Appointments() {
                             <Button size="xs" variant="outline" title="Mark as no-show — the patient didn't turn up"
                               className="text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-950"
                               onClick={() => setStatus(a, 'no_show')}><UserX /> No-show</Button>
+                            {(resources.data?.resources ?? []).filter((r) => r.active).length > 1 && (
+                              <Button size="xs" variant="outline" title={`Same time, another ${L.resource.toLowerCase()}`}
+                                onClick={() => setMoving(a)}><ArrowLeftRight /> Change {L.resource.toLowerCase()}</Button>
+                            )}
                             <Button size="xs" variant="outline" title={`Cancel this ${L.appointment.toLowerCase()}`}
                               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => setCancelling(a)}><CircleX /> Cancel</Button>
@@ -132,6 +137,7 @@ export default function Appointments() {
 
       <AppointmentSheet appointment={viewing} onClose={() => setViewingId(null)} onCancel={setCancelling} />
       <NewAppointmentDialog open={creating} onOpenChange={setCreating} />
+      <ChangeResourceDialog appointment={moving} onClose={() => setMoving(null)} />
       <ConfirmDialog
         open={!!cancelling}
         onOpenChange={(o) => !o && setCancelling(null)}
@@ -146,6 +152,45 @@ export default function Appointments() {
         }
       />
     </>
+  )
+}
+
+/** Same time, another dentist (plan E3): the new one is booked first, then the old booking is cancelled
+ * (in Cliniko / Dentally too). The server refuses if they aren't free then. */
+function ChangeResourceDialog({ appointment, onClose }: { appointment: Appointment | null; onClose: () => void }) {
+  const ctx = useCtx()
+  const tz = ctx.tenant.timezone
+  const L = ctx.vertical.labels
+  const resources = useResources()
+  const m = useAppointmentMutations()
+  const [to, setTo] = useState('')
+  const options = (resources.data?.resources ?? [])
+    .filter((r) => r.active && r.id !== appointment?.resource_id)
+    .map((r) => ({ value: r.id, label: r.name }))
+  const close = () => { setTo(''); onClose() }
+  return (
+    <Dialog open={!!appointment} onOpenChange={(o) => !o && close()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Change {L.resource.toLowerCase()}</DialogTitle>
+          <DialogDescription>
+            {appointment ? `${appointment.name}, ${zoneDay(appointment.start, tz)} at ${zoneTime(appointment.start, tz)}, now with ${appointment.resource_name ?? 'nobody'}.` : ''}
+            {' '}The time stays the same.
+          </DialogDescription>
+        </DialogHeader>
+        <Field label={`New ${L.resource.toLowerCase()}`}>
+          <SimpleSelect value={to} onChange={setTo} placeholder="Choose" options={options} />
+        </Field>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>Keep as is</Button>
+          <Button disabled={!to || m.reassign.isPending} onClick={() => appointment && m.reassign.mutate(
+            { id: appointment.appointment_id, resource_id: to },
+            { onSuccess: (r) => { toast.success(`Moved to ${r.resource_name ?? 'the new ' + L.resource.toLowerCase()}`); close() } })}>
+            {m.reassign.isPending && <Loader2 className="animate-spin" />} Move
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

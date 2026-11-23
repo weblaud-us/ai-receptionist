@@ -136,7 +136,6 @@ function AttemptSheet({ id, outcomes, onClose }: { id: string | null; outcomes: 
               {a.next_step && <KeyValue label="Next step">{a.next_step}</KeyValue>}
             </div>
             {a.summary && <p className="rounded-md bg-muted p-3">{a.summary}</p>}
-            {q.data?.recording_url && <audio controls preload="none" className="w-full" src={q.data.recording_url} />}
             <section>
               <h3 className="mb-2 font-medium">Transcript</h3>
               {(q.data?.transcript.length ?? 0) === 0 ? <p className="text-muted-foreground">No conversation was recorded for this call.</p> : (

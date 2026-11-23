@@ -13,7 +13,7 @@ import { SecurityCard } from '@receptionist/shared/components/security-card'
 import { timeAgo } from '@receptionist/shared/lib/format'
 import { useTenant } from '@/lib/tenant'
 import { ROLE_LABEL } from '@/lib/tenant-format'
-import { useTeam, useTeamMutations } from '@/lib/tenant-hooks'
+import { useResources, useTeam, useTeamMutations } from '@/lib/tenant-hooks'
 import type { TeamMember } from '@/lib/tenant-types'
 
 const ROLES = [
@@ -21,17 +21,49 @@ const ROLES = [
   { value: 'admin', label: 'Admin — plus settings and knowledge' },
   { value: 'owner', label: 'Owner — everything, incl. team and billing' },
 ]
+const DENTIST_ROLE = { value: 'dentist', label: 'Dentist — only their own patients (My day)' }
+
+/** A member's role; a dentist also names the practitioner whose day they see. Saved only when complete. */
+function MemberRole({ mem, roles, dentists }: { mem: TeamMember; roles: typeof ROLES; dentists: { value: string; label: string }[] }) {
+  const m = useTeamMutations()
+  const [role, setRole] = useState(mem.role)
+  const save = (next: string, resource_id?: string) => {
+    if (next === 'dentist' && !resource_id) {
+      setRole('dentist')                       // wait for the practitioner
+      return
+    }
+    setRole(next as TeamMember['role'])
+    m.role.mutate({ id: mem.id, role: next, resource_id }, { onSuccess: () => toast.success('Role updated') })
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      <SimpleSelect size="sm" value={role} onChange={(v) => save(v)}
+        options={roles.map((r) => ({ value: r.value, label: ROLE_LABEL[r.value] }))} />
+      {role === 'dentist' && (
+        <SimpleSelect size="sm" value={mem.role === 'dentist' ? mem.resource_id ?? '' : ''} placeholder="Which dentist?"
+          onChange={(v) => save('dentist', v)} options={dentists} />
+      )}
+    </div>
+  )
+}
 
 export default function Team() {
-  const { can } = useTenant()
+  const { ctx, can } = useTenant()
   const { user } = useAuth()
   const q = useTeam()
   const m = useTeamMutations()
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('staff')
+  const [resourceId, setResourceId] = useState('')
   const [link, setLink] = useState<string | null>(null)
   const [removing, setRemoving] = useState<TeamMember | null>(null)
   const owner = can('owner')
+  // Dental practices can give a dentist their own login that shows only their day.
+  const dental = ctx?.vertical.key === 'dental'
+  const roles = dental ? [...ROLES, DENTIST_ROLE] : ROLES
+  const resources = useResources(owner && dental)
+  const dentists = (resources.data?.resources ?? []).filter((r) => r.active).map((r) => ({ value: r.id, label: r.name }))
+  const dentistName = (id?: string | null) => dentists.find((d) => d.value === id)?.label
 
   return (
     <>
@@ -52,9 +84,12 @@ export default function Team() {
                     </TableCell>
                     <TableCell>
                       {owner && mem.id !== user?.id ? (
-                        <SimpleSelect size="sm" value={mem.role} onChange={(v) => m.role.mutate({ id: mem.id, role: v }, { onSuccess: () => toast.success('Role updated') })}
-                          options={ROLES.map((r) => ({ value: r.value, label: ROLE_LABEL[r.value] }))} />
-                      ) : <Badge variant="secondary">{ROLE_LABEL[mem.role]}</Badge>}
+                        <MemberRole mem={mem} roles={roles} dentists={dentists} />
+                      ) : (
+                        <Badge variant="secondary">
+                          {ROLE_LABEL[mem.role]}{mem.role === 'dentist' && dentistName(mem.resource_id) ? ` · ${dentistName(mem.resource_id)}` : ''}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{mem.pending_password ? 'Hasn\'t set a password yet' : timeAgo(mem.last_login_at)}</TableCell>
                     <TableCell className="text-right">
@@ -84,9 +119,14 @@ export default function Team() {
             </CardHeader>
             <CardContent className="space-y-3">
               <Field label="E-mail"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-              <Field label="Role"><SimpleSelect value={role} onChange={setRole} options={ROLES} /></Field>
-              <Button disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || m.invite.isPending}
-                onClick={() => m.invite.mutate({ email: email.trim(), role }, {
+              <Field label="Role"><SimpleSelect value={role} onChange={setRole} options={roles} /></Field>
+              {role === 'dentist' && (
+                <Field label="Which dentist?" hint="They'll see this practitioner's patients today and tomorrow, and nothing else.">
+                  <SimpleSelect value={resourceId} onChange={setResourceId} placeholder="Choose a practitioner" options={dentists} />
+                </Field>
+              )}
+              <Button disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || m.invite.isPending || (role === 'dentist' && !resourceId)}
+                onClick={() => m.invite.mutate({ email: email.trim(), role, resource_id: role === 'dentist' ? resourceId : undefined }, {
                   onSuccess: (r) => {
                     setEmail('')
                     if (r.emailed) toast.success('Invitation sent')

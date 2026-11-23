@@ -341,8 +341,6 @@ function DentalRetention() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {row('Call recordings', agent.recording.retention_days, PRESETS,
-          (d) => save({ agent: { ...agent, recording: { ...agent.recording, retention_days: d } } }, 'Recording retention'))}
         {row('Transcripts', agent.transcript_retention_days, PRESETS,
           (d) => save({ agent: { ...agent, transcript_retention_days: d } }, 'Transcript retention'))}
         {row('Enquiry leads', privacy.lead_retention_days, [90, 180, 365],
@@ -377,8 +375,8 @@ export default function Privacy() {
             <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
               <div><div className="text-muted-foreground">Transcripts</div><div className="text-lg font-medium">{legal.retention.transcript_days} days</div></div>
               <div>
-                <div className="text-muted-foreground">Recordings</div>
-                <div className="text-lg font-medium">{legal.retention.recording_enabled ? `${legal.retention.recording_days} days` : 'Not recorded'}</div>
+                <div className="text-muted-foreground">Call audio</div>
+                <div className="text-lg font-medium">Never recorded</div>
               </div>
               <div><div className="text-muted-foreground">After you cancel</div><div className="text-lg font-medium">{legal.retention.after_cancellation_days} days, then deleted</div></div>
             </CardContent>

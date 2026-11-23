@@ -29,7 +29,7 @@ export interface LegalStatus {
   dpa: { version: string; accepted_version: string | null; accepted_at: string | null; current: boolean; url: string }
   outstanding: string[]
   subprocessors: Subprocessor[]
-  retention: { transcript_days: number; recording_days: number; recording_enabled: boolean; after_cancellation_days: number }
+  retention: { transcript_days: number; after_cancellation_days: number }
   privacy_contact: string
   dsr_deadline_days: number
 }

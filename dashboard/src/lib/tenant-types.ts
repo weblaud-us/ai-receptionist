@@ -4,7 +4,8 @@ import type { HoursEntry } from '@receptionist/shared/lib/hours'
 
 export type { HoursEntry }
 
-export type Role = 'owner' | 'admin' | 'staff'
+/** 'dentist': sees only their own day (My day); ranks below staff. */
+export type Role = 'owner' | 'admin' | 'staff' | 'dentist'
 export type Vertical =
   | 'home_services'
   | 'salon'
@@ -17,7 +18,7 @@ export type Vertical =
 
 export interface AgentConfig {
   name: string
-  voice_provider: 'elevenlabs' | 'cartesia' | 'openai'
+  voice_provider: 'elevenlabs' | 'cartesia' | 'openai' | 'deepgram'
   voice_id: string
   language: string
   stt_language: string
@@ -27,7 +28,8 @@ export interface AgentConfig {
   llm_model: string
   endpointing: { min_delay: number; max_delay: number }
   ambience: boolean
-  recording: { enabled: boolean; retention_days: number; announce: boolean; announce_text?: string }
+  /** Owner's own wording for the "this call is transcribed" notice; empty = the standard one. */
+  call_notice?: string
   max_call_minutes: number
   transcript_retention_days: number
   stt_keyterms?: string[]
@@ -150,6 +152,8 @@ export interface TenantContext {
   vertical: { key: Vertical; label: string; labels: VerticalLabels; uses_scheduling: boolean; tools: string[] }
   greeting: string
   billing?: BillingBrief
+  /** False: the platform sends no SMS, so text-only options are hidden. */
+  sms_enabled?: boolean
 }
 
 export interface VerticalInfo {
@@ -236,6 +240,8 @@ export interface Contact {
   first_seen_at?: string
   last_seen_at?: string
   stats?: { calls: number; appointments: number; no_shows: number }
+  /** The patient's regular dentist (a resource id): the assistant books them with this dentist first. */
+  preferred_resource_id?: string | null
 }
 
 export interface ContactDetail extends Contact {
@@ -258,7 +264,6 @@ export interface TenantCall {
   transcript?: { role: 'user' | 'assistant'; text: string; at: string; interrupted?: boolean }[]
   latency?: { turns: number; p50_s: number | null; p95_s: number | null; tool_p50_s: number | null }
   tools_used?: string[]
-  recording?: { path: string } | null
 }
 
 export interface Lead {
@@ -354,6 +359,8 @@ export interface TeamMember {
   email: string
   name: string
   role: Role
+  /** For a dentist: the practitioner whose day they see. */
+  resource_id?: string | null
   last_login_at: string | null
   disabled: boolean
   pending_password: boolean
@@ -405,4 +412,33 @@ export interface ContactWhatsApp {
   window: { open: boolean; last_inbound_at: string | null; expires_at: string | null }
   do_not_contact: boolean
   messages: WhatsAppOutboxItem[]
+}
+
+/** One patient on a dentist's day (GET /t/my-day). */
+export interface DayAppointment {
+  appointment_id: string | null
+  /** ai = booked by the assistant, dashboard = by staff here, pms = only in Cliniko / Dentally */
+  source: 'ai' | 'dashboard' | 'pms'
+  booked_here: boolean
+  start: string
+  end: string | null
+  patient_name: string
+  phone: string
+  service: string
+  status: string
+  notes: string
+  no_shows: number
+  first_visit: boolean | null
+  last_call_summary: string | null
+  triage: { severity: string | null; problem: string | null; red_flag: boolean } | null
+  enquiry: { treatment: string | null; timeframe: string | null } | null
+}
+
+export interface DayView {
+  day: string
+  resource: { id: string; name: string }
+  timezone: string
+  appointments: DayAppointment[]
+  warning: string | null
+  pms: string | null
 }

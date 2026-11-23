@@ -6,6 +6,7 @@ import {
   BookOpen,
   Bot,
   Building2,
+  CalendarCheck,
   CalendarClock,
   CalendarDays,
   CalendarRange,
@@ -34,6 +35,7 @@ import { useAuth } from '@receptionist/shared/auth/auth'
 import { BillingBanner } from '@/components/app/billing-banner'
 import { ExitToPlatformButton, ImpersonationBanner, ToPlatform } from '@/components/app/to-platform'
 import { ErrorBanner } from '@receptionist/shared/components/blocks'
+import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
@@ -56,6 +58,10 @@ interface NavItem {
 
 /** Navigation adapts to the business: hotels keep rooms and bookings; everyone else gets appointments. */
 function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
+  // A dentist sees one page: their own day.
+  if (ctx.role === 'dentist' && !ctx.platform_admin) {
+    return [{ items: [{ to: '/my-day', label: 'My day', icon: CalendarCheck, role: 'dentist' }] }]
+  }
   const L = ctx.vertical.labels
   const isHotel = ctx.vertical.key === 'hotel'
   const isDental = ctx.vertical.key === 'dental'
@@ -70,6 +76,7 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
       ]
     : [
         { to: '/appointments', label: isDental ? 'Consultations & appointments' : L.appointments, icon: CalendarClock },
+        ...(isDental ? [{ to: '/my-day', label: "Dentists' day", icon: CalendarCheck }] : []),
         ...(ctx.vertical.key === 'home_services' ? [{ to: '/leads', label: 'Job requests', icon: ClipboardList }] : []),
         ...(ctx.vertical.key === 'dental' ? [{ to: '/leads', label: 'Captured leads', icon: ClipboardList }] : []),
         { to: '/contacts', label: L.contacts, icon: Contact },
@@ -123,7 +130,7 @@ function HelpLinks() {
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const { ctx, can } = useTenant()
-  const live = useLiveCalls(!!ctx)
+  const live = useLiveCalls(!!ctx && can('staff'))
   const liveCount = live.data?.total ?? 0
   const groups = ctx ? navFor(ctx) : []
   return (
@@ -132,7 +139,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
         <div key={gi} className="flex flex-col gap-1">
           {g.title && <div className="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/50">{g.title}</div>}
           {g.items
-            .filter((item) => !item.role || can(item.role))
+            .filter((item) => can(item.role ?? 'staff'))
             .map(({ to, label, icon: Icon, end, live: isLive }) => (
               <NavLink
                 key={to}
@@ -280,7 +287,7 @@ export function AppLayout() {
           ) : (
             <>
               <BillingBanner />
-              <Outlet />
+              <ErrorBoundary scope="page" key={location.pathname}><Outlet /></ErrorBoundary>
             </>
           )}
         </main>

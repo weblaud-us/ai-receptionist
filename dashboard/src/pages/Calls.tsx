@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { dateTime, duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { useCtx } from '@/lib/tenant'
 import { OUTCOME_LABEL, zoneDateTime } from '@/lib/tenant-format'
-import { useRecordingUrl, useTenantCall, useTenantCalls } from '@/lib/tenant-hooks'
+import { useTenantCall, useTenantCalls } from '@/lib/tenant-hooks'
 import { OutcomeBadge } from './TenantOverview'
 import { useCallerMessages, useLiveCalls, useUpdateMessage } from '@/lib/hooks'
 
@@ -237,19 +237,6 @@ function RecentCalls() {
   )
 }
 
-function RecordingPlayer({ callId }: { callId: string }) {
-  const rec = useRecordingUrl()
-  if (rec.data) return <audio controls autoPlay src={rec.data.url} className="w-full" />
-  return (
-    <div className="space-y-1">
-      <Button size="sm" variant="outline" disabled={rec.isPending} onClick={() => rec.mutate(callId)}>
-        {rec.isPending ? <Loader2 className="animate-spin" /> : <PhoneCall />} Play recording
-      </Button>
-      {rec.error && <ErrorBanner error={rec.error} />}
-    </div>
-  )
-}
-
 function CallSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
   const tz = useCtx().tenant.timezone
   const q = useTenantCall(id)
@@ -271,7 +258,6 @@ function CallSheet({ id, onClose }: { id: string | null; onClose: () => void }) 
               {!!c.tools_used?.length && <span className="text-muted-foreground">· used {[...new Set(c.tools_used)].map(titleCase).join(', ')}</span>}
             </div>
             {c.summary && <p className="rounded-lg bg-muted p-3 text-sm">{c.summary}</p>}
-            {c.recording?.path && <RecordingPlayer callId={c.call_id} />}
             <div className="space-y-2">
               {(c.transcript ?? []).length === 0 && <p className="text-sm text-muted-foreground">No transcript.</p>}
               {(c.transcript ?? []).map((t, i) => (

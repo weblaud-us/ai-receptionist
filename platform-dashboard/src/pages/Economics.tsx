@@ -69,7 +69,7 @@ export default function Economics() {
     <>
       <PageHeader title="Unit economics" description={m.note} />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Variable cost / minute" value={usd(m.per_minute.mid, 3)} hint={`${usd(m.per_minute.low, 3)}–${usd(m.per_minute.high, 3)}; with recording ${usd(m.per_minute_with_recording.mid, 3)}`} />
+        <Stat label="Variable cost / minute" value={usd(m.per_minute.mid, 3)} hint={`${usd(m.per_minute.low, 3)}–${usd(m.per_minute.high, 3)}`} />
         <Stat label="List MRR" value={usd(m.list_mrr_usd, 0)} hint={`${live} paying or trialling businesses, at list price`} />
         <Stat label="Minutes, last 30 days" value={Math.round(minutes).toLocaleString()} hint={`${m.last_30d.calls.toLocaleString()} calls`} />
         <Stat label="Estimated cost, last 30 days" value={usd(m.last_30d.cost_usd)} hint={`Fixed ${usd(m.fixed_monthly_total.low, 0)}–${usd(m.fixed_monthly_total.high, 0)} / month on top`} />

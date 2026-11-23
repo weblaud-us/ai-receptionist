@@ -43,7 +43,6 @@ export interface VerticalOption {
 export interface CostModel {
   items: { key: string; label: string; low: number; high: number; basis: string; applies: string }[]
   per_minute: { low: number; mid: number; high: number }
-  per_minute_with_recording: { low: number; mid: number; high: number }
   fixed_monthly: { label: string; low: number; high: number }[]
   fixed_monthly_total: { low: number; high: number }
   fixed_per_tenant_month: number
@@ -136,7 +135,7 @@ export interface TenantDoc {
   phone: string
   website: string
   answering_mode: 'all_calls' | 'overflow' | 'after_hours'
-  agent: { name: string; max_call_minutes: number; recording: { enabled: boolean; retention_days: number; announce: boolean; announce_text: string } }
+  agent: { name: string; max_call_minutes: number; call_notice?: string }
   transfer: { number: string }
   notifications: { owner_email: string; owner_phone: string }
   limits: { included_minutes: number; max_concurrent_calls: number; max_users: number; max_numbers: number }

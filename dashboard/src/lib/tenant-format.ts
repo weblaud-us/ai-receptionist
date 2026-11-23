@@ -70,7 +70,7 @@ export const OUTCOME_STYLE: Record<string, string> = {
   cancelled: 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300',
 }
 
-export const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', staff: 'Staff' }
+export const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', staff: 'Staff', dentist: 'Dentist' }
 
 export const APPOINTMENT_STYLE: Record<string, string> = {
   confirmed: 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300',

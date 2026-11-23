@@ -41,6 +41,9 @@ const COUNTRIES = [
   { value: 'SA', label: 'Saudi Arabia' },
 ]
 
+// Dental practices are AU / UK only (emergency numbers, health funds and NHS rules are written for them).
+const DENTAL_COUNTRIES = COUNTRIES.filter((c) => c.value === 'AU' || c.value === 'GB')
+
 /** A first guess from the browser's time zone; the visitor can change it. */
 function guessCountry(tz: string): string {
   if (tz.startsWith('Australia/')) return 'AU'
@@ -73,17 +76,22 @@ export default function Signup() {
   const [params] = useSearchParams()
   const [plan, setPlan] = useState(params.get('plan') ?? 'growth')
   const [annual, setAnnual] = useState(params.get('interval') === 'year')
-  const [form, setForm] = useState(() => ({
-    name: '', email: '', password: '', business_name: '',
-    vertical: BUSINESS_TYPES.some((b) => b.value === params.get('vertical')) ? String(params.get('vertical')) : 'home_services',
-    country: (params.get('country') ?? '').toUpperCase() || guessCountry(guessTimezone()),
-  }))
+  const [form, setForm] = useState(() => {
+    const vertical = BUSINESS_TYPES.some((b) => b.value === params.get('vertical')) ? String(params.get('vertical')) : 'home_services'
+    const country = (params.get('country') ?? '').toUpperCase() || guessCountry(guessTimezone())
+    const ok = vertical !== 'dental' || DENTAL_COUNTRIES.some((c) => c.value === country)
+    return { name: '', email: '', password: '', business_name: '', vertical, country: ok ? country : 'AU' }
+  })
   // Dental practices have their own plans (retainer + onboarding fee); the list follows the business type.
   const plans = usePlans(form.country, form.vertical)
   const [accept, setAccept] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
+  const set = (k: keyof typeof form) => (v: string) => setForm((f) => {
+    const next = { ...f, [k]: v }
+    if (next.vertical === 'dental' && !DENTAL_COUNTRIES.some((c) => c.value === next.country)) next.country = 'AU'
+    return next
+  })
 
   if (status === 'authenticated' && !busy) return <Navigate to="/" replace />
   const cat = plans.data
@@ -194,7 +202,8 @@ export default function Signup() {
                 <Input required value={form.business_name} onChange={(e) => set('business_name')(e.target.value)} />
               </Field>
               <Field label="Type of business"><SimpleSelect value={form.vertical} onChange={set('vertical')} options={BUSINESS_TYPES} /></Field>
-              <Field label="Country"><SimpleSelect value={form.country} onChange={set('country')} options={COUNTRIES} /></Field>
+              <Field label="Country"><SimpleSelect value={form.country} onChange={set('country')}
+                options={form.vertical === 'dental' ? DENTAL_COUNTRIES : COUNTRIES} /></Field>
               <label className="flex items-start gap-2 text-sm sm:col-span-2">
                 <Checkbox checked={accept} onCheckedChange={(v) => setAccept(v === true)} className="mt-0.5" />
                 <span className="text-muted-foreground">
