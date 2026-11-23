@@ -12,7 +12,7 @@ identical per tenant; owner free text is fenced; the dynamic "Right now" block i
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from core.prompts.verticals import get_vertical
@@ -95,6 +95,7 @@ class BusinessSnapshot:
     services: List[Dict[str, Any]] = field(default_factory=list)
     resources: List[Dict[str, Any]] = field(default_factory=list)
     knowledge: List[Dict[str, Any]] = field(default_factory=list)
+    notices: List[Dict[str, Any]] = field(default_factory=list)    # closures / staff away to mention (2.4)
 
     @property
     def inline_knowledge(self) -> bool:
@@ -223,8 +224,36 @@ def fence_owner_text(text: str) -> str:
             f"<<<\n{text}\n>>>")
 
 
+def _day(iso: str) -> str:
+    try:
+        d = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return f"{d:%A} {d.day} {d:%B}"
+
+
+def render_notices(notices: List[Dict[str, Any]], resources: List[Dict[str, Any]]) -> str:
+    """Closures and staff away (plan 2.4). In the dynamic block, so the cached prefix never changes."""
+    names = {r.get("_id"): r.get("name") for r in resources}
+    out = []
+    for n in notices[:10]:
+        who = names.get(n.get("resource_id")) if n.get("resource_id") else None
+        frm, to = _day(str(n.get("date_from") or "")), _day(str(n.get("date_to") or ""))
+        span = frm if frm == to else f"{frm} to {to}"
+        line = f"- {who} is away {span}." if who else f"- The practice is closed {span}."
+        text = " ".join(str(n.get("notice") or "").replace("<<<", "").replace(">>>", "").split())[:200]
+        if text:
+            line += f" The team's note for callers: <<<{text}>>>"
+        out.append(line)
+    if not out:
+        return ""
+    return ("Notices (mention one only when it matters to the caller, e.g. they ask for that dentist or that "
+            "day; offer someone else or another date):\n" + "\n".join(out))
+
+
 def render_right_now(t: TenantConfig, now: Optional[datetime], caller_phone: Optional[str],
-                     contact: Optional[Dict[str, Any]], *, voice: bool = True) -> str:
+                     contact: Optional[Dict[str, Any]], *, voice: bool = True,
+                     snap: Optional[BusinessSnapshot] = None) -> str:
     local = business_now(t.timezone, now)
     hour = local.strftime("%I:%M %p").lstrip("0")
     lines = ["# Right now",
@@ -245,6 +274,9 @@ def render_right_now(t: TenantConfig, now: Optional[datetime], caller_phone: Opt
         lines.append(f"The caller's number is {caller_phone}; use it for bookings unless they give another.")
     elif voice:
         lines.append("This is a browser call: the caller's number is unknown, so ask for it when needed.")
+    notices = render_notices(snap.notices, snap.resources) if snap and snap.notices else ""
+    if notices:
+        lines.append(notices)
     history = render_caller_history(t, contact)
     if history:
         lines.append(history)
@@ -318,7 +350,7 @@ def _assemble(base: str, t: TenantConfig, snap: BusinessSnapshot, now: Optional[
         render_business_facts(t, snap),
         _knowledge_text(snap),
         fence_owner_text(t.agent.custom_instructions),
-        render_right_now(t, now, caller_phone, contact, voice=voice),   # always LAST
+        render_right_now(t, now, caller_phone, contact, voice=voice, snap=snap),   # always LAST
     ]))
 
 

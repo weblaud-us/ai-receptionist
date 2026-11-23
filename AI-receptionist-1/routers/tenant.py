@@ -481,6 +481,9 @@ class ExceptionBody(BaseModel):
     date_from: date
     date_to: date                             # inclusive, business-local
     reason: str = Field(default="", max_length=200)
+    # Plan 2.4: tell callers about it ("Dr Lee is away until the 9th"). Empty notice = built from the dates.
+    announce: bool = False
+    notice: str = Field(default="", max_length=200)
 
 
 @tenant_router.get("/exceptions")
@@ -499,7 +502,8 @@ async def create_exception(body: ExceptionBody, request: Request, tp: TenantPrin
     doc = {"_id": new_id("exc"), "resource_id": body.resource_id,
            "start": _local_midnight_utc(tp, body.date_from),
            "end": _local_midnight_utc(tp, body.date_to + timedelta(days=1)),
-           "date_from": body.date_from.isoformat(), "date_to": body.date_to.isoformat(), "reason": body.reason}
+           "date_from": body.date_from.isoformat(), "date_to": body.date_to.isoformat(), "reason": body.reason,
+           "announce": body.announce, "notice": body.notice.strip()}
     await tp.repos().exceptions.insert_one(doc)
     await _audit(tp, request, "exception.create", "schedule_exception", doc["_id"], {"reason": body.reason})
     return _clean(doc)

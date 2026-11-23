@@ -209,6 +209,9 @@ export interface ScheduleException {
   date_from: string
   date_to: string
   reason: string
+  /** The assistant mentions it to callers when relevant (plan 2.4). */
+  announce?: boolean
+  notice?: string
 }
 
 export interface Appointment {

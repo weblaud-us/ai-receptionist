@@ -291,6 +291,8 @@ function ClosuresTab() {
   const [to, setTo] = useState(today)
   const [who, setWho] = useState('all')
   const [reason, setReason] = useState('')
+  const [announce, setAnnounce] = useState(true)
+  const [notice, setNotice] = useState('')
   const names = Object.fromEntries((resources.data?.resources ?? []).map((r) => [r.id, r.name]))
   return (
     <Card className="mt-3 gap-0 py-0">
@@ -300,10 +302,19 @@ function ClosuresTab() {
         <Field label="Who"><SimpleSelect value={who} onChange={setWho} options={[{ value: 'all', label: 'Whole business' }, ...(resources.data?.resources ?? []).map((r) => ({ value: r.id, label: r.name }))]} /></Field>
         <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Holiday" /></Field>
         <Button disabled={m.create.isPending}
-          onClick={() => m.create.mutate({ date_from: from, date_to: to, resource_id: who === 'all' ? null : who, reason },
-            { onSuccess: () => { toast.success('Closure added'); setReason('') } })}>
+          onClick={() => m.create.mutate({ date_from: from, date_to: to, resource_id: who === 'all' ? null : who, reason, announce, notice },
+            { onSuccess: () => { toast.success('Closure added'); setReason(''); setNotice('') } })}>
           <CalendarOff /> Add closure
         </Button>
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <Switch checked={announce} onCheckedChange={setAnnounce} /> The assistant tells callers when it's relevant
+        </label>
+        {announce && (
+          <Field label="Note for callers (optional)" className="sm:col-span-3">
+            <Input value={notice} maxLength={200} onChange={(e) => setNotice(e.target.value)}
+              placeholder={who === 'all' ? 'Emergencies: call 1800 000 000' : 'Dr Patel is seeing her patients'} />
+          </Field>
+        )}
       </div>
       {(q.data?.exceptions.length ?? 0) === 0 ? <EmptyState title="No closures" description="Holidays and days off block bookings automatically." /> : (
         <Table>
@@ -312,7 +323,10 @@ function ClosuresTab() {
               <TableRow key={e.id}>
                 <TableCell className="font-medium">{dateOnly(e.date_from)}{e.date_to !== e.date_from && ` – ${dateOnly(e.date_to)}`}</TableCell>
                 <TableCell>{e.resource_id ? names[e.resource_id] ?? 'Staff member' : 'Whole business'}</TableCell>
-                <TableCell className="text-muted-foreground">{e.reason}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {e.reason}
+                  {e.announce && <span className="ml-2 text-xs">· callers told{e.notice ? `: “${e.notice}”` : ''}</span>}
+                </TableCell>
                 <TableCell className="text-right"><Button size="icon-xs" variant="ghost" aria-label="Remove" onClick={() => m.remove.mutate(e.id)}><Trash2 /></Button></TableCell>
               </TableRow>
             ))}

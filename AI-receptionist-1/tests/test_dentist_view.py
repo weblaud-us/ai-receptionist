@@ -12,7 +12,7 @@ from core.repositories import Repos
 from core.services import my_day
 from core.services import scheduling_provider as sp
 from core.services.tenant_admin import create_tenant
-from core.tenancy import invalidate
+from core.tenancy import invalidate, resolve_by_id
 from tests.test_dental_pms import KEY, FakePMS
 
 PASSWORD = "correct horse battery"
@@ -250,3 +250,16 @@ async def test_the_day_includes_the_pms_diary_without_duplicates(db, client, mon
     fake.fail[("GET", "/v1/individual_appointments")] = lambda r: httpx.Response(503)
     day = client.get("/t/my-day", headers=h).json()
     assert [a["patient_name"] for a in day["appointments"]] == ["Mia Wong"] and "isn't answering" in day["warning"]
+
+
+async def test_a_dentist_away_notice_is_saved_and_reaches_the_call_snapshot(db, client):
+    from core.services.snapshot import load_snapshot
+
+    t = await _practice(db)
+    owner = _login(client, "owner@hs.au")
+    day = (datetime.now(ZoneInfo(SYD)) + timedelta(days=2)).date().isoformat()
+    r = client.post("/t/exceptions", json={"resource_id": "res_ava", "date_from": day, "date_to": day, "reason": "Leave",
+                                           "announce": True, "notice": "Dr Ben is seeing her patients"}, headers=owner)
+    assert r.status_code == 200 and r.json()["announce"] is True
+    snap = await load_snapshot(Repos(db, t.id), await resolve_by_id(t.id))
+    assert [n["notice"] for n in snap.notices] == ["Dr Ben is seeing her patients"]
