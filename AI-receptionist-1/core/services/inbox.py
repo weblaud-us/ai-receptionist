@@ -112,7 +112,9 @@ async def update(repos: Repos, kind: str, rid: str, *, assignee_id: Any = ..., d
             from core.tenancy import resolve_by_id
 
             tenant = await resolve_by_id(repos.tenant_id)
-            return bool(tenant) and await escalation.acknowledge(tenant, rid, by=by or "front desk")
+            if tenant is None:
+                return False
+            return await escalation.acknowledge(tenant, rid, by=by or "front desk")
         return bool(await repos.escalations.find_one({"_id": rid}, {"_id": 1}))
     else:
         return False
