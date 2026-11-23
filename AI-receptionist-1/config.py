@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # ── MongoDB ───────────────────────────────────────────
     MONGODB_URI:     str = Field(default="mongodb://localhost:27017")
     MONGODB_DB_NAME: str = Field(default="hotel_ai_dev")
+    # Connections per process (API replica, worker, jobs). Size for Atlas's connection limit:
+    # replicas × processes × max must stay under it (audit SRE-10).
+    MONGODB_MAX_POOL: int = Field(default=50, ge=1, le=500)
 
     # ── Redis (Phase 3): shared state + job queue ─────────
     # Rate limits, WhatsApp dedupe, per-business call counters and the arq job queue. Empty = each

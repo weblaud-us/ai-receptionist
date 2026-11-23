@@ -35,8 +35,13 @@ async def connect_db(ensure_indexes: Optional[bool] = None):
     _client = AsyncIOMotorClient(
         settings.MONGODB_URI,
         serverSelectionTimeoutMS=5000,
-        maxPoolSize=50,
-        minPoolSize=5,
+        maxPoolSize=settings.MONGODB_MAX_POOL,
+        minPoolSize=min(5, settings.MONGODB_MAX_POOL),
+        # Audit SRE-10: a write is acknowledged once most replica-set members have it, so a primary
+        # failover can't roll back a booking or a payment the caller was told about. Retried once
+        # automatically across a failover. (Majority of one on a single development node.)
+        w="majority",
+        retryWrites=True,
     )
     _db = _client[settings.MONGODB_DB_NAME]
     if ensure_indexes if ensure_indexes is not None else settings.is_development:
