@@ -125,3 +125,31 @@ def test_key_rotation_reencrypts_every_enc_field_and_counts_unreadable():
     sets, bad = rotate_doc(doc, MultiFernet([new, old]))
     assert set(sets) == {"mfa.secret_enc", "items.0.problem_enc"} and bad == 1
     assert new.decrypt(sets["mfa.secret_enc"].encode()) == b"s1"      # now readable with the new key alone
+
+
+# ── Phase 3: PRIV-10 tamper-evident audit log ──────────────────────────────
+
+async def test_the_audit_log_is_a_hash_chain_that_shows_tampering(db):
+    import asyncio
+
+    from core.compliance.audit_chain import verify
+    from core.repositories import Repos
+
+    repos = Repos(db, "ten_audit")
+    for i in range(3):
+        await repos.audit.record(user_id="usr_1", action=f"settings.update.{i}", target_type="tenant",
+                                 target_id="ten_audit", diff={"n": i, "at": "x"}, ip="1.2.3.4")
+    await asyncio.gather(*[repos.audit.record(user_id="usr_2", action="race", target_type="t") for _ in range(4)])
+    rows = await db.audit_log.find({"tenant_id": "ten_audit"}).sort("seq", 1).to_list(20)
+    assert [r["seq"] for r in rows] == list(range(1, 8))              # concurrent writers got distinct seqs
+    assert await verify(db, "ten_audit") == (True, [])
+
+    await db.audit_log.update_one({"tenant_id": "ten_audit", "seq": 2}, {"$set": {"diff.n": 99}})
+    ok, problems = await verify(db, "ten_audit")
+    assert not ok and problems[0] == "seq 2: contents changed"
+
+    await db.audit_log.update_one({"tenant_id": "ten_audit", "seq": 2}, {"$set": {"diff.n": 1}})
+    assert (await verify(db, "ten_audit"))[0]
+    await db.audit_log.delete_one({"tenant_id": "ten_audit", "seq": 3})
+    ok, problems = await verify(db, "ten_audit")
+    assert not ok and "seq 3: missing" in problems[0]

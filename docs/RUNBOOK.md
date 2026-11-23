@@ -250,9 +250,39 @@ Tenants with `region: eu` live only there. No cross-region replication.
 1. **Acknowledge** the alert; post "investigating" on the status page within 15 minutes for anything customer-visible.
 2. **Mitigate first** (rollback, fallback, block), investigate after.
 3. **Personal data involved?** (leaked key with data access, wrong-tenant data shown, DB exposed)
-   → note the time you became aware. GDPR: notify the supervisory authority within 72 hours and
-   affected businesses without undue delay; they notify their callers. Keep a written timeline.
+   → follow [Personal data breach](#personal-data-breach-au-ndb--uk-ico) below. Keep a written timeline.
 4. **Afterwards:** a short write-up — what happened, how long, how found, what changes — in this
    repo under `docs/incidents/YYYY-MM-DD-title.md`.
 
 Contacts: who is on call ________ · Atlas support ________ · LiveKit support ________ · Twilio support ________
+
+### Personal data breach (AU NDB / UK ICO)
+
+For each practice we are the **processor**; the practice is the controller and makes the regulator
+and patient notifications, with our help. For our own data (dashboard users, billing contacts) we
+are the controller and do them ourselves. Dental data is health data: treat any exposure of call
+transcripts, summaries, symptoms or appointments as likely to cause serious harm until shown otherwise.
+
+1. **Write down the time you became aware.** Every deadline below runs from it.
+2. **Contain and keep evidence.** Revoke or rotate what leaked ([A key leaked](#a-key-leaked); stored
+   secrets: `python -m scripts.rotate_encryption_key`), block the access path, snapshot the logs.
+   Check nothing was altered to hide it: `python -m scripts.verify_audit_log` (exit 1 = a business's
+   audit chain is broken; the output names the first entry that changed or is missing).
+3. **Scope it:** which businesses, which collections and fields, how many people, whether the
+   data was encrypted at rest (`*_enc` fields are unreadable without TOKEN_ENCRYPTION_KEY), and the
+   time window. The audit log of each business shows who opened what (`/t/audit`, `audit_log`).
+4. **Tell every affected practice within 48 hours** (DPA §3), by e-mail to the owner and in writing:
+   what happened, when, the kinds of data and roughly how many patients, likely consequences, what
+   we have done and will do, and a contact. Update them as you learn more.
+5. **Their regulator deadlines (help them meet these):**
+   - **UK practices (UK GDPR):** the practice tells the **ICO within 72 hours** of becoming aware,
+     unless the breach is unlikely to put anyone at risk; and tells patients **without undue delay**
+     if the risk to them is high.
+   - **Australian practices (Privacy Act, Notifiable Data Breaches scheme):** where there are
+     reasonable grounds to suspect an eligible data breach, the practice **assesses it within
+     30 days**. If it is eligible (likely to cause serious harm and not remedied in time), it gives
+     the **OAIC a statement and notifies affected patients as soon as practicable**.
+6. **Our own data:** the same tests apply to us as controller: ICO within 72 hours (UK), OAIC and
+   individuals as soon as practicable for an eligible breach (AU).
+7. **Record everything** in `docs/incidents/YYYY-MM-DD-title.md`, including breaches you decided
+   weren't notifiable and why (UK GDPR Art. 33(5) requires a record of every breach).

@@ -152,6 +152,38 @@ async def test_retention_purges_encrypted_transcripts_and_old_leads(db):
     assert await tenant_jobs.purge_leads(salon, NOW) == 0                     # 0 = keep
 
 
+async def test_retention_covers_chats_handled_messages_and_question_numbers(db):
+    # Audit PRIV-07.
+    from services import tenant_jobs
+
+    t = await _dental_with_data(db, tenant_id="ten_ret")
+    repos = Repos(db, t.id)
+    old, recent = NOW - timedelta(days=400), NOW - timedelta(days=5)
+    await repos.conversations.insert_one({"_id": "conv_old", "session_id": "s_old", "phone": CALLER, "updated_at": old})
+    await repos.conversations.insert_one({"_id": "conv_new", "session_id": "s_new", "phone": CALLER, "updated_at": recent})
+    await repos.messages.insert_one({"_id": "m_done", "message_id": "m_done", "status": "handled", "created_at": old,
+                                     "message": "x"})
+    await repos.messages.insert_one({"_id": "m_waiting", "message_id": "m_waiting", "status": "new", "created_at": old,
+                                     "message": "y"})
+    await repos.unanswered.insert_one({"_id": "uq_old", "question": "Braces?", "caller_phone": CALLER, "created_at": old})
+    assert await tenant_jobs.purge_chats_and_messages(t, NOW) == 3
+    assert [c["_id"] for c in await repos.conversations.find({})] == ["conv_new"]
+    assert [m["_id"] for m in await repos.messages.find({})] == ["m_waiting"]      # never an unhandled one
+    q = await repos.unanswered.find_one({"_id": "uq_old"})
+    assert q["question"] == "Braces?" and q["caller_phone"] is None
+
+
+async def test_transcript_retention_also_drops_the_sealed_summary(db):
+    from services import tenant_jobs
+
+    t = await _dental_with_data(db, tenant_id="ten_ret2")
+    await Repos(db, t.id).calls.update_one({"call_id": "call_ten_ret2"},
+                                           {"$set": seal({"summary": "swollen jaw"}, ("summary",))})
+    assert await tenant_jobs.purge_transcripts(t, NOW) == 1
+    call = await Repos(db, t.id).calls.find_one({"call_id": "call_ten_ret2"})
+    assert "summary_enc" not in call and "transcript_enc" not in call
+
+
 # ── Migration ────────────────────────────────────────────
 
 async def test_migration_encrypts_old_plaintext_for_dental_only_and_is_idempotent(db):

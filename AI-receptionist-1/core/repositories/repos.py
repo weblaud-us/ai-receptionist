@@ -75,12 +75,32 @@ class UsageEventsRepo(TenantRepo):
 
 
 class AuditLogRepo(TenantRepo):
+    """Append-only, tamper-evident (audit PRIV-10): each entry carries `seq` and an HMAC chained to
+    the previous entry's, so an edited, deleted or inserted row breaks the chain
+    (core/compliance/audit_chain.verify). The app never updates or deletes audit rows, apart from
+    deleting a whole business on offboarding."""
+
     collection = "audit_log"
 
     async def record(self, *, user_id: Optional[str], action: str, target_type: str, target_id: str = "",
                      diff: Optional[Dict[str, Any]] = None, ip: str = "") -> None:
-        await self.insert_one({"user_id": user_id, "action": action, "target_type": target_type,
-                               "target_id": target_id, "diff": diff or {}, "ip": ip, "at": utcnow()})
+        from pymongo.errors import DuplicateKeyError
+
+        from core.compliance import audit_chain
+
+        entry = audit_chain.normalise({"user_id": user_id, "action": action, "target_type": target_type,
+                                       "target_id": target_id, "diff": diff or {}, "ip": ip, "at": utcnow()})
+        for _ in range(8):                               # two writers raced for the same seq: take the next
+            last = await self.find({"seq": {"$exists": True}}, sort=[("seq", -1)], limit=1,
+                                   projection={"seq": 1, "hash": 1})
+            prev = last[0] if last else None
+            doc = audit_chain.link(self._t, entry, prev)
+            try:
+                await self.insert_one(doc)
+                return
+            except DuplicateKeyError:
+                continue
+        await self.insert_one({**entry, "chain_error": "contention"})   # never lose the entry itself
 
 
 class PhoneNumbersRepo(TenantRepo):

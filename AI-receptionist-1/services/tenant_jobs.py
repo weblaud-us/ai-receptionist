@@ -11,6 +11,8 @@ jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process
 - transcript purge — strips transcripts and per-turn rows from calls older than the tenant's
                     `agent.transcript_retention_days` (Task 2.2). The call record itself (who,
                     when, outcome, summary, usage) is kept for billing and statistics.
+- chat purge      — WhatsApp conversations, handled messages and callers' numbers on unanswered
+                    questions, on the transcript / lead retention clocks (audit PRIV-07).
 - recording purge — deletes audio stored before calls stopped being recorded (RECORDING_RETENTION_DAYS).
 - monthly report  — "your assistant this month" on the 1st (Phase 7, Task 7.3).
 - pilot report    — weekly scorecard to pilot businesses on Mondays (Phase 7, Task 7.1).
@@ -208,7 +210,7 @@ async def purge_transcripts(t: TenantConfig, now: datetime) -> int:
     if t.clinical_encryption:
         # Dental: the plaintext summary carries the same health details ("swelling on the left", or the
         # caller's own first sentence when the LLM summary failed), so it goes with the transcript.
-        fields.append("summary")
+        fields += ["summary", "summary_enc"]
     res = await Repos(get_db(), t.id).calls.update_many(
         {"status": "completed",
          "$and": [{"$or": [{f: {"$exists": True}} for f in fields if f != "turns"]},
@@ -230,6 +232,28 @@ async def purge_leads(t: TenantConfig, now: datetime) -> int:
     if deleted:
         logger.info("Deleted %d leads older than %d days for %s", deleted, days, t.id)
     return deleted
+
+
+async def purge_chats_and_messages(t: TenantConfig, now: datetime) -> int:
+    """Audit PRIV-07: the rest of what callers said, on the same clocks as calls and leads.
+    - WhatsApp conversations: deleted after agent.transcript_retention_days of no activity.
+    - Messages the team has handled: deleted after privacy.lead_retention_days (0 = keep). New ones stay.
+    - Unanswered questions: the caller's number and call are removed after the transcript period; the
+      question itself stays, it's the business's knowledge-base to-do list."""
+    repos = Repos(get_db(), t.id)
+    chat_cutoff = now - timedelta(days=t.agent.transcript_retention_days)
+    res = await repos.conversations.delete_many({"updated_at": {"$lt": chat_cutoff}})
+    done = int(getattr(res, "deleted_count", 0) or 0)
+    if t.privacy.lead_retention_days:
+        res = await repos.messages.delete_many({"status": {"$ne": "new"},
+                                                "created_at": {"$lt": now - timedelta(days=t.privacy.lead_retention_days)}})
+        done += int(getattr(res, "deleted_count", 0) or 0)
+    res = await repos.unanswered.update_many({"created_at": {"$lt": chat_cutoff}, "caller_phone": {"$nin": [None, ""]}},
+                                             {"$set": {"caller_phone": None, "call_id": None}})
+    done += int(getattr(res, "modified_count", 0) or 0)
+    if done:
+        logger.info("Retention: removed or anonymised %d chats, messages and questions for %s", done, t.id)
+    return done
 
 
 # ── recording retention (Phase 6) ────────────────────────────────────────────
@@ -303,7 +327,7 @@ async def maybe_send_pilot_report(t: TenantConfig, now: datetime) -> bool:
 async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
     stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
-             "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0,
+             "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0, "chats_purged": 0,
              "recall_texts": 0, "pms_rollbacks": 0, "escalations": 0,
              "confirmation_calls": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
@@ -315,6 +339,7 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
                           ("reminders", send_reminders(t, now)),
                           ("digests", maybe_send_digest(t, now, raw_docs.get(t.id, {}))),
                           ("purged", purge_transcripts(t, now)), ("leads_purged", purge_leads(t, now)),
+                          ("chats_purged", purge_chats_and_messages(t, now)),
                           ("recordings_deleted", purge_recordings(t, now)),
                           ("monthly_reports", maybe_send_monthly_report(t, now)),
                           ("pilot_reports", maybe_send_pilot_report(t, now)),

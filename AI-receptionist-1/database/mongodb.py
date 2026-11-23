@@ -277,6 +277,9 @@ async def _create_tenant_indexes(db: AsyncIOMotorDatabase):
     ])
     await db.audit_log.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("at", DESCENDING)]),
+        # The hash chain (PRIV-10): one row per position, so two writers can't both take seq N.
+        IndexModel([("tenant_id", ASCENDING), ("seq", ASCENDING)], unique=True,
+                   partialFilterExpression={"seq": {"$exists": True}}, name="uniq_tenant_audit_seq"),
     ])
     await db.password_resets.create_indexes([
         IndexModel([("token_hash", ASCENDING)], unique=True),
