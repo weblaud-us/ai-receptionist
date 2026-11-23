@@ -358,8 +358,8 @@ async def handle_event(db: Any, event: Dict[str, Any]) -> Dict[str, Any]:
         row = await db.stripe_events.find_one({"_id": event_id}) or {}
         if row.get("status") != "processing":
             return {"status": "duplicate", "type": kind}
-        claimed = row.get("claimed_at") or row.get("received_at")
-        if claimed is not None and now - aware(claimed) < PROCESSING_LEASE:
+        claimed = aware(row.get("claimed_at") or row.get("received_at"))
+        if claimed is not None and now - claimed < PROCESSING_LEASE:
             raise InProgress(event_id)
         # The process that claimed it died mid-way: take the claim over (only one retry can).
         taken = await db.stripe_events.update_one({"_id": event_id, "status": "processing",
