@@ -246,6 +246,27 @@ async def request_json(method: str, url: str, *, headers: Dict[str, str], auth: 
                        params: Any = None, json_body: Any = None, write: bool = False) -> Any:
     """One diary request. GET: one retry on a 5xx / timeout, honouring a short 429 Retry-After.
     Writes: a single attempt (the provider decides whether a retry is safe). Raises PMSError."""
+    from urllib.parse import urlparse
+
+    from core.resilience import breaker
+
+    circuit = breaker(f"pms:{urlparse(url).netloc}")      # audit SRE-08: one per diary host (shard)
+    if not circuit.allow():
+        raise PMSError("the diary isn't answering right now")
+    try:
+        out = await _request_json(method, url, headers=headers, auth=auth, params=params, json_body=json_body,
+                                  write=write)
+    except PMSError as e:
+        # Only an outage counts: timeouts, connection errors, 5xx. Not a practice's own 4xx / 429.
+        if e.transient and (e.status is None or e.status >= 500):
+            circuit.failure()
+        raise
+    circuit.success()
+    return out
+
+
+async def _request_json(method: str, url: str, *, headers: Dict[str, str], auth: Any = None,
+                        params: Any = None, json_body: Any = None, write: bool = False) -> Any:
     timeout = httpx.Timeout(WRITE_TIMEOUT_S if write else READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
     attempts = 1 if write else 2
     last: Optional[PMSError] = None

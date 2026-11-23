@@ -440,3 +440,56 @@ async def test_a_whatsapp_message_that_failed_is_retried_and_one_that_worked_is_
     assert handled == ["wamid.A", "wamid.B"]                               # A once, B on the retry
     await mh._handle_webhook_payload(payload, raise_errors=True)
     assert handled == ["wamid.A", "wamid.B"]                               # Meta resending changes nothing
+
+
+# ── Audit SRE-08: circuit breakers ─────────────────────────────────────────
+
+def test_circuit_opens_after_repeated_failures_then_tries_once():
+    from core.resilience import CircuitBreaker
+
+    b = CircuitBreaker("x", failures=3, window_s=60, open_s=30)
+    for t in (0, 1, 2):
+        assert b.allow(now=t)
+        b.failure(now=t)
+    assert b.open and not b.allow(now=10)                 # fail fast while open
+    assert b.allow(now=33) and not b.allow(now=33)         # one trial call after open_s
+    b.failure(now=34)
+    assert not b.allow(now=40) and b.allow(now=65)          # still down: open again, then another trial
+    b.success()
+    assert not b.open and b.allow(now=66)
+
+
+async def test_a_diary_outage_fails_fast_instead_of_making_callers_wait(monkeypatch):
+    import httpx
+
+    from core.services import scheduling_provider as sp
+
+    calls: list = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        return httpx.Response(503)
+
+    monkeypatch.setattr(sp, "TRANSPORT", httpx.MockTransport(handler))
+    for _ in range(3):                                    # 3 requests × 2 tries = 6 failures recorded as 3
+        with pytest.raises(sp.PMSError):
+            await sp.request_json("GET", "https://api.au1.cliniko.com/v1/x", headers={})
+    before = len(calls)
+    for _ in range(2):
+        with pytest.raises(sp.PMSError):
+            await sp.request_json("GET", "https://api.au1.cliniko.com/v1/x", headers={})
+    for _ in range(3):
+        with pytest.raises(sp.PMSError, match="isn't answering"):
+            await sp.request_json("GET", "https://api.au1.cliniko.com/v1/x", headers={})
+    assert len(calls) == before + 4                        # the last three never reached the network
+
+
+async def test_a_practices_own_bad_key_doesnt_trip_the_circuit(monkeypatch):
+    import httpx
+
+    from core.services import scheduling_provider as sp
+
+    monkeypatch.setattr(sp, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(401)))
+    for _ in range(8):
+        with pytest.raises(sp.PMSError, match="credentials"):
+            await sp.request_json("GET", "https://api.uk1.cliniko.com/v1/x", headers={})

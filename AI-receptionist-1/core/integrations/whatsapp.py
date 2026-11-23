@@ -117,13 +117,23 @@ async def send_message(to: str, payload: Dict[str, Any], phone_number_id: Option
     if len(dest) < 7:
         return SendResult(False, error="That phone number looks incomplete — include the country code.")
     body = {"messaging_product": "whatsapp", "to": dest, **payload}
+    from core.resilience import breaker
+
+    circuit = breaker("whatsapp")                   # audit SRE-08: Meta down → fail fast, don't queue up 20 s waits
+    if not circuit.allow():
+        return SendResult(False, error="WhatsApp isn't answering right now. Try again in a minute.")
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(f"{base_url()}/{pnid}/messages", json=body,
                                      headers={"Authorization": f"Bearer {token}"})
     except Exception:
+        circuit.failure()
         logger.error("WhatsApp send to %s errored", mask_phone(to), exc_info=True)
         return SendResult(False, error="Couldn't reach WhatsApp. Try again in a moment.")
+    if resp.status_code >= 500:
+        circuit.failure()
+    else:
+        circuit.success()
     if resp.status_code >= 400:
         code, msg = parse_error(resp)
         logger.error("WhatsApp send to %s failed: HTTP %s code=%s", mask_phone(to), resp.status_code, code)
