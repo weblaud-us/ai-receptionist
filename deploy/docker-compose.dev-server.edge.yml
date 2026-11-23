@@ -1,0 +1,32 @@
+# Dev server on a host where another reverse proxy already owns ports 80/443 (dev-server.sh adds
+# this file when EDGE_NETWORK is set in deploy/dev-server.env). Our Caddy stays off; the four
+# public services join that proxy's Docker network under laudline-* names, and
+# `./deploy/dev-server.sh edge-setup` adds a site file to that proxy and gets the certificate.
+
+services:
+  caddy:
+    profiles: ["own-proxy"]          # never started here: the host's proxy serves 80/443
+
+  api:
+    networks:
+      edge: { aliases: [laudline-api] }
+
+  dashboard:
+    networks:
+      default: {}
+      edge: { aliases: [laudline-app] }
+
+  platform-dashboard:
+    networks:
+      default: {}
+      edge: { aliases: [laudline-admin] }
+
+  landing:
+    networks:
+      default: {}
+      edge: { aliases: [laudline-site] }
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:?set EDGE_NETWORK}

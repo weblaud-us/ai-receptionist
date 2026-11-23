@@ -201,3 +201,17 @@ rebuild too.
 
 **4. Point the providers at it.** LiveKit, Twilio, Meta and Google OAuth callbacks use
 `https://<API_DOMAIN>/…`, the same paths as in [docs/TELEPHONY_TESTING.md](../docs/TELEPHONY_TESTING.md).
+
+**Host already has a reverse proxy on 80/443** (e.g. another project's nginx container)? Don't
+start our Caddy; fill in the `EDGE_*` block in `deploy/dev-server.env`: the proxy's Docker network
+and container, the host folder it includes `*.conf` from, and its certbot volumes. Then:
+
+```bash
+./deploy/dev-server.sh               # our services join that network as laudline-api/-app/-admin/-site
+./deploy/dev-server.sh edge-setup    # adds laudline.conf to that nginx, gets the certificate, reloads
+```
+
+`edge-setup` runs `nginx -t` before each reload and removes our file again if the test fails, so
+the proxy's own sites keep working. The upstreams are resolved per request, so that nginx also
+still reloads while this stack is down. `./deploy/dev-server.sh edge-remove` takes our site out.
+The certificate lives in the proxy's certbot volume, so its existing renewal renews ours too.
