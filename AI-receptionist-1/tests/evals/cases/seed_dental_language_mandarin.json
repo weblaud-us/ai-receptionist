@@ -71,6 +71,6 @@
     "你好，我想预约下周洗牙，可以吗？"
   ],
   "expect": {
-    "intent": "Replies in Mandarin Chinese (not English), warmly, and moves the booking forward: asks which day or time suits, or checks availability."
+    "intent": "Replies in Mandarin Chinese (not English), warmly, and moves the booking forward with one booking question (for example new or existing patient, or which day or time suits) or by checking availability."
   }
 }
