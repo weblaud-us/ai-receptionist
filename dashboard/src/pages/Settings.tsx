@@ -7,6 +7,7 @@ import { HoursEditor } from '@receptionist/shared/components/hours-editor'
 import { IntegrationsPanel } from '@/components/app/integrations-card'
 import { RecallCard } from '@/components/app/recall-card'
 import { OnCallCard } from '@/components/app/on-call-card'
+import { ConfirmationCallsCard } from '@/components/app/confirmation-calls-card'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Badge } from '@receptionist/shared/components/ui/badge'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -29,8 +30,9 @@ import { useDraft } from '@/lib/use-draft'
 
 type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'address' | 'timezone' | 'currency' | 'hours' |
   'scheduling' | 'policies' | 'notifications' | 'hotel' | 'answering_mode' | 'dental' | 'missed_call_recovery' |
-  'legal_entity' | 'escalation'>
+  'legal_entity' | 'escalation' | 'confirmation_calls'>
 
+const CONFIRMATION_DEFAULTS = { enabled: false, window: '10:00-18:00', only_without_whatsapp: true }
 const ESCALATION_DEFAULTS = { enabled: false, on_call: [], ack_minutes: 10 }
 const DENTAL_DEFAULTS = { accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false }
 const RECOVERY_DEFAULTS = { enabled: false, template: '', channel: 'sms' as const }
@@ -146,6 +148,7 @@ function BusinessTab() {
     name: t.name, description: t.description, phone: t.phone, website: t.website, address: t.address, timezone: t.timezone,
     currency: t.currency, hours: t.hours, scheduling: t.scheduling, policies: t.policies, notifications: t.notifications, hotel: t.hotel,
     answering_mode: t.answering_mode ?? 'all_calls',
+    ...(ctx.vertical.uses_scheduling ? { confirmation_calls: t.confirmation_calls ?? CONFIRMATION_DEFAULTS } : {}),
     ...(ctx.vertical.key === 'dental' ? {
       dental: t.dental ?? DENTAL_DEFAULTS,
       missed_call_recovery: t.missed_call_recovery ?? RECOVERY_DEFAULTS,
@@ -311,6 +314,10 @@ function BusinessTab() {
             </div>
           </CardContent>
         </Card>
+        {draft.confirmation_calls && (
+          <ConfirmationCallsCard value={draft.confirmation_calls} available={!!ctx.outbound_calls_available}
+            onChange={(v) => set({ confirmation_calls: v })} />
+        )}
         {draft.escalation && (
           <OnCallCard value={draft.escalation} onChange={(v) => set({ escalation: v })} example={regionFor(t.country).phoneExample} />
         )}

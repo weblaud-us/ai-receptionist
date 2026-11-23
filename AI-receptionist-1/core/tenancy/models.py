@@ -218,6 +218,14 @@ class EscalationConfig(BaseModel):
         return self.enabled and any(c.whatsapp or c.email for c in self.on_call)
 
 
+class ConfirmationCallConfig(BaseModel):
+    """Plan 2.5: a voice call the day before to confirm, move or cancel (core/services/confirmation_calls.py)."""
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    window: str = Field(default="10:00-18:00", pattern=r"^\d{2}:\d{2}-\d{2}:\d{2}$")   # business-local
+    only_without_whatsapp: bool = True       # call only when the WhatsApp reminder didn't reach them
+
+
 class SchedulingConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     min_notice_minutes: int = Field(default=120, ge=0, le=7 * 24 * 60)
@@ -636,6 +644,7 @@ class TenantConfig(BaseModel):
     emergency_instructions: str = ""
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     escalation: EscalationConfig = Field(default_factory=EscalationConfig)
+    confirmation_calls: ConfirmationCallConfig = Field(default_factory=ConfirmationCallConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
     integrations: Integrations = Field(default_factory=Integrations)
     links: Links = Field(default_factory=Links)

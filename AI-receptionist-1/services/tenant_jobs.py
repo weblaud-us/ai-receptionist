@@ -14,6 +14,7 @@ jobs worker (jobs/worker.py) when REDIS_URL is set, otherwise by the API process
 - recording purge — deletes audio stored before calls stopped being recorded (RECORDING_RETENTION_DAYS).
 - monthly report  — "your assistant this month" on the 1st (Phase 7, Task 7.3).
 - pilot report    — weekly scorecard to pilot businesses on Mondays (Phase 7, Task 7.1).
+- confirmation calls — the day before, for patients the WhatsApp reminder missed (Phase 2.5).
 - escalations     — alerts the next on-call person when an urgent call isn't acknowledged (Phase 2.3).
 - PMS rollbacks   — retries cancelling practice-diary bookings that couldn't be saved here (P0-09).
 
@@ -95,6 +96,12 @@ async def maybe_sync_pms(t: TenantConfig, now: datetime) -> bool:
         return False
     await pms_sync.sync(t)
     return True
+
+
+async def start_confirmation_calls(t: TenantConfig, now: datetime) -> int:
+    from core.services import confirmation_calls
+
+    return await confirmation_calls.run_due(t, now) if t.confirmation_calls.enabled else 0
 
 
 async def advance_escalations(t: TenantConfig, now: datetime) -> int:
@@ -297,7 +304,8 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or utcnow()
     stats = {"tenants": 0, "synced": 0, "reminders": 0, "digests": 0, "purged": 0, "recordings_deleted": 0,
              "monthly_reports": 0, "pilot_reports": 0, "pms_synced": 0, "leads_purged": 0,
-             "recall_texts": 0, "pms_rollbacks": 0, "escalations": 0}
+             "recall_texts": 0, "pms_rollbacks": 0, "escalations": 0,
+             "confirmation_calls": 0}
     raw_docs = {d["_id"]: d for d in await TenantsStore(get_db()).list(limit=10_000)}
     for t in await active_tenants():
         stats["tenants"] += 1
@@ -311,7 +319,8 @@ async def run_once(now: Optional[datetime] = None) -> Dict[str, int]:
                           ("monthly_reports", maybe_send_monthly_report(t, now)),
                           ("pilot_reports", maybe_send_pilot_report(t, now)),
                           ("pms_rollbacks", retry_pms_rollbacks(t, now)),
-                          ("escalations", advance_escalations(t, now))):
+                          ("escalations", advance_escalations(t, now)),
+                          ("confirmation_calls", start_confirmation_calls(t, now))):
             try:
                 stats[name] += int(await job)
             except Exception:

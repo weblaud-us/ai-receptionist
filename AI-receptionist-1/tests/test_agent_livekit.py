@@ -366,3 +366,30 @@ async def test_nobody_answering_a_warm_transfer_brings_the_caller_back(monkeypat
     out = await ReceptionistAgent(state)._warm_transfer(ctx, _Sip(), "Billing question")
     assert out == transfer.NO_ANSWER and state.transfer == "failed" and state.outcome != "transferred"
     assert ctx.session.input.enabled is True                     # the assistant keeps the caller
+
+
+# ── Phase 2.5: confirmation calls ──────────────────────────────────────────
+
+def test_the_confirmation_agent_only_gets_the_tools_it_needs():
+    from agent.confirm import ConfirmAgent, ConfirmCallState
+
+    state = ConfirmCallState(call_id="confirm-apt_1-1", profile=load_profile(), direction="outbound",
+                             caller_phone="+61412345678", appointment_id="apt_1")
+    agent = ConfirmAgent(state, "tomorrow at 10 30 a.m.")
+    names = {_name(t) for t in agent.tools}
+    assert {"confirm_appointment", "end_call"} <= names
+    assert names - {"confirm_appointment", "end_call"} <= {"check_availability", "reschedule_appointment",
+                                                           "cancel_appointment", "take_message"}
+    assert "book_appointment" not in names and "transfer_to_human" not in names
+    assert "they did not call you" in agent.instructions
+
+
+async def test_confirming_records_the_outcome():
+    from agent.confirm import ConfirmAgent, ConfirmCallState, status_for
+
+    state = ConfirmCallState(call_id="confirm-apt_1-1", profile=load_profile(), direction="outbound",
+                             caller_phone="+61412345678", appointment_id="apt_1", answered=True, amd="human")
+    agent = ConfirmAgent(state, "tomorrow at 10 30 a.m.")
+    assert status_for(state) == "no_decision"
+    await agent.confirm_appointment(None)
+    assert state.confirmed and status_for(state) == "confirmed"

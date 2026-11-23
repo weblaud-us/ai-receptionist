@@ -35,6 +35,13 @@ export interface AgentConfig {
   stt_keyterms?: string[]
 }
 
+/** Day-before confirmation calls (Phase 2.5). */
+export interface ConfirmationCallConfig {
+  enabled: boolean
+  window: string
+  only_without_whatsapp: boolean
+}
+
 /** Who is paged, in order, when the assistant takes an urgent dental call (Phase 2.3). */
 export interface EscalationConfig {
   enabled: boolean
@@ -129,6 +136,7 @@ export interface Tenant {
   hotel: { checkin_time: string; checkout_time: string }
   dental?: DentalSettings
   escalation?: EscalationConfig
+  confirmation_calls?: ConfirmationCallConfig
   /** One text to callers who hang up without booking (template placeholders: {business} {link} {phone}). */
   missed_call_recovery?: { enabled: boolean; template: string; channel: 'sms' | 'whatsapp' }
   /** Registered business, for AU / UK phone-number regulatory bundles. */
@@ -164,6 +172,8 @@ export interface TenantContext {
   sms_enabled?: boolean
   /** An outbound trunk is configured, so the assistant can brief staff before transferring. */
   warm_transfer_available?: boolean
+  /** An outbound trunk is configured, so the assistant can place confirmation calls. */
+  outbound_calls_available?: boolean
 }
 
 export interface VerticalInfo {
@@ -232,6 +242,8 @@ export interface Appointment {
   party_size?: number | null
   call_id?: string | null
   contact_id?: string | null
+  /** Day-before confirmation call (Phase 2.5). */
+  confirmation?: { status?: string; attempts?: number } | null
 }
 
 export interface Slot {

@@ -65,6 +65,7 @@ from agent.turn_tuning import attach_turn_tuning  # noqa: E402
 from core import concurrency  # noqa: E402
 from core.billing.usage import gate as billing_gate  # noqa: E402
 from core.phone import mask_phone  # noqa: E402
+from core.services import confirmation_calls  # noqa: E402
 from core.services.scheduling import prefetch_availability  # noqa: E402
 
 logger = logging.getLogger("agent.worker")
@@ -103,6 +104,17 @@ server = AgentServer(
     job_memory_limit_mb=settings.LIVEKIT_JOB_MEMORY_LIMIT_MB,
     prometheus_port=settings.LIVEKIT_PROMETHEUS_PORT or None,
 )
+
+
+def _job_metadata(ctx: JobContext) -> dict[str, Any]:
+    """Explicit dispatches carry JSON metadata; inbound calls carry none."""
+    import json
+
+    try:
+        meta = json.loads(ctx.job.metadata or "{}")
+    except (ValueError, AttributeError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 def _caller_attributes(participant: rtc.RemoteParticipant) -> dict[str, Any]:
@@ -221,7 +233,14 @@ def _tag_sentry(state: CallState) -> None:
 @server.rtc_session(agent_name=settings.LIVEKIT_AGENT_NAME)
 async def entrypoint(ctx: JobContext) -> None:
     call_id_var.set(ctx.room.name)
+    meta = _job_metadata(ctx)
     await ctx.connect()                       # no database work before this line
+    if meta.get("kind") == confirmation_calls.KIND:    # plan 2.5: an outbound confirmation call, not a caller
+        await ensure_db()
+        from agent.confirm import run_confirmation
+
+        await run_confirmation(ctx, meta)
+        return
     db_ready = asyncio.create_task(ensure_db())
     participant = await ctx.wait_for_participant()
     caller = _caller_attributes(participant)

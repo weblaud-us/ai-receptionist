@@ -102,6 +102,9 @@ export default function Appointments() {
                         <span className="text-muted-foreground">{a.resource_name}</span>
                         <Badge variant="secondary" className="border-0">{a.source === 'voice' ? 'AI call' : a.source === 'whatsapp' ? 'WhatsApp' : titleCase(a.source)}</Badge>
                         <Badge variant="secondary" className={cn('border-0', APPOINTMENT_STYLE[a.status])}>{titleCase(a.status)}</Badge>
+                        {a.status !== 'cancelled' && a.confirmation?.status && CONFIRMATION_LABEL[a.confirmation.status] && (
+                          <span className="text-xs text-muted-foreground">{CONFIRMATION_LABEL[a.confirmation.status]}</span>
+                        )}
                         <Button size="xs" variant="outline" title="See reason, notes, call summary and patient history"
                           onClick={() => setViewingId(a.appointment_id)}><FileText /> Details</Button>
                         {a.status === 'confirmed' && (
@@ -199,6 +202,13 @@ function ChangeResourceDialog({ appointment, onClose }: { appointment: Appointme
       </DialogContent>
     </Dialog>
   )
+}
+
+/** What the day-before confirmation call found (Phase 2.5). */
+const CONFIRMATION_LABEL: Record<string, string> = {
+  calling: 'Calling to confirm…', confirmed: 'Confirmed by phone', rescheduled: 'Moved on the confirmation call',
+  cancelled: 'Cancelled on the confirmation call', voicemail: 'Voicemail left', no_answer: 'No answer to confirmation call',
+  no_decision: 'Answered, not confirmed', failed: "Confirmation call didn't go through",
 }
 
 /** How many days the picker loads at once. Matches the API's `days` cap. */
