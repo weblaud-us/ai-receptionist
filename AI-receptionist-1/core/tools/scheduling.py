@@ -37,7 +37,8 @@ SCHEDULING_TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {
             "service": {"type": "string", "description": "The service wanted, as the caller said it"},
             "date": {"type": "string", "description": "Requested day, YYYY-MM-DD (business-local)"},
-            "time": {"type": "string", "description": "Requested time HH:MM, 24-hour, if any"},
+            "time": {"type": "string", "description": ("Requested time HH:MM, 24-hour, if any. For a part of the day "
+                                                       "use morning 09:00, afternoon 13:00, evening 17:00")},
             "date_to": {"type": "string", "description": "Last acceptable day YYYY-MM-DD, for 'any day this week'"},
             "resource": {"type": "string", "description": "Preferred staff member / table / room, or 'anyone'"},
             "party_size": {"type": "integer", "description": "Restaurants: number of people"},

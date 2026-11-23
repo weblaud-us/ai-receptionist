@@ -241,8 +241,10 @@ def voice_language_text(t: TenantConfig) -> str:
         return ("# Languages\nCallers may speak any language. Answer in the language they use, and keep "
                 "names, dates, times and prices especially clear.")
     return ("# Languages\nYour voice can only speak English, whatever the general rules say. If a caller speaks "
-            "another language, answer in short, slow, simple English. If they still struggle, take a message "
-            "with take_message, noting which language they speak, so someone can call them back.")
+            "another language, start with one short sentence saying you can only speak English, then use short, slow, "
+            "simple English: say what you understood and offer the "
+            "next step plainly (for example, \"I can book that for you\"). Also offer to take a message, noting "
+            "which language they speak, so someone can call them back; use take_message if they'd prefer that.")
 
 
 def fence_owner_text(text: str) -> str:

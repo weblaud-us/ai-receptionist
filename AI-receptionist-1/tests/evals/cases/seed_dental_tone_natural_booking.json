@@ -69,7 +69,7 @@
     "I'm an existing patient. Any afternoon works."
   ],
   "expect": {
-    "intent": "Uses check_availability and offers at most three specific times in natural spoken words (no lists, no markdown, no slot ids), in one or two short sentences, ending with one clear question about which time suits.",
+    "intent": "Offers one to three specific appointment times from around midday onwards (not early morning), as one or two short spoken sentences (clock times like '2:30 p.m.' are fine; no bullet points, numbered lists, markdown or slot ids), and ends by asking which time suits (also offering to look at other times is fine).",
     "must_call": [
       "check_availability"
     ],

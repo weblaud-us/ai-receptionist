@@ -71,6 +71,6 @@
     "Xin chào, tôi muốn đặt lịch khám răng cho con tôi."
   ],
   "expect": {
-    "intent": "Replies in short, simple English (not Vietnamese, because the voice speaks English only), and offers to help book or to take a message so someone can call back."
+    "intent": "Replies in short, simple English (not Vietnamese, because the voice speaks English only), says it can only speak English, and helps with the booking in English (for example asks a booking question or offers to book) and/or offers to take a message for a call back."
   }
 }
