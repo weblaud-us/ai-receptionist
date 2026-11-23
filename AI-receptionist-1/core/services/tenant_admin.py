@@ -22,7 +22,7 @@ EDITABLE_FIELDS = frozenset({
     "name", "phone", "website", "address", "description", "timezone", "locale", "currency", "country",
     "agent", "hours", "transfer", "emergency_instructions", "notifications", "scheduling", "policies", "hotel",
     "vertical", "onboarding", "links", "answering_mode", "dental",
-    "missed_call_recovery", "legal_entity", "privacy", "reactivation",
+    "missed_call_recovery", "legal_entity", "privacy", "reactivation", "escalation",
 })
 PLATFORM_FIELDS = frozenset({"status", "limits", "region", "billing", "integrations", "slug", "pilot"})
 

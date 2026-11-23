@@ -296,3 +296,73 @@ async def test_worker_enforces_the_per_business_call_limit(redis):
     assert await worker._line_free(one)
     assert not await worker._line_free(two)
     assert await worker._line_free(_state())          # the legacy .env hotel has no plan limit
+
+
+# ── Phase 2.2: warm transfer ───────────────────────────────────────────────
+
+class _IO:
+    def __init__(self):
+        self.enabled = True
+
+    def set_audio_enabled(self, on):
+        self.enabled = on
+
+
+class _TransferCtx:
+    def __init__(self):
+        class Session:
+            input = _IO()
+            output = _IO()
+        self.session = Session()
+
+
+class _Sip:
+    attributes = {"sip.trunkPhoneNumber": "+61290000000"}
+
+
+def _fake_task(monkeypatch, *, fail: bool):
+    import livekit.agents.beta.workflows as wf
+    from livekit.agents.llm.tool_context import ToolError
+
+    seen: dict = {}
+
+    class FakeWarmTransfer:
+        def __init__(self, sip_call_to=None, **kw):
+            seen.update(kw, sip_call_to=sip_call_to)
+
+        def __await__(self):
+            async def run():
+                if fail:
+                    raise ToolError("could not dial human agent")
+                return object()
+            return run().__await__()
+
+    monkeypatch.setattr(wf, "WarmTransferTask", FakeWarmTransfer)
+    return seen
+
+
+async def test_a_warm_transfer_briefs_staff_then_the_assistant_goes_quiet(monkeypatch):
+    from agent import transfer
+
+    monkeypatch.setattr(settings, "LIVEKIT_SIP_OUTBOUND_TRUNK_ID", "ST_abc")
+    seen = _fake_task(monkeypatch, fail=False)
+    state = _state()
+    agent = ReceptionistAgent(state)
+    ctx = _TransferCtx()
+    out = await agent._warm_transfer(ctx, _Sip(), "Wants to discuss an invoice")
+    assert out == transfer.CONNECTED and state.transfer == "ok" and state.outcome == "transferred"
+    assert seen["sip_trunk_id"] == "ST_abc" and seen["sip_number"] == "+61290000000"
+    assert seen["ringing_timeout"] == transfer.RINGING_TIMEOUT_S
+    assert ctx.session.input.enabled is False and ctx.session.output.enabled is False
+
+
+async def test_nobody_answering_a_warm_transfer_brings_the_caller_back(monkeypatch):
+    from agent import transfer
+
+    monkeypatch.setattr(settings, "LIVEKIT_SIP_OUTBOUND_TRUNK_ID", "ST_abc")
+    _fake_task(monkeypatch, fail=True)
+    state = _state()
+    ctx = _TransferCtx()
+    out = await ReceptionistAgent(state)._warm_transfer(ctx, _Sip(), "Billing question")
+    assert out == transfer.NO_ANSWER and state.transfer == "failed" and state.outcome != "transferred"
+    assert ctx.session.input.enabled is True                     # the assistant keeps the caller

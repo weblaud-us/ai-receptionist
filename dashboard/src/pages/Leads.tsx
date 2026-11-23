@@ -12,7 +12,7 @@ import { timeAgo } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
 import { useTenant } from '@/lib/tenant'
 import { formatMinor, URGENCY_STYLE, zoneDateTime } from '@/lib/tenant-format'
-import { useLeads, useUpdateLead } from '@/lib/tenant-hooks'
+import { useAckEscalation, useLeads, useUpdateLead } from '@/lib/tenant-hooks'
 import type { Lead, Tenant } from '@/lib/tenant-types'
 
 type Status = Lead['status']
@@ -241,6 +241,8 @@ function LeadRow({ lead: l, tenant, statusLabel }: { lead: Lead; tenant: Tenant;
           )}
         </div>
 
+        {l.escalation_id && l.escalation_status && <EscalationLine lead={l} />}
+
         {l.red_flag && (
           <div className="flex items-start gap-2 rounded-md bg-red-100 px-3 py-2 text-sm text-red-800 dark:bg-red-500/15 dark:text-red-300">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -279,5 +281,24 @@ function LeadRow({ lead: l, tenant, statusLabel }: { lead: Lead; tenant: Tenant;
           options={STATUSES.map((s) => ({ value: s, label: statusLabel[s] }))} />
       </div>
     </li>
+  )
+}
+
+/** Who's been paged about this urgent call, and a way to stop the paging. */
+function EscalationLine({ lead }: { lead: Lead }) {
+  const ack = useAckEscalation()
+  if (lead.escalation_status === 'acknowledged') {
+    return <p className="text-sm text-emerald-700 dark:text-emerald-400">On-call: {lead.escalation_acked_by || 'someone'} is handling it.</p>
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+      {lead.escalation_status === 'unacknowledged'
+        ? 'Nobody on call has said they’re handling this yet. You were alerted too.'
+        : 'Alerting the on-call list until someone says they’re handling it.'}
+      <Button size="sm" variant="outline" disabled={ack.isPending}
+        onClick={() => ack.mutate(lead.escalation_id!, { onSuccess: () => toast.success('Marked as yours. Nobody else will be alerted.') })}>
+        I’m handling it
+      </Button>
+    </div>
   )
 }

@@ -368,8 +368,8 @@ def test_plans_are_priced_in_the_business_currency():
     assert growth.monthly_revenue_usd("GBP") == round(plans.PRICE_BOOK["GBP"]["growth"] * plans.USD_PER_UNIT["GBP"], 2)
 
 
-def test_no_plan_sells_warm_transfer_until_it_is_built():
-    """Warm transfer isn't implemented (transfers are blind SIP REFER): no plan may promise it."""
+def test_no_plan_sells_warm_transfer_until_it_is_proven():
+    """Warm transfer is built (agent/transfer.py) but not yet tested on a live trunk: no plan may promise it."""
     for p in plans.PLANS.values():
         assert not p.warm_transfer
         assert not any("warm" in f.lower() for f in p.features) and "warm" not in p.tagline.lower()

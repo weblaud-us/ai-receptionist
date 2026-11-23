@@ -205,6 +205,13 @@ async def triage_dental_emergency(ctx: "ToolContext", args: Dict[str, Any]) -> D
             "Urgent dental problem" if urgent else "Dental problem")
         text = f"{'🔴 ' if urgent else ''}{label}\nFrom: {lead['name']} — {phone or 'no number'}\n\n{noted or NO_CONSENT_NOTE}"
         fire(notify_owner(t, "on_message", text, subject="Urgent dental call", urgent=urgent))
+        if urgent and t.escalation.active():
+            from core.services import escalation as on_call
+
+            # Phase 2.3: on top of the owner alert, page the on-call list until someone acknowledges.
+            fire(on_call.start(t, lead_id=lead_id, call_id=ctx.call_id, severity=severity,
+                                  headline=label, now=ctx.now,
+                                  details=f"From: {lead['name']} — {phone or 'no number'}\n{noted or NO_CONSENT_NOTE}"))
         _emit(ctx, lead_id, "dental_emergency", lead)
     logger.info("Dental triage lead %s (%s)", lead_id, severity)
     out: Dict[str, Any] = {"success": True, "lead_id": lead_id, "escalation": escalation, "message": guidance}

@@ -39,6 +39,7 @@ TENANT_COLLECTIONS = (
     "bookings", "room_nights", "guests", "call_sessions", "invites", "number_orders",
     # Phase 6/7. `dsr_requests` is kept on purpose: proof that requests were handled (masked, no personal data).
     "consent_events", "owner_feedback", "call_reviews", "eval_cases", "wa_outbox", "pms_compensations",
+    "escalations",
 )
 EXPORT_KINDS = ("calls.csv", "transcripts.json", "contacts.csv", "appointments.csv", "appointments.ics",
                 "messages.csv")

@@ -135,9 +135,9 @@ PLANS: Dict[str, Plan] = {
         max_concurrent_calls=3, tagline="Calendar booking, SMS confirmations, summaries", recommended=True,
         features=("400 minutes / month", "Books appointments into your calendar", "SMS confirmations",
                   "Call summaries", "2 dashboard users")),
-    # Warm transfer (the AI briefs a staff member before connecting the caller) isn't built yet:
-    # don't sell it. Set warm_transfer=True and put "Warm transfer" back in the features once
-    # agent/receptionist.py supports TransferConfig.warm.
+    # Warm transfer (the AI briefs a staff member before connecting the caller) is built
+    # (agent/transfer.py, TransferConfig.warm, needs LIVEKIT_SIP_OUTBOUND_TRUNK_ID) but not yet tested
+    # on a live trunk: don't sell it until it is. Then set warm_transfer=True and add it to features.
     "pro": Plan(
         key="pro", name="Pro", monthly_usd=299, included_minutes=1000, max_users=5, max_numbers=3,
         max_concurrent_calls=5, tagline="Several staff and resources, call transfers",

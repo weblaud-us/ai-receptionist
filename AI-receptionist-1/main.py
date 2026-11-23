@@ -72,6 +72,8 @@ _ROUTERS = [
     ("routers.compliance", "platform_compliance_router"),  # Phase 6: request log, opt-outs
     ("routers.launch", "launch_router"),              # Phase 7: results report, owner feedback
     ("routers.launch", "platform_launch_router"),     # Phase 7: pilots, transcript review, eval cases, margins
+    ("routers.escalations", "escalations_router"),          # Plan 2.3: on-call escalation (dashboard)
+    ("routers.escalations", "public_escalations_router"),   # Plan 2.3: acknowledge link from the alert
 ]
 
 

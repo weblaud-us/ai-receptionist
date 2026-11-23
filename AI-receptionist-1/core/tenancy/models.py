@@ -200,6 +200,24 @@ class NotificationsConfig(BaseModel):
     monthly_report: bool = True              # "your assistant this month" (Phase 7)
 
 
+class OnCallContact(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(default="", max_length=80)
+    whatsapp: str = Field(default="", max_length=20)     # E.164; WhatsApp alerts go here
+    email: str = Field(default="", max_length=200)
+
+
+class EscalationConfig(BaseModel):
+    """Phase 2.3: an urgent dental call alerts the on-call list in order until someone acknowledges."""
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    on_call: List[OnCallContact] = Field(default_factory=list, max_length=5)
+    ack_minutes: int = Field(default=10, ge=2, le=60)    # wait this long before trying the next person
+
+    def active(self) -> bool:
+        return self.enabled and any(c.whatsapp or c.email for c in self.on_call)
+
+
 class SchedulingConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     min_notice_minutes: int = Field(default=120, ge=0, le=7 * 24 * 60)
@@ -617,6 +635,7 @@ class TenantConfig(BaseModel):
     transfer: TransferConfig = Field(default_factory=TransferConfig)
     emergency_instructions: str = ""
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    escalation: EscalationConfig = Field(default_factory=EscalationConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
     integrations: Integrations = Field(default_factory=Integrations)
     links: Links = Field(default_factory=Links)

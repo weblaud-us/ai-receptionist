@@ -163,6 +163,7 @@ async def context(tp: TenantPrincipal = Depends(_member_any_status)):
                      "uses_scheduling": spec.uses_scheduling, "tools": list(spec.tools)},
         "greeting": tp.tenant.greeting_text(),
         "sms_enabled": settings.SMS_ENABLED,           # the dashboard hides SMS-only options when False
+        "warm_transfer_available": bool(settings.LIVEKIT_SIP_OUTBOUND_TRUNK_ID),   # needs an outbound trunk
     }
 
 

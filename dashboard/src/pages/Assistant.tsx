@@ -191,6 +191,19 @@ export default function Assistant() {
                 onCheckedChange={(v) => setDraft({ ...draft, transfer: { ...draft.transfer, only_during_hours: v } })} />
               Only transfer while we're open
             </label>
+            {ctx.warm_transfer_available && (
+              <label className="flex items-start gap-2 text-sm">
+                <Switch checked={draft.transfer.warm} disabled={!draft.transfer.number}
+                  onCheckedChange={(v) => setDraft({ ...draft, transfer: { ...draft.transfer, warm: v } })} />
+                <span>
+                  Brief staff before connecting
+                  <span className="block text-xs text-muted-foreground">
+                    The assistant rings your line first and tells whoever answers who's calling and why, while the caller
+                    hears hold music. If nobody picks up, it offers to take a message.
+                  </span>
+                </span>
+              </label>
+            )}
             <Field label="Emergency instructions" hint={emergencyExample(dental, region.emergency)}>
               <Textarea rows={2} value={draft.emergency_instructions} onChange={(e) => setDraft({ ...draft, emergency_instructions: e.target.value })} />
             </Field>

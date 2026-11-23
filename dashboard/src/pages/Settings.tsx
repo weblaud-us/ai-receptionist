@@ -6,6 +6,7 @@ import { ErrorBanner, Field, KeyValue, PageHeader } from '@receptionist/shared/c
 import { HoursEditor } from '@receptionist/shared/components/hours-editor'
 import { IntegrationsPanel } from '@/components/app/integrations-card'
 import { RecallCard } from '@/components/app/recall-card'
+import { OnCallCard } from '@/components/app/on-call-card'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Badge } from '@receptionist/shared/components/ui/badge'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -23,12 +24,14 @@ import { useCtx, useTenant } from '@/lib/tenant'
 import { CURRENCIES, TIMEZONES } from '@/lib/tenant-format'
 import { useAudit, useUpdateSettings } from '@/lib/tenant-hooks'
 import type { Tenant } from '@/lib/tenant-types'
+import { regionFor } from '@/lib/region'
 import { useDraft } from '@/lib/use-draft'
 
 type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'address' | 'timezone' | 'currency' | 'hours' |
   'scheduling' | 'policies' | 'notifications' | 'hotel' | 'answering_mode' | 'dental' | 'missed_call_recovery' |
-  'legal_entity'>
+  'legal_entity' | 'escalation'>
 
+const ESCALATION_DEFAULTS = { enabled: false, on_call: [], ack_minutes: 10 }
 const DENTAL_DEFAULTS = { accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false }
 const RECOVERY_DEFAULTS = { enabled: false, template: '', channel: 'sms' as const }
 const ENTITY_DEFAULTS = { registered_name: '', abn: '', company_number: '' }
@@ -147,6 +150,7 @@ function BusinessTab() {
       dental: t.dental ?? DENTAL_DEFAULTS,
       missed_call_recovery: t.missed_call_recovery ?? RECOVERY_DEFAULTS,
       legal_entity: t.legal_entity ?? ENTITY_DEFAULTS,
+      escalation: t.escalation ?? ESCALATION_DEFAULTS,
     } : {}),
   })
   const [newPolicy, setNewPolicy] = useState('')
@@ -307,6 +311,9 @@ function BusinessTab() {
             </div>
           </CardContent>
         </Card>
+        {draft.escalation && (
+          <OnCallCard value={draft.escalation} onChange={(v) => set({ escalation: v })} example={regionFor(t.country).phoneExample} />
+        )}
       </fieldset>
       {ctx.vertical.key === 'dental' && !ctx.legacy && ctx.sms_enabled !== false && (
         <div className="grid gap-4 lg:grid-cols-2"><RecallCard /></div>

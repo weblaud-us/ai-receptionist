@@ -21,10 +21,12 @@ from livekit.agents import Agent, ModelSettings, RunContext, function_tool, get_
 from livekit.agents import llm as lk_llm
 
 from agent import greeting
+from agent import transfer as warm
 from agent.prompt import build_voice_prompt
 from agent.speech import clean_stream
 from agent.state import CallState
 from agent.tools import shared_tools
+from config import settings
 from core.phone import mask_phone
 from core.tools.hotel import run_in_background
 
@@ -119,6 +121,8 @@ class ReceptionistAgent(Agent):
         await context.wait_for_playout()  # "connecting you now" finishes first
         logger.info("Transferring call %s to %s (%s)", self.state.call_id,
                     mask_phone(profile.transfer_number), reason[:120])
+        if warm.warm_enabled(profile.tenant.transfer.warm):
+            return await self._warm_transfer(context, sip, reason)
         try:
             await job.api.sip.transfer_sip_participant(api.TransferSIPParticipantRequest(
                 room_name=job.room.name,
@@ -134,6 +138,38 @@ class ReceptionistAgent(Agent):
         self.state.set_outcome("transferred", override=True)
         self.state.ended_reason = "transferred"
         return "Transferred. The call has left you; say nothing more."
+
+
+    async def _warm_transfer(self, context: RunContext, sip: rtc.RemoteParticipant, reason: str) -> str:
+        """Ring the practice, brief the staff member while the caller is on hold, then join them."""
+        from livekit.agents.beta.workflows import WarmTransferTask, WorkflowInstructions
+        from livekit.agents.types import NOT_GIVEN
+
+        profile = self.state.profile
+        clinic_line = str((sip.attributes or {}).get("sip.trunkPhoneNumber") or "")   # staff see the practice line
+        try:
+            await WarmTransferTask(
+                sip_call_to=profile.transfer_number,
+                sip_trunk_id=settings.LIVEKIT_SIP_OUTBOUND_TRUNK_ID,
+                ringing_timeout=warm.RINGING_TIMEOUT_S,
+                chat_ctx=self.chat_ctx,
+                instructions=WorkflowInstructions(extra=warm.brief_instructions(
+                    agent_name=profile.agent_name, business=profile.business_name, reason=reason[:300],
+                    emergency="triage_dental_emergency" in self.state.tools_used)),
+                sip_number=clinic_line or NOT_GIVEN,
+            )
+        except Exception as e:            # ToolError: no answer, declined, voicemail, or dialling failed
+            logger.info("Warm transfer for call %s didn't connect: %s", self.state.call_id, e)
+            self.state.transfer = "failed"
+            return warm.NO_ANSWER
+        self.state.transfer = "ok"
+        self.state.set_outcome("transferred", override=True)
+        self.state.ended_reason = "transferred"
+        # The staff member is now in this room with the caller. Closing our session would delete
+        # the room (and the call), so stay, but deaf and silent. The room closes when either leaves.
+        context.session.input.set_audio_enabled(False)
+        context.session.output.set_audio_enabled(False)
+        return warm.CONNECTED
 
 
 class UnassignedNumberAgent(Agent):
@@ -278,6 +314,8 @@ class SilenceWatcher:
                 self._task.cancel()
 
     async def _handle(self) -> None:
+        if self.state.transfer == "ok":   # a person has the call now; the assistant is muted on purpose
+            return
         with contextlib.suppress(asyncio.CancelledError):
             handle = self.session.generate_reply(
                 instructions="The caller has gone quiet. Briefly ask if they're still there.")

@@ -246,6 +246,15 @@ export function useUpdateContact() {
   })
 }
 
+/** "I'm handling it": stops the on-call list being paged about an urgent call (Phase 2.3). */
+export function useAckEscalation() {
+  const done = useInvalidate('t-leads')
+  return useMutation({
+    mutationFn: (id: string) => api(`/t/escalations/${id}/ack`, { method: 'POST' }),
+    onSuccess: done,
+  })
+}
+
 export function useUpdateLead() {
   const done = useInvalidate('t-leads', 't-overview')
   return useMutation({

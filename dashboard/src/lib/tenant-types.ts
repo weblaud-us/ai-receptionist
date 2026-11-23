@@ -35,6 +35,13 @@ export interface AgentConfig {
   stt_keyterms?: string[]
 }
 
+/** Who is paged, in order, when the assistant takes an urgent dental call (Phase 2.3). */
+export interface EscalationConfig {
+  enabled: boolean
+  on_call: { name: string; whatsapp: string; email: string }[]
+  ack_minutes: number
+}
+
 /** Dental vertical settings (AU private health funds, UK NHS / private mix). */
 export interface DentalSettings {
   accepts_nhs: boolean
@@ -121,6 +128,7 @@ export interface Tenant {
   limits: { included_minutes: number; max_concurrent_calls: number }
   hotel: { checkin_time: string; checkout_time: string }
   dental?: DentalSettings
+  escalation?: EscalationConfig
   /** One text to callers who hang up without booking (template placeholders: {business} {link} {phone}). */
   missed_call_recovery?: { enabled: boolean; template: string; channel: 'sms' | 'whatsapp' }
   /** Registered business, for AU / UK phone-number regulatory bundles. */
@@ -154,6 +162,8 @@ export interface TenantContext {
   billing?: BillingBrief
   /** False: the platform sends no SMS, so text-only options are hidden. */
   sms_enabled?: boolean
+  /** An outbound trunk is configured, so the assistant can brief staff before transferring. */
+  warm_transfer_available?: boolean
 }
 
 export interface VerticalInfo {
@@ -286,6 +296,10 @@ export interface Lead {
   /** dental_emergency only. */
   severity?: 'life_threatening' | 'urgent' | 'routine' | null
   red_flag?: boolean | null
+  /** On-call escalation (Phase 2.3), when the practice has an on-call list. */
+  escalation_id?: string | null
+  escalation_status?: 'open' | 'acknowledged' | 'unacknowledged' | null
+  escalation_acked_by?: string | null
   /** cosmetic_consult only. */
   patient_status?: 'new' | 'existing' | 'unknown' | null
   timeframe?: 'asap' | 'within_1_month' | '1_3_months' | 'researching' | null
