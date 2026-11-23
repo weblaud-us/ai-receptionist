@@ -35,3 +35,13 @@ def test_request_id_header(client):
 def test_admin_routes_need_auth(client):
     assert client.get("/admin/stats").status_code == 401
     assert client.get("/bookings/").status_code == 401
+
+
+def test_drain_turns_readiness_off_and_only_from_inside(client, monkeypatch):
+    # Audit SRE-11. The test client's address is "testclient", not loopback: refused.
+    import main
+
+    assert client.post("/internal/drain").status_code == 404
+    monkeypatch.setattr(main, "_draining", True)
+    r = client.get("/readyz")
+    assert r.status_code == 503 and r.json()["status"] == "draining"

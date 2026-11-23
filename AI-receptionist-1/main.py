@@ -115,6 +115,12 @@ async def lifespan(app: FastAPI):
     logger.info("AI Receptionist is live on port %s", settings.PORT)
     yield
 
+    # Audit SRE-09: owner alerts and confirmations still being sent must go out before we exit.
+    from core.notifications import drain as drain_notifications
+    try:
+        await asyncio.wait_for(drain_notifications(), timeout=10)
+    except asyncio.TimeoutError:
+        logger.warning("Some notifications were still sending at shutdown")
     await dialer_loop.stop()
     await tenant_jobs.stop()
     await reminder_service.stop()
@@ -237,9 +243,27 @@ async def livez():
     return {"status": "ok"}
 
 
+_draining = False
+
+
+@app.post("/internal/drain", include_in_schema=False)
+async def drain(request: Request):
+    """Audit SRE-11: deploy.sh calls this (from inside the container) before replacing a replica.
+    /readyz then answers 503, Caddy stops sending new requests within one health interval, and the
+    requests already running finish. Loopback only."""
+    global _draining
+    if not request.client or request.client.host not in ("127.0.0.1", "::1"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    _draining = True
+    logger.info("Draining: /readyz now reports 503 so the load balancer moves traffic away")
+    return {"status": "draining"}
+
+
 @app.get("/readyz", tags=["Health"])
 async def readyz():
-    """Dependencies reachable (Mongo, and Redis when configured). 503 if any fail."""
+    """Dependencies reachable (Mongo, and Redis when configured). 503 if any fail, or while draining."""
+    if _draining:
+        return JSONResponse(status_code=503, content={"status": "draining", "checks": {}})
     checks = {}
     try:
         await asyncio.wait_for(get_db().command("ping"), timeout=1.0)

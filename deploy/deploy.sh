@@ -95,6 +95,11 @@ dc up -d --wait --no-deps jobs
 
 echo "==> [4/6] API replicas, one at a time"
 for svc in $API_REPLICAS; do
+  # Audit SRE-11: tell the running replica to drain (its /readyz turns 503), give Caddy two health
+  # intervals to stop sending it new requests, then replace it. A first deploy has nothing to drain.
+  if dc exec -T "$svc" python -c "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8002/internal/drain', method='POST'), timeout=3)" >/dev/null 2>&1; then
+    sleep 12
+  fi
   dc up -d --wait --no-deps "$svc"
 done
 if [ "$API_REPLICAS" = "api-a" ]; then

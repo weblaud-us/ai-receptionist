@@ -7,11 +7,15 @@
 	reverse_proxy api-a:8002 api-b:8002 {
 		lb_policy round_robin
 		lb_try_duration 5s
-		# A replica being restarted by a deploy fails /readyz and is skipped.
+		# A replica being restarted by a deploy drains first (/readyz → 503) and is skipped.
 		health_uri /readyz
 		health_interval 5s
 		health_timeout 3s
+		# Passive checks too (audit SRE-11): two 502/503 answers or connection errors in a row take a
+		# replica out for 10 s without waiting for the next active check.
 		fail_duration 10s
+		max_fails 2
+		unhealthy_status 502 503
 	}
 }
 
