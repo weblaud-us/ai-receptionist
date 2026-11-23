@@ -58,8 +58,11 @@ def public_guest(doc: Dict[str, Any]) -> Dict[str, Any]:
 # dental practice). `seal` replaces a field with `<field>_enc`; `unseal` restores it for the
 # screens and exports that show it. JSON inside, so lists (transcripts) round-trip.
 
-SEALABLE = ("problem", "notes", "transcript")
+SEALABLE = ("problem", "notes", "transcript", "summary")
 LEAD_TEXT_FIELDS = ("problem", "notes")
+CALL_TEXT_FIELDS = ("transcript", "summary")     # a call summary retells what the caller said (audit PRIV-08)
+HAS_SUMMARY = {"$or": [{"summary": {"$nin": [None, ""]}}, {"summary_enc": {"$exists": True}}]}
+SUMMARY_PROJECTION = {"summary": 1, "summary_enc": 1}
 
 
 def seal(doc: Dict[str, Any], fields: tuple = SEALABLE) -> Dict[str, Any]:

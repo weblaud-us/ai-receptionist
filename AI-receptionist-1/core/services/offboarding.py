@@ -86,7 +86,8 @@ async def transcripts_json(db: Any, tenant: TenantConfig) -> str:
     from core.sensitive import unseal
 
     rows = [unseal(r) for r in await _rows(db, "calls", tenant.id, sort="started_at", projection={
-        "call_id": 1, "started_at": 1, "caller_phone": 1, "transcript": 1, "transcript_enc": 1, "summary": 1})]
+        "call_id": 1, "started_at": 1, "caller_phone": 1, "transcript": 1, "transcript_enc": 1, "summary": 1,
+        "summary_enc": 1})]
     out = [{"call_id": r.get("call_id"), "started_at": _iso(r.get("started_at")), "caller_phone": r.get("caller_phone"),
             "summary": r.get("summary"),
             "transcript": [{"role": t.get("role"), "text": t.get("text"), "at": _iso(t.get("at"))}

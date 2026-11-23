@@ -1118,7 +1118,8 @@ async def list_calls(outcome: Optional[str] = Query(None, max_length=32), page: 
     total = await sdb.calls.count_documents(q)
     rows = await sdb.calls.find(q, {"transcript": 0, "turns": 0}).sort("started_at", -1) \
         .skip((page - 1) * limit).limit(limit).to_list(limit)
-    return {"calls": [_clean(r) for r in rows], "total": total, "page": page, "pages": (total + limit - 1) // limit}
+    return {"calls": [_clean(unseal(r, ("summary",))) for r in rows], "total": total, "page": page,
+            "pages": (total + limit - 1) // limit}
 
 
 @tenant_router.get("/calls/live")
@@ -1126,7 +1127,7 @@ async def live(tp: TenantPrincipal = Depends(_staff)):
     cutoff = utcnow() - timedelta(seconds=LIVE_CALL_STALE_S)
     rows = await scoped_db(tp.tenant).calls.find({"status": "in_progress", "updated_at": {"$gte": cutoff}},
                                                  {"transcript": 0, "turns": 0}).sort("started_at", -1).to_list(50)
-    return {"calls": [_clean(r) for r in rows], "total": len(rows)}
+    return {"calls": [_clean(unseal(r, ("summary",))) for r in rows], "total": len(rows)}
 
 
 @tenant_router.get("/calls/{call_id}")

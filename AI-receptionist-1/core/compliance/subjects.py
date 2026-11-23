@@ -9,7 +9,8 @@ platform admin acting on the owner's written instruction, can:
     erase(...)    delete or anonymise it (erasure)
 
 What erasure does, per collection:
-    contacts, messages, leads, conversations, guests   deleted
+    contacts, messages, leads, conversations, guests, unanswered questions, legacy call sessions,
+    WhatsApp outbox, recall rows, and on-call escalations about their leads   deleted (audit PRIV-06)
     calls          transcript, turns, summary removed; caller number replaced by a one-way hash;
                    the recording object is deleted from storage. The call row stays (date, length,
                    outcome, cost) because invoices and usage depend on it — no personal data is left.
@@ -57,8 +58,11 @@ SOURCES: Dict[str, tuple[str, tuple[str, ...]]] = {
     "guests": ("guests", ("phone",)),
     "recalls": ("recalls", ("phone",)),
     "whatsapp": ("wa_outbox", ("to",)),
+    "unanswered": ("unanswered_questions", ("caller_phone",)),
+    "call_sessions": ("call_sessions", ("phone",)),
 }
-DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls", "whatsapp")
+DELETE_KINDS = ("contacts", "messages", "leads", "conversations", "guests", "recalls", "whatsapp", "unanswered",
+                "call_sessions")
 FUTURE_STATUSES = ("confirmed", "pending")
 
 RequestKind = Literal["access", "erasure"]
@@ -149,6 +153,10 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
         raise SubjectError("This number has upcoming appointments. Cancel or move them first, or confirm "
                            "that they should be anonymised too.")
     counts: Dict[str, int] = {}
+    # Escalations carry no number of their own: they go with the person's leads.
+    lead_ids = [r["_id"] async for r in db.leads.find(_query(tenant.id, SOURCES["leads"][1], variants), {"_id": 1})]  # scoped: _query(tenant.id)
+    res = await db.escalations.delete_many({"tenant_id": tenant.id, "lead_id": {"$in": lead_ids}})  # scoped: tenant_id
+    counts["escalations"] = int(getattr(res, "deleted_count", 0) or 0)
     for kind in DELETE_KINDS:
         coll, fields = SOURCES[kind]
         res = await db[coll].delete_many(_query(tenant.id, fields, variants))  # scoped: _query(tenant.id)
@@ -163,7 +171,8 @@ async def erase(db: Any, tenant: TenantConfig, phone: str, *, include_future: bo
             recordings += 1
     res = await db.calls.update_many(calls_q, {  # scoped: calls_q has tenant_id
         "$set": {"caller_phone": hashed, "erased_at": now},
-        "$unset": {"transcript": "", "transcript_enc": "", "turns": "", "summary": "", "recording": ""}})
+        "$unset": {"transcript": "", "transcript_enc": "", "turns": "", "summary": "", "summary_enc": "",
+                   "recording": ""}})
     counts["calls"] = int(getattr(res, "modified_count", 0) or 0)
     counts["recordings"] = recordings
 

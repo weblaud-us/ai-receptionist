@@ -76,10 +76,14 @@ async def review_queue(db: Any, *, tenant_id: Optional[str] = None, days: int = 
     reviewed = {r["call_id"] for r in await db[REVIEWS].find({}, {"call_id": 1}).to_list(100_000)}
     out: List[Dict[str, Any]] = []
     cursor = db.calls.find(q, {"call_id": 1, "tenant_id": 1, "started_at": 1, "duration_s": 1, "outcome": 1,  # cross-tenant: the platform's transcript-review sample
-                               "summary": 1, "latency": 1, "tools_used": 1, "after_hours": 1}).sort("started_at", -1)
+                               "summary": 1, "summary_enc": 1, "latency": 1, "tools_used": 1,
+                               "after_hours": 1}).sort("started_at", -1)
+    from core.sensitive import unseal
+
     async for call in cursor:
         if call["call_id"] in reviewed:
             continue
+        call = unseal(call, ("summary",))
         t = tenants.get(call.get("tenant_id")) or {}
         pilot = bool((t.get("pilot") or {}).get("active"))
         if not pilot and not tenant_id and not in_sample(call["call_id"], settings.REVIEW_SAMPLE_PCT):

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from agent.state import CallState
-from core.sensitive import seal
+from core.sensitive import HAS_SUMMARY, SUMMARY_PROJECTION, seal, unseal
 from agent.summary import summarise_call
 from agent.telemetry import summarise
 from config import settings
@@ -191,8 +191,11 @@ class CallRecorder:
                                            prompt=self.state.summary_prompt)
             self.summary = summary
             if summary:
-                await Repos(get_db(), tenant_id).calls.update_one({"call_id": self.state.call_id},
-                                                                   {"$set": {"summary": summary}})
+                t = getattr(self.state.profile, "tenant", None)
+                # Audit PRIV-08: the summary retells what the caller said; sealed like the transcript.
+                sets = seal({"summary": summary}, ("summary",)) if t is not None and t.clinical_encryption \
+                    else {"summary": summary}
+                await Repos(get_db(), tenant_id).calls.update_one({"call_id": self.state.call_id}, {"$set": sets})
         except Exception:
             logger.warning("Summary for call %s failed", self.state.call_id, exc_info=True)
         await self._log_unanswered_questions(tenant_id)
@@ -324,9 +327,8 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
                                 projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
         repos.appointments.find({**by_phone, "start": {"$lt": now}}, sort=[("start", -1)], limit=3,
                                 projection={"service_name": 1, "resource_name": 1, "start": 1, "status": 1}),
-        repos.calls.find({"caller_phone": {"$in": variants}, "call_id": {"$ne": state.call_id},
-                          "summary": {"$nin": [None, ""]}},
-                         sort=[("started_at", -1)], limit=2, projection={"summary": 1, "started_at": 1}),
+        repos.calls.find({"caller_phone": {"$in": variants}, "call_id": {"$ne": state.call_id}, **HAS_SUMMARY},
+                         sort=[("started_at", -1)], limit=2, projection={**SUMMARY_PROJECTION, "started_at": 1}),
         repos.messages.find({"$or": [{"caller_phone": {"$in": variants}}, {"callback_number": {"$in": variants}}],
                              "status": "new"}, sort=[("created_at", -1)], limit=2,
                             projection={"message": 1, "created_at": 1}),
@@ -352,7 +354,8 @@ async def load_contact(state: CallState) -> Optional[dict[str, Any]]:
         "name": contact.get("name"),
         "upcoming": [_appt_line(a, tz, today) for a in upcoming],
         "past": [f"{_appt_line(a, tz, today)} ({a.get('status')})" for a in past],
-        "recent_calls": [f"{_ago(c.get('started_at'), now)}: {_clip(c.get('summary'), 200)}" for c in calls],
+        "recent_calls": [f"{_ago(c.get('started_at'), now)}: {_clip(unseal(c, ('summary',)).get('summary'), 200)}"
+                         for c in calls],
         "open_messages": [f"{_ago(m.get('created_at'), now)}: {_clip(m.get('message'), 150)}" for m in msgs],
         "open_enquiries": enquiries,
         "notes": _clip(contact.get("notes"), 400),

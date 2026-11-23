@@ -7,7 +7,7 @@ Migration 0005 — encrypt clinical free text at rest (dental, UK GDPR Art. 9 / 
 For every business with clinical encryption (all dental practices, and anyone who turned
 `privacy.encrypt_clinical_text` on):
 - leads: plaintext `problem` / `notes` → `problem_enc` / `notes_enc`;
-- calls: a plaintext `transcript` → `transcript_enc`.
+- calls: a plaintext `transcript` / `summary` → `transcript_enc` / `summary_enc` (summary: audit PRIV-08).
 New data is written encrypted already (core/tools/dental.py, agent/persistence.py); this catches
 a business that switched to the dental vertical, or data from before this release.
 Needs TOKEN_ENCRYPTION_KEY in production, like m0004.
@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 
 from config import settings
 from core.log import configure_logging
-from core.sensitive import LEAD_TEXT_FIELDS, seal
+from core.sensitive import CALL_TEXT_FIELDS, LEAD_TEXT_FIELDS, seal
 from core.tenancy.models import TenantConfig
 from database.mongodb import connect_db, disconnect_db, get_db
 
@@ -45,7 +45,7 @@ async def run(db: Any, *, apply: bool) -> Dict[str, int]:
     stats = {"tenants": 0, "leads_found": 0, "leads_sealed": 0, "calls_found": 0, "calls_sealed": 0}
     for tid in await _tenant_ids(db):
         stats["tenants"] += 1
-        for coll, fields, key in (("leads", LEAD_TEXT_FIELDS, "leads"), ("calls", ("transcript",), "calls")):
+        for coll, fields, key in (("leads", LEAD_TEXT_FIELDS, "leads"), ("calls", CALL_TEXT_FIELDS, "calls")):
             q = {"tenant_id": tid, **_plain(fields)}
             stats[f"{key}_found"] += await db[coll].count_documents(q)  # scoped: tenant_id
             if not apply:

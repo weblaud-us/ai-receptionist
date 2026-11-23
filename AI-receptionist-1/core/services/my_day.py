@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from core.repositories import Repos
-from core.sensitive import LEAD_TEXT_FIELDS, unseal
+from core.sensitive import HAS_SUMMARY, LEAD_TEXT_FIELDS, SUMMARY_PROJECTION, unseal
 from core.services import scheduling_provider as sp
 from core.tenancy.models import TenantConfig
 
@@ -86,10 +86,10 @@ async def _context(repos: Repos, appt: Dict[str, Any]) -> Dict[str, Any]:
         out["first_visit"] = int(stats.get("appointments") or 0) <= 1
     phone = appt.get("phone")
     if phone:
-        calls = await repos.calls.find({"caller_phone": phone, "summary": {"$nin": [None, ""]}},
-                                       sort=[("started_at", -1)], limit=1, projection={"summary": 1, "started_at": 1})
+        calls = await repos.calls.find({"caller_phone": phone, **HAS_SUMMARY}, sort=[("started_at", -1)], limit=1,
+                                       projection={**SUMMARY_PROJECTION, "started_at": 1})
         if calls:
-            out["last_call_summary"] = calls[0].get("summary")
+            out["last_call_summary"] = unseal(calls[0], ("summary",)).get("summary")
     q: Dict[str, Any] = {"kind": {"$in": list(LEAD_KINDS)}}
     if appt.get("contact_id"):
         q["contact_id"] = appt["contact_id"]

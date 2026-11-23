@@ -173,3 +173,43 @@ async def test_migration_encrypts_old_plaintext_for_dental_only_and_is_idempoten
     assert (await Repos(db, salon.id).leads.find_one({"_id": "lead_ten_m2"}))["problem"] == "cracked tooth"
     again = await m0005.run(db, apply=True)
     assert again["leads_found"] == 0 and again["calls_found"] == 0
+
+
+# ── Audit PRIV-08: call summaries retell what the caller said ──────────────
+
+async def test_dental_call_summaries_are_sealed_but_still_read_where_needed(db, client, monkeypatch):
+    from agent import persistence
+    from agent.persistence import CallRecorder, load_contact
+    from agent.profile import VoiceProfile
+    from agent.state import CallState
+    from config import settings
+    from core.auth import service as auth_service
+    from migrations import m0005_encrypt_clinical_text as m0005
+
+    async def fake_summary(*a, **k):
+        return "Sam has a swollen gum and wants an urgent visit."
+
+    monkeypatch.setattr(persistence, "summarise_call", fake_summary)
+    t = await create_tenant(name="Harbour Smiles", vertical="dental", country="AU", tenant_id="ten_sum",
+                            seed_template=False, status="active")
+    state = CallState(call_id="call_sum", profile=VoiceProfile(tenant=t), caller_phone=CALLER)
+    await CallRecorder(state)._write(final=True)
+    await CallRecorder(state)._summarise_and_notify()
+    raw = await Repos(db, t.id).calls.find_one({"call_id": "call_sum"})
+    assert "summary" not in raw and "swollen" not in str(raw) and raw["summary_enc"]
+
+    later = CallState(call_id="call_next", profile=VoiceProfile(tenant=t), caller_phone=CALLER)
+    history = await load_contact(later)
+    assert "swollen gum" in " ".join(history["recent_calls"])          # the assistant still remembers
+
+    monkeypatch.setattr(settings, "COOKIE_SECURE", False)
+    auth_service.reset_rate_limits()
+    await auth_service.create_user(email="o@sum.au", password="correct horse battery", tenant_id=t.id, role="owner")
+    tok = client.post("/auth/login", json={"email": "o@sum.au", "password": "correct horse battery"}).json()
+    listing = client.get("/t/calls", headers={"Authorization": f"Bearer {tok['access_token']}"}).json()["calls"]
+    assert listing[0]["summary"].startswith("Sam has a swollen gum") and "summary_enc" not in listing[0]
+
+    await Repos(db, t.id).calls.insert_one({"call_id": "call_old", "summary": "old plain summary"})
+    await m0005.run(db, apply=True)
+    old = await Repos(db, t.id).calls.find_one({"call_id": "call_old"})
+    assert "summary" not in old and unseal(old)["summary"] == "old plain summary"

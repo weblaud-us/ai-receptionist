@@ -113,7 +113,9 @@ async def review_call(tenant_id: str, call_id: str, admin: Principal = Depends(r
     if call is None:
         raise HTTPException(404, "Call not found")
     review = await db[reviews.REVIEWS].find_one({"call_id": call_id}, {"_id": 0})
-    return to_jsonable({"call": call, "review": review})
+    from core.sensitive import drop_ciphertext, unseal
+
+    return to_jsonable({"call": drop_ciphertext(unseal(call)), "review": review})   # never ciphertext to a browser
 
 
 class ReviewBody(BaseModel):

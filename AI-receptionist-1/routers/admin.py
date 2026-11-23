@@ -500,7 +500,9 @@ async def call_history(
     query: Dict[str, Any] = {"outcome": outcome} if outcome else {}
     docs = await scoped_db(tp.tenant).calls.find(query, {"transcript": 0, "turns": 0}) \
         .sort("started_at", -1).limit(limit).to_list(limit)
-    return {"calls": [to_jsonable(_strip_id(d)) for d in docs], "total": len(docs)}
+    from core.sensitive import unseal
+
+    return {"calls": [to_jsonable(_strip_id(unseal(d, ("summary",)))) for d in docs], "total": len(docs)}
 
 
 @protected.get("/calls/{call_id}")

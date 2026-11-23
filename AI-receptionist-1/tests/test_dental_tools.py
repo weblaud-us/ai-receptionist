@@ -227,3 +227,19 @@ async def test_dental_leads_are_tenant_scoped_and_erased_with_the_caller(db):
     assert await Repos(db, a.id).leads.count({}) == 2
     await subjects.erase(db, a, CALLER, actor="usr_test")
     assert await Repos(db, a.id).leads.count({}) == 0
+
+
+async def test_erasure_reaches_questions_legacy_sessions_and_escalations(db):
+    # Audit PRIV-06: every place a caller's number or words can end up.
+    t = _tenant("ten_erase")
+    repos = Repos(db, t.id)
+    await repos.unanswered.insert_one({"_id": "uq_1", "question": "Do you do braces?", "caller_phone": CALLER})
+    await db.call_sessions.insert_one({"_id": "cs_1", "tenant_id": t.id, "call_sid": "CA1", "phone": CALLER})
+    await repos.leads.insert_one({"_id": "lead_1", "phone": CALLER, "name": "Sam"})
+    await repos.escalations.insert_one({"_id": "esc_1", "lead_id": "lead_1", "details_enc": "x"})
+    await repos.escalations.insert_one({"_id": "esc_other", "lead_id": "lead_someone_else"})
+    out = await subjects.erase(db, t, CALLER, actor="usr_test")
+    assert out["counts"]["unanswered"] == 1 and out["counts"]["call_sessions"] == 1
+    assert out["counts"]["escalations"] == 1
+    assert [e["_id"] for e in await repos.escalations.find({})] == ["esc_other"]
+    assert await db.call_sessions.count_documents({"tenant_id": t.id}) == 0
