@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
+
 from core.tenancy.models import TenantConfig
 from database.mongodb import get_db
 
@@ -108,7 +110,23 @@ class ScopedDB:
         return await self._db.command(*args, **kw)
 
 
+class LegacyScopeError(HTTPException):
+    """The unscoped legacy handle was asked for outside legacy single-tenant mode (audit SEC-05)."""
+
+    def __init__(self) -> None:
+        super().__init__(409, "This deployment still runs from .env. Run migration m0003 first.")
+
+
 def scoped_db(tenant: TenantConfig) -> Any:
-    """Tenant-scoped handle; the raw database for the pre-migration legacy hotel."""
+    """Tenant-scoped handle. The raw database only for the pre-migration legacy hotel, and only while
+    the deployment really is in legacy mode (no tenants yet) and not in production (audit SEC-05):
+    once tenants exist, an unscoped handle could read every business's data."""
     db = get_db()
-    return db if tenant.is_legacy else ScopedDB(db, tenant.id)
+    if not tenant.is_legacy:
+        return ScopedDB(db, tenant.id)
+    from config import settings
+    from core.tenancy.resolver import legacy_mode_known
+
+    if settings.is_production or not legacy_mode_known():
+        raise LegacyScopeError()
+    return db

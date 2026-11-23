@@ -90,9 +90,17 @@ async def test_mfa_setup_login_and_enforcement(db, client, monkeypatch):
     step1 = client.post("/auth/login", json={"email": "root@p.io", "password": PASSWORD}).json()
     assert step1["mfa_required"] and step1["access_token"] is None and "rcpt_refresh" not in client.cookies
     assert client.post("/auth/mfa/verify", json={"mfa_token": step1["mfa_token"], "code": "000000"}).status_code == 401
-    ok = client.post("/auth/mfa/verify", json={"mfa_token": step1["mfa_token"],
-                                               "code": totp.code_at(secret, int(datetime.now().timestamp()) // 30)})
+    # The code used to switch two-factor on can't be used again (SEC-02): sign in with the next one,
+    # which is accepted early because one step of clock drift is allowed.
+    used = totp.code_at(secret, int(datetime.now().timestamp()) // 30)
+    nxt = totp.code_at(secret, int(datetime.now().timestamp()) // 30 + 1)
+    if nxt != used:
+        assert client.post("/auth/mfa/verify", json={"mfa_token": step1["mfa_token"], "code": used}).status_code == 401
+    ok = client.post("/auth/mfa/verify", json={"mfa_token": step1["mfa_token"], "code": nxt})
     assert ok.status_code == 200 and "rcpt_refresh" in client.cookies
+    again = client.post("/auth/login", json={"email": "root@p.io", "password": PASSWORD}).json()
+    replay = client.post("/auth/mfa/verify", json={"mfa_token": again["mfa_token"], "code": nxt})
+    assert replay.status_code == 401                                     # a code works once
     refreshed = client.post("/auth/refresh").json()                      # the two-factor flag survives refresh
     assert client.get("/platform/tenants", headers={"Authorization": f"Bearer {refreshed['access_token']}"}).status_code == 200
 

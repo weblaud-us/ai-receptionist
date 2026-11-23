@@ -39,9 +39,9 @@ ENV GIT_SHA=$GIT_SHA
 
 FROM runtime AS api
 EXPOSE 8002
-# One process per container; scale with replicas (state is in Redis). Trusts X-Forwarded-For from
-# the reverse proxy in front of it — never publish this port to the internet directly.
-ENV FORWARDED_ALLOW_IPS="*"
+# One process per container; scale with replicas (state is in Redis). Trusts X-Forwarded-For only
+# from the reverse proxy on the private network (audit SEC-01) — never publish this port directly.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 HEALTHCHECK --interval=15s --timeout=4s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=3)"
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002", "--proxy-headers", "--no-server-header", \

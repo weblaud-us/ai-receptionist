@@ -20,6 +20,7 @@ from typing import Deque, Dict, Optional, Tuple
 
 from fastapi import Request
 
+from config import settings
 from core import redis as redis_store
 
 _PREFIX = "rl:"
@@ -154,7 +155,12 @@ async def allow_fixed(key: str, limit: int, window_s: int = 60) -> bool:
 
 
 def client_ip(request: Request) -> str:
-    """The visitor's address. Behind Cloudflare / a proxy it is in a header; a forged header can
-    only dodge a per-visitor limit, never a shared one."""
-    fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
-    return (fwd.split(",")[0].strip() or (request.client.host if request.client else "unknown"))[:64]
+    """The visitor's address (audit SEC-01). Uvicorn already replaced the peer with the
+    X-Forwarded-For client when the peer is a trusted proxy (FORWARDED_ALLOW_IPS: our Caddy on the
+    private network), so a header a visitor sends themselves is never believed. CF-Connecting-IP is
+    used only when BEHIND_CLOUDFLARE is set (the origin must then accept only Cloudflare's ranges)."""
+    if settings.BEHIND_CLOUDFLARE:
+        cf = request.headers.get("cf-connecting-ip", "").strip()
+        if cf:
+            return cf[:64]
+    return (request.client.host if request.client else "unknown")[:64]

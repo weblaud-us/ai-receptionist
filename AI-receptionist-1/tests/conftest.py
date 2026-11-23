@@ -8,6 +8,8 @@ it enforces unique indexes, which is what the double-booking test relies on.
 
 import os
 
+from cryptography.fernet import Fernet
+
 _TEST_ENV = {
     "APP_ENV": "development",
     "DEBUG": "false",
@@ -51,7 +53,7 @@ _TEST_ENV = {
     "ENABLE_TENANT_JOBS": "false",
     "GOOGLE_OAUTH_CLIENT_ID": "",
     "GOOGLE_OAUTH_CLIENT_SECRET": "",
-    "TOKEN_ENCRYPTION_KEY": "",
+    "TOKEN_ENCRYPTION_KEY": Fernet.generate_key().decode(),   # throwaway per run (production requires one, SEC-16)
     "TWILIO_SMS_FROM": "",
     "RESEND_API_KEY": "",
     "REDIS_URL": "",                 # tests that need Redis install a fake (the `redis` fixture)

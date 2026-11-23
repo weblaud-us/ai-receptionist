@@ -26,6 +26,20 @@ TWILIO_EDGE_REGIONS = {"sydney": "au1", "dublin": "ie1", "ashburn": "us1", "umat
 TWILIO_REGION_EDGES = {"au1": "sydney", "ie1": "dublin", "jp1": "tokyo"}
 
 
+def _fernet_keys_ok(value: str) -> bool:
+    keys = [k.strip() for k in (value or "").split(",") if k.strip()]
+    if not keys:
+        return False
+    try:
+        from cryptography.fernet import Fernet
+
+        for k in keys:
+            Fernet(k.encode())
+    except Exception:
+        return False
+    return True
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parent / ".env"),
@@ -353,6 +367,10 @@ class Settings(BaseSettings):
     HOTEL_TIMEZONE:      str = Field(default="Asia/Dhaka")
 
     # ── Security ──────────────────────────────────────────
+    # Audit SEC-01: trust CF-Connecting-IP only when Cloudflare really is in front (and the origin
+    # firewall accepts only Cloudflare's ranges). Otherwise the client address is uvicorn's, from the
+    # X-Forwarded-For our own proxy sets (FORWARDED_ALLOW_IPS = the private network it runs on).
+    BEHIND_CLOUDFLARE:   bool = Field(default=False)
     SECRET_KEY:          str = Field(default="change-in-production")  # JWTs, call links, ICS tokens
     ADMIN_SECRET_KEY:    str = Field(default="")   # X-Admin-Key for scripts; empty disables it
     ADMIN_USERNAME:      str = Field(default="admin")
@@ -509,8 +527,10 @@ class Settings(BaseSettings):
             problems.append("WEBHOOK_BASE_URL must be the public https:// URL")
         if self.ENABLE_WHATSAPP and not self.META_APP_SECRET:
             problems.append("META_APP_SECRET is required when ENABLE_WHATSAPP=true")
-        if self.GOOGLE_OAUTH_CLIENT_ID and len(self.TOKEN_ENCRYPTION_KEY) < 40:
-            problems.append("TOKEN_ENCRYPTION_KEY (a Fernet key) is required with Google Calendar")
+        # Audit SEC-16: TOTP secrets, PMS keys and sealed patient fields are encrypted with it. No key
+        # derived from SECRET_KEY in production: rotating SECRET_KEY would make all of them unreadable.
+        if not _fernet_keys_ok(self.TOKEN_ENCRYPTION_KEY):
+            problems.append("TOKEN_ENCRYPTION_KEY must be set to a Fernet key (comma-separated list for rotation)")
         if not self.REQUIRE_ADMIN_MFA:
             problems.append("REQUIRE_ADMIN_MFA must be true")
         if not self.DEEPGRAM_MIP_OPT_OUT:

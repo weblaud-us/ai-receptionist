@@ -211,6 +211,18 @@ async def switch_tenant(user_id: str, tenant_id: str, refresh_token: Optional[st
 
 # ── Two-factor (TOTP) ─────────────────────────────────────────────────────────
 
+async def _use_code(user_id: str, secret_enc: str, code: str) -> bool:
+    """True once per code: the step is recorded atomically, so a replayed code (or two requests
+    racing with the same one) fails (audit SEC-02)."""
+    step = totp.matched_step(crypto.decrypt(secret_enc), code)
+    if step is None:
+        return False
+    res = await get_db().users.update_one(
+        {"_id": user_id, "$or": [{"mfa.last_step": {"$lt": step}}, {"mfa.last_step": {"$exists": False}}]},
+        {"$set": {"mfa.last_step": step}})
+    return res.modified_count == 1
+
+
 async def verify_mfa(mfa_token: str, code: str, *, ip: str = "unknown", user_agent: str = "") -> LoginResult:
     payload = decode_jwt(mfa_token or "")
     if not payload or payload.get("typ") != MFA_TOKEN_TYPE:
@@ -220,7 +232,7 @@ async def verify_mfa(mfa_token: str, code: str, *, ip: str = "unknown", user_age
         raise HTTPException(401, "Sign-in expired — enter your password again")
     email = doc.get("email", "")
     await _check_limits(ip, email)
-    if not totp.verify(crypto.decrypt(doc["mfa"]["secret_enc"]), code):
+    if not await _use_code(doc["_id"], doc["mfa"]["secret_enc"], code):
         raise await _fail(ip, email)
     await ratelimit.clear(_account_key(email))
     logger.info("Login ok (with two-factor) for user %s", doc["_id"])
@@ -242,10 +254,11 @@ async def enable_mfa(user_id: str, code: str, tenant_id: Optional[str]) -> Login
     pending = ((doc or {}).get("mfa") or {}).get("pending_secret_enc")
     if not doc or not pending:
         raise HTTPException(400, "Start two-factor setup first")
-    if not totp.verify(crypto.decrypt(pending), code):
+    step = totp.matched_step(crypto.decrypt(pending), code)
+    if step is None:
         raise HTTPException(400, "That code didn't match. Check your phone's clock and try the newest code.")
     await db.users.update_one({"_id": user_id}, {"$set": {"mfa.enabled": True, "mfa.secret_enc": pending,
-                                                          "mfa.enabled_at": utcnow()},
+                                                          "mfa.enabled_at": utcnow(), "mfa.last_step": step},
                                                  "$unset": {"mfa.pending_secret_enc": ""}})
     doc = await UsersStore(db).get(user_id) or doc
     return await _issue(doc, tenant_id, mfa=True)
@@ -257,7 +270,7 @@ async def disable_mfa(user_id: str, code: str) -> None:
     secret = ((doc or {}).get("mfa") or {}).get("secret_enc")
     if not doc or not secret:
         raise HTTPException(400, "Two-factor isn't on")
-    if not totp.verify(crypto.decrypt(secret), code):
+    if not await _use_code(user_id, secret, code):
         raise HTTPException(400, "That code didn't match")
     await db.users.update_one({"_id": user_id}, {"$set": {"mfa": {"enabled": False}}})
 

@@ -34,13 +34,22 @@ def code_at(secret: str, counter: int) -> str:
     return str(value % 10 ** DIGITS).zfill(DIGITS)
 
 
-def verify(secret: str, code: str, *, now: Optional[float] = None, window: int = 1) -> bool:
-    """Accept the current code and ±`window` steps for clock drift. Constant-time comparison."""
+def matched_step(secret: str, code: str, *, now: Optional[float] = None, window: int = 1) -> Optional[int]:
+    """The time step `code` belongs to (current ±`window` for clock drift), or None. Callers store the
+    last step used and refuse it again (audit SEC-02): a code works once. Constant-time comparison."""
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != DIGITS:
-        return False
+        return None
     counter = int((now if now is not None else time.time()) // STEP)
-    return any(hmac.compare_digest(code_at(secret, counter + d), code) for d in range(-window, window + 1))
+    found = None
+    for d in range(-window, window + 1):
+        if hmac.compare_digest(code_at(secret, counter + d), code) and found is None:
+            found = counter + d
+    return found
+
+
+def verify(secret: str, code: str, *, now: Optional[float] = None, window: int = 1) -> bool:
+    return matched_step(secret, code, now=now, window=window) is not None
 
 
 def otpauth_uri(secret: str, account: str, issuer: str = "AI Receptionist") -> str:

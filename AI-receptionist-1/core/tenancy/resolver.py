@@ -121,6 +121,11 @@ async def drain_pending() -> None:
         await asyncio.gather(*list(_pending), return_exceptions=True)
 
 
+def legacy_mode_known() -> bool:
+    """The last legacy_mode() answer, without a database call. False when unknown (fail closed)."""
+    return _legacy_mode[1] is True
+
+
 async def legacy_mode() -> bool:
     """True while no tenant has been created (the .env hotel is the only business)."""
     global _legacy_mode
