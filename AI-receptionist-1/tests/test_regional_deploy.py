@@ -63,7 +63,7 @@ def test_dental_preflight_fails_closed_in_production():
 def test_dental_preflight_passes_a_well_set_up_au_stack_and_flags_wrong_defaults():
     good = Settings(**PROD, TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode(), VERIFY_TWILIO_SIGNATURE=True,
                     DEPLOYMENT_REGION="ap-southeast-2", TWILIO_EDGE="sydney", OPENAI_ZDR_ENABLED=True,
-                    DEEPGRAM_ZDR_ENABLED=True, CLINIKO_USER_AGENT="AI Receptionist (ops@example.org)",
+                    DEEPGRAM_ZDR_ENABLED=True, CLINIKO_USER_AGENT="LaudLine (ops@example.org)",
                     LEGACY_TWILIO_VOICE=False, ELEVENLABS_API_KEY="")  # explicit: Settings() also reads a developer .env
     rows = dental_preflight(good, [_practice()])
     assert all(level == "OK" for level, _, _ in rows), rows

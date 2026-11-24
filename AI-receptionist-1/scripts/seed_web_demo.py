@@ -1,12 +1,13 @@
 """
 Create (or refresh) the two fictional demo practices the landing page's "Talk to it now" demo calls:
 
-    Harbourline Dental (AU, Sydney)  — ten_demo_au
-    Wimpole Dental     (UK, London)  — ten_demo_gb
+    Harbourline Dental    (AU, Mosman, Sydney)  — ten_demo_au
+    Wimpole Dental Rooms  (UK, Marylebone)      — ten_demo_gb
 
     uv run python -m scripts.seed_web_demo
 
-They match the landing page's sample calls (landing-page/src/data/scenarios.ts). Each is open around the
+They match the landing page's sample practices (landing-page/src/data/regions.ts → practice, and the sample
+calls in scenarios.ts): same names, phone numbers, dentists and funding. Each is open around the
 clock (a visitor can book at 11 pm), has the dental template's services and FAQs, no practice system,
 no alerts, and a concurrent-call cap that keeps the demo's cost bounded. Run it again to reset their
 settings; bookings and contacts are cleared automatically (WEB_DEMO_DIARY_RETENTION_HOURS).
@@ -27,13 +28,17 @@ from config import settings
 
 DEMOS: List[Dict[str, Any]] = [
     {"tenant_id": "ten_demo_au", "slug": "demo-harbourline-dental", "name": "Harbourline Dental", "country": "AU",
-     "timezone": "Australia/Sydney", "currency": "AUD", "phone": "+61 2 5550 0123",     # ACMA fictional range
-     "address": {"line1": "12 Harbour Street", "city": "Sydney", "region": "NSW", "postcode": "2000", "country": "AU"},
-     "dentists": ["Dr Priya Patel", "Dr Tom Nguyen"]},
-    {"tenant_id": "ten_demo_gb", "slug": "demo-wimpole-dental", "name": "Wimpole Dental", "country": "GB",
-     "timezone": "Europe/London", "currency": "GBP", "phone": "+44 20 7946 0123",       # Ofcom drama range
+     "timezone": "Australia/Sydney", "currency": "AUD", "phone": "+61 2 5550 4120",     # ACMA fictional range
+     "address": {"line1": "12 Harbour Street", "city": "Mosman", "region": "NSW", "postcode": "2088", "country": "AU"},
+     "dentists": ["Dr Priya Patel", "Dr Tom Lee"],
+     "dental": {"practice_type": "private", "accepts_private_health_funds": True}},
+    {"tenant_id": "ten_demo_gb", "slug": "demo-wimpole-dental", "name": "Wimpole Dental Rooms", "country": "GB",
+     "timezone": "Europe/London", "currency": "GBP", "phone": "+44 20 7946 0418",       # Ofcom drama range
      "address": {"line1": "40 Wimpole Street", "city": "London", "region": "", "postcode": "W1G 8YW", "country": "GB"},
-     "dentists": ["Dr Ada Okafor", "Dr James Hughes"]},
+     "dentists": ["Dr Ada Okafor", "Dr James Hughes"],
+     # Mixed practice not taking new NHS patients; Denplan for private care (the "NHS-to-private" sample call).
+     "dental": {"practice_type": "mixed_nhs", "accepts_nhs": True, "accepts_new_nhs_patients": False,
+                "finance_available": True}},
 ]
 
 ALWAYS_OPEN = [{"dow": d, "open": "00:00", "close": "24:00"} for d in range(7)]
@@ -45,8 +50,11 @@ DEMO_NOTE = ("This is a live demo of an AI receptionist for dental practices, an
 def settings_for(demo: Dict[str, Any], max_concurrent: int) -> Dict[str, Any]:
     """Everything that makes a practice a demo practice (applied on create and on every re-run)."""
     return {
+        "name": demo["name"],
+        "phone": demo["phone"],
         "status": "active",
         "hours": ALWAYS_OPEN,
+        "dental": demo["dental"],
         "address": demo["address"],
         "agent": {"name": "Ava", "max_call_minutes": max(1, -(-settings.WEB_DEMO_MAX_SECONDS // 60)),
                   "custom_instructions": DEMO_NOTE, "transcript_retention_days": settings.WEB_DEMO_TRANSCRIPT_DAYS},

@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from config import settings
-from core.billing import metering
+from core.billing import metering, plans
 from core.billing.reconcile import reconcile_usage
 from core.billing.lifecycle import apply, dashboard, email_owners, owner_emails
 from core.integrations.email import send_email
@@ -31,6 +31,13 @@ from core.services import offboarding
 from core.tenancy.models import LEGACY_TENANT_ID, TenantConfig
 
 logger = logging.getLogger(__name__)
+
+
+def money(amount: float, currency: str) -> str:
+    """0.39, AUD -> "A$0.39" (per-minute prices in e-mails)."""
+    symbol = {"AUD": "A$", "GBP": "£", "USD": "$", "EUR": "€"}.get(currency.upper(), "")
+    return f"{symbol}{amount:.2f}" if symbol else f"{amount:.2f} {currency}"
+
 
 FINAL_WARNING_BEFORE = timedelta(days=3)
 LIVE = ("trial", "active", "past_due")
@@ -55,7 +62,9 @@ async def usage_alerts(db: Any, tenant: TenantConfig, seconds: float, now: datet
         return 0
     used = round(seconds / 60)
     trial, capped = on_trial(tenant), tenant.billing.hard_cap or on_trial(tenant)
-    what = "trial minutes" if trial else "included minutes"
+    what = "pilot minutes" if trial else "included minutes"
+    cur = plans.billing_currency(tenant.currency)
+    extra = money(plans.OVERAGE_PER_MIN.get(cur, plans.OVERAGE_USD_PER_MIN), cur)
     if newest >= 100:
         subject = f"You've used all your {what}"
         if capped:
@@ -65,13 +74,13 @@ async def usage_alerts(db: Any, tenant: TenantConfig, seconds: float, now: datet
                        "Turn off the hard cap or upgrade to keep the assistant answering: ") + dashboard("/billing"))
         else:
             body = (f"{tenant.name} has used all {included} {what} this period ({used} min). The assistant keeps "
-                    f"answering; extra minutes are billed at $0.25 each on your next invoice.\n\n"
+                    f"answering; extra minutes are billed at {extra} each on your next invoice.\n\n"
                     f"Upgrade or set a hard cap: {dashboard('/billing')}")
     else:
         subject = f"You've used {newest}% of your {what}"
         body = (f"{tenant.name} has used {used} of {included} {what} this period. "
                 + ("At 100 % new calls will be forwarded instead of answered. " if capped
-                   else "Nothing changes at 100 % — extra minutes are $0.25 each. ")
+                   else f"Nothing changes at 100 % — extra minutes are {extra} each. ")
                 + f"Details: {dashboard('/billing')}")
     await email_owners(db, tenant, subject, body)
     return 1
@@ -82,7 +91,7 @@ async def suspend_overdue(db: Any, tenant: TenantConfig, now: datetime) -> bool:
     if tenant.status != "past_due" or since is None or now - since < timedelta(days=settings.PAST_DUE_SUSPEND_DAYS):
         return False
     await apply(db, tenant, {}, status="suspended", audit="billing.suspended", actor="billing-job")
-    await email_owners(db, tenant, "Your receptionist is paused",
+    await email_owners(db, tenant, "LaudLine is paused",
                        f"We still haven't been able to charge your card, so {tenant.name}'s assistant has stopped "
                        f"answering. Calls are being forwarded to your transfer number (or callers are asked to call "
                        f"back) — nobody hears silence.\n\nUpdate your card to switch it back on immediately: "

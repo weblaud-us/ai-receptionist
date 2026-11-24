@@ -154,8 +154,8 @@ PLANS: Dict[str, Plan] = {
         key="dental_essentials", name="Dental Essentials", monthly_usd=349, included_minutes=600, max_users=3,
         max_numbers=1, max_concurrent_calls=3, verticals=("dental",), setup_fee_required=True,
         tagline="Lunch-break, after-hours and busy-line cover for one practice",
-        features=("600 minutes / month", "Books into Cliniko or Dentally", "Emergency triage and urgent alerts",
-                  "Implant and cosmetic lead qualification", "Missed-call text-back", "ROI dashboard",
+        features=("600 minutes / month", "Books into Cliniko (Dentally in early access)", "Emergency triage and urgent alerts",
+                  "Implant and cosmetic lead qualification", "Transcript and summary of every call", "ROI dashboard",
                   "3 dashboard users")),
     "dental_pro": Plan(
         key="dental_pro", name="Dental Pro", monthly_usd=649, included_minutes=1500, max_users=8, max_numbers=3,

@@ -59,6 +59,7 @@ class SignupBody(BaseModel):
     name: str = Field(default="", max_length=120)
     business_name: str = Field(min_length=2, max_length=120)
     vertical: str = "generic"
+    practice_type: str = Field(default="", max_length=32)   # dental only: PRACTICE_TYPES in verticals/dental.py
     country: str = Field(min_length=2, max_length=2)        # required: decides emergency number, tax and plans
     timezone: str = Field(default="America/New_York", max_length=64)
     plan: str = "growth"
@@ -93,7 +94,7 @@ async def public_plans(country: str = "", currency: str = "", vertical: str = ""
 async def _send_verification(user_id: str, email: str) -> bool:
     token = await auth_service.start_email_verification(user_id)
     link = auth_service.dashboard_link(f"/verify-email?token={token}")
-    return await send_email(email, "Confirm your e-mail",
+    return await send_email(email, "Confirm your e-mail for LaudLine",
                             f"Welcome! Confirm your e-mail address to finish setting up your AI receptionist:\n\n"
                             f"{link}\n\nThe link works for 3 days. If you didn't sign up, ignore this e-mail.")
 
@@ -129,6 +130,14 @@ async def signup(body: SignupBody, request: Request, response: Response):
         check_dental_country(body.vertical, country)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    extra_dental = {}
+    if body.vertical == "dental" and body.practice_type:
+        from core.prompts.verticals.dental import PRACTICE_TYPES
+
+        only_in = PRACTICE_TYPES.get(body.practice_type)
+        if only_in is None or (only_in and only_in != country):
+            raise HTTPException(422, "Choose a type of practice from the list")
+        extra_dental = {"dental": {"practice_type": body.practice_type, "accepts_nhs": body.practice_type == "mixed_nhs"}}
     billing = {"plan": plan.key, "interval": body.interval}
     status = "incomplete"
     if not settings.billing_enabled:
@@ -144,7 +153,7 @@ async def signup(body: SignupBody, request: Request, response: Response):
         tenant = await create_tenant(
             name=body.business_name, vertical=body.vertical, timezone=body.timezone, country=country,
             currency=currency_for(country), status=status, region=region_for(country),
-            extra={"notifications": {"owner_email": email}, "billing": billing,
+            extra={"notifications": {"owner_email": email}, "billing": billing, **extra_dental,
                    "limits": plans.limits_for(plan), "onboarding": {"step": "checkout", "source": "self_serve"}})
     except ValueError as e:
         await get_db().users.delete_one({"_id": user["_id"]})

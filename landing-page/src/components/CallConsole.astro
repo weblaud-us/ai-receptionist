@@ -13,7 +13,7 @@ import { BRAND } from '../data/site';
 const pms = both((_, f) => f.pms.primary);
 const dentist = both((_, f) => f.practice.dentist);
 const fee = both((r, f) => money(r, f.consultFee));
-const value = both((r, f) => `${money(r, f.consoleValue)} ${f.currency}`);
+const value = both((r, f) => `${money(r, f.implantValue)} ${f.currency}`);
 const caller = { au: '0491 570 156', uk: '07700 900 418' }; // ACMA / Ofcom fictional ranges
 const steps = [
   { k: 'Answered', v: { au: 'in about a second', uk: 'in about a second' } },
@@ -42,7 +42,7 @@ const diary = [
         </span>
         Lunch break overflow
       </span>
-      <span class="text-[var(--fg-3)] tnum">call_1314 · 1:14 PM</span>
+      <span class="text-[var(--fg-3)] tnum">call_1314 · 1:14 pm</span>
     </div>
 
     <!-- Boot steps -->
@@ -87,7 +87,7 @@ const diary = [
           <span class="text-[var(--fg-2)]">Hi, I saw your Google ad for dental implants. How much is a full arch?</span>
         </li>
         <li class="seq border-l border-aqua/60 pl-3" data-step="2">
-          <span class="block ord-label text-aqua-light">{BRAND}</span>
+          <span class="block ord-label text-aqua-light">Ava</span>
           <span class="text-[var(--fg)]">
             I can't price treatment over the phone, but the implant consultation is <R v={fee} /> and includes your full plan. <R v={dentist} /> has
             Thursday at 10:30. Shall I book it?

@@ -1,6 +1,7 @@
 import { Suspense, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, MessageSquareText, Moon, PhoneOutgoing, Rocket, Scale, ShieldCheck, Sun } from 'lucide-react'
+import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, MessageSquareText, Moon, PhoneOutgoing, Rocket, Scale, Sun } from 'lucide-react'
+import { LaudlineLogo } from '@receptionist/shared/components/laudline-logo'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -67,14 +68,9 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
 
 function Brand() {
   return (
-    <div className="flex items-center gap-3 px-5 py-5">
-      <div className="flex size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-        <ShieldCheck className="size-5" />
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-sidebar-foreground">AI Receptionist</div>
-        <div className="text-xs text-sidebar-foreground/60">Platform admin</div>
-      </div>
+    <div className="px-5 py-5">
+      <LaudlineLogo className="h-6 text-sidebar-foreground" />
+      <div className="mt-1.5 text-xs text-sidebar-foreground/60">Platform admin</div>
     </div>
   )
 }

@@ -10,11 +10,11 @@ export { ForgotPassword, ResetPassword } from '@receptionist/shared/auth/login-p
 export default function Login() {
   return (
     <LoginPage
-      title="AI Receptionist"
+      title="Sign in"
       description="Sign in to manage your calls, bookings and assistant."
       footer={
         <p className="text-center text-sm text-muted-foreground">
-          New here? <Link to="/signup" className="font-medium text-foreground hover:underline">Start a free trial</Link>
+          New here? <Link to="/signup" className="font-medium text-foreground hover:underline">Start a 14-day pilot</Link>
         </p>
       }
     />

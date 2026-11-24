@@ -40,8 +40,19 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
-    // Bind mounts from a Windows or macOS host (docker compose) don't deliver file-change events.
-    server: process.env.DEV_WATCH_POLLING === 'true' ? { watch: { usePolling: true, interval: 300 } } : {},
+    // Bind mounts from a Windows or macOS host (docker compose) don't deliver file-change events,
+    // so poll. Skip the build output and the local agent-skill folders: polling their ~800 files
+    // over the bind mount starves the dev server's file I/O and every page request hangs.
+    server:
+      process.env.DEV_WATCH_POLLING === 'true'
+        ? {
+            watch: {
+              usePolling: true,
+              interval: 300,
+              ignored: ['**/dist/**', '**/agent/**', '**/.agents/**', '**/.claude/**'],
+            },
+          }
+        : {},
     build: { assetsInlineLimit: 0 },
   },
 });

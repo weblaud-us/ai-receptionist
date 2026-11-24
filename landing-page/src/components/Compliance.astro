@@ -15,7 +15,7 @@ const awsRegion = both((_, f) => f.hosting.region);
 
 const flow = [
   { title: 'Patient call', sub: { au: 'forwarded number', uk: 'forwarded number' } },
-  { title: both((_, f) => `${f.hosting.city} edge`), sub: awsRegion },
+  { title: both((_, f) => `Hosted in ${f.hosting.city}`), sub: awsRegion },
   { title: { au: CLAIM_ZDR ? 'Zero-retention LLM' : 'LLM, training off', uk: CLAIM_ZDR ? 'Zero-retention LLM' : 'LLM, training off' }, sub: { au: 'no model training', uk: 'no model training' } },
   { title: { au: 'Encrypted clinical text', uk: 'Encrypted clinical text' }, sub: { au: 'field-level, AES + HMAC', uk: 'field-level, AES + HMAC' } },
   { title: { au: 'Auto-purge', uk: 'Auto-purge' }, sub: { au: '30, 60 or 90 days', uk: '30, 60 or 90 days' } },
@@ -33,12 +33,12 @@ const shared = [
     body: 'Transcripts and the symptoms and notes taken from patients are encrypted field by field at rest, readable only by your authorised staff.',
   },
   {
-    title: 'Recordings deleted on schedule',
-    body: 'Recordings are deleted after 30 days and transcripts after 90 by default. Choose 30, 60 or 90 days.',
+    title: 'No call recordings',
+    body: 'Calls are never recorded, only transcribed. Transcripts are deleted after 90 days by default; choose 30, 60 or 90 days.',
   },
   {
     title: 'Access and erasure requests',
-    body: 'Find everything held about a patient and export or erase it, including recordings and captured leads.',
+    body: 'Find everything held about a patient and export or erase it, including transcripts and captured leads.',
   },
 ];
 ---
@@ -67,7 +67,7 @@ const shared = [
           }
         </ol>
         <figcaption class="mt-4 text-[0.8125rem] text-[var(--fg-3)]">
-          Database, recordings and servers stay in AWS <R v={city} />. Speech and language models run where each provider hosts them.
+          Database, transcripts and servers stay in AWS <R v={city} />. Speech and language models run where each provider hosts them.
         </figcaption>
       </figure>
     </div>
@@ -86,15 +86,15 @@ const shared = [
             </div>
             <div class="border-t border-[var(--line)] pt-4">
               <dt class="text-[var(--fg)]">Hosted in Sydney</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Database, recordings and servers in AWS Sydney. Speech and language models run where each provider hosts them.</dd>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Database, transcripts and servers in AWS Sydney. Speech and language models run where each provider hosts them.</dd>
             </div>
             <div class="border-t border-[var(--line)] pt-4">
-              <dt class="text-[var(--fg)]">Recall texts under the Spam Act</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Spam Act 2003 rules on every recall text: consent recorded, the practice named, STOP honoured. DNCR checks before any voice recall.</dd>
+              <dt class="text-[var(--fg)]">Recall messages under the Spam Act</dt>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Spam Act 2003 rules on every recall message: consent recorded, the practice named, STOP honoured. DNCR checks before any voice recall.</dd>
             </div>
             <div class="border-t border-[var(--line)] pt-4">
-              <dt class="text-[var(--fg)]">Recording announced</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">When recording is on, callers hear it before anything else, and the assistant always says it is an AI.</dd>
+              <dt class="text-[var(--fg)]">Transcription announced</dt>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Callers hear that the call is transcribed before anything else, and the assistant always says it is an AI.</dd>
             </div>
           </dl>
         </Fragment>
@@ -110,15 +110,15 @@ const shared = [
             </div>
             <div class="border-t border-[var(--line)] pt-4">
               <dt class="text-[var(--fg)]">Hosted in London</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Database, recordings and servers in AWS London. Speech and language models run where each provider hosts them.</dd>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Database, transcripts and servers in AWS London. Speech and language models run where each provider hosts them.</dd>
             </div>
             <div class="border-t border-[var(--line)] pt-4">
-              <dt class="text-[var(--fg)]">Recall texts under PECR</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">The soft opt-in for existing patients, the consent basis logged on every text, and STOP honoured. TPS screening before any voice recall.</dd>
+              <dt class="text-[var(--fg)]">Recall messages under PECR</dt>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">The soft opt-in for existing patients, the consent basis logged on every message, and opt-outs honoured. TPS screening before any voice recall.</dd>
             </div>
             <div class="border-t border-[var(--line)] pt-4">
-              <dt class="text-[var(--fg)]">Recording announced</dt>
-              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">When recording is on, callers hear it before anything else, and the assistant always says it is an AI.</dd>
+              <dt class="text-[var(--fg)]">Transcription announced</dt>
+              <dd class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">Callers hear that the call is transcribed before anything else, and the assistant always says it is an AI.</dd>
             </div>
           </dl>
         </Fragment>

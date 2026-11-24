@@ -39,7 +39,7 @@ function UsageCard({ b }: { b: BillingData }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{u.trial ? 'Trial minutes' : 'Minutes this period'}</CardTitle>
+        <CardTitle>{u.trial ? 'Pilot minutes' : 'Minutes this period'}</CardTitle>
         <CardDescription>{dateOnly(u.period_start)} – {dateOnly(u.period_end)}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -60,7 +60,7 @@ function UsageCard({ b }: { b: BillingData }) {
         {u.capped && (
           <p className="flex items-start gap-2 text-sm text-destructive">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            {u.trial ? 'Trial minutes used up — calls are being forwarded. Subscribe to keep the assistant answering.'
+            {u.trial ? 'Pilot minutes used up — calls are being forwarded. Subscribe to keep the assistant answering.'
               : 'Hard cap reached — calls are being forwarded until the next period.'}
           </p>
         )}
@@ -79,7 +79,7 @@ function PlanPicker({ b }: { b: BillingData }) {
         <CardTitle>{b.status === 'cancelled' ? 'Re-subscribe' : 'Choose a plan'}</CardTitle>
         <CardDescription>
           {!b.trial_used && b.status === 'incomplete'
-            ? `${b.catalogue.trial.days}-day free trial, card required. Cancel any time before it ends and you pay nothing.`
+            ? `${b.catalogue.trial.days}-day pilot, card required.${plans.some((p) => p.setup_fee_required) ? ' The onboarding fee is charged at sign-up.' : ''} Cancel during the pilot and the monthly fee is never charged.`
             : 'Billed through Stripe. Change or cancel any time.'}
         </CardDescription>
       </CardHeader>
@@ -92,7 +92,7 @@ function PlanPicker({ b }: { b: BillingData }) {
             <div key={p.key} className={cn('flex flex-col rounded-xl border p-4', p.recommended && 'border-primary')}>
               <div className="flex items-center justify-between">
                 <span className="font-semibold">{p.name}</span>
-                {p.recommended && <Badge>Popular</Badge>}
+                {p.recommended && <Badge>Recommended</Badge>}
               </div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">
                 {formatPrice(annual ? p.annual / 12 : p.monthly, p.currency)}<span className="text-sm font-normal text-muted-foreground">/mo</span>
@@ -103,7 +103,7 @@ function PlanPicker({ b }: { b: BillingData }) {
               <Button disabled={!b.can_manage || checkout.isPending}
                 onClick={() => checkout.mutate({ plan: p.key, interval: annual ? 'year' : 'month' })}>
                 {checkout.isPending && checkout.variables?.plan === p.key && <Loader2 className="animate-spin" />}
-                {b.status === 'incomplete' && !b.trial_used ? 'Start free trial' : `Choose ${p.name}`}
+                {b.status === 'incomplete' && !b.trial_used ? `Start pilot on ${p.name}` : `Choose ${p.name}`}
               </Button>
             </div>
           ))}
@@ -129,7 +129,7 @@ function VerifyPhoneCard({ b }: { b: BillingData }) {
         <CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Your phone number</CardTitle>
         <CardDescription>
           {b.status === 'trial'
-            ? 'During the trial your assistant can only transfer callers to your own, verified number.'
+            ? 'During the pilot your assistant can only transfer callers to your own, verified number.'
             : 'Verified numbers can receive transfers and urgent alerts.'}
         </CardDescription>
       </CardHeader>
@@ -138,7 +138,7 @@ function VerifyPhoneCard({ b }: { b: BillingData }) {
         {!asked ? (
           <div className="flex flex-wrap items-end gap-2">
             <Field label={b.verified_phone ? 'Verify a different number' : 'Mobile number'}>
-              <Input value={phone} placeholder="+15125551234" onChange={(e) => setPhone(e.target.value)} />
+              <Input value={phone} placeholder="+61 412 345 678" onChange={(e) => setPhone(e.target.value)} />
             </Field>
             <Button variant="outline" disabled={!b.can_manage || phone.replace(/\D/g, '').length < 8 || start.isPending}
               onClick={() => start.mutate(phone, {
@@ -259,7 +259,7 @@ export default function Billing() {
               {b.plan_name} <Badge variant={statusVariant(b.status)}>{STATUS_LABEL[b.status] ?? b.status}</Badge>
             </CardTitle>
             <CardDescription>
-              {b.status === 'trial' && b.trial_ends_at ? `Trial ends ${dateOnly(b.trial_ends_at)}.` : null}
+              {b.status === 'trial' && b.trial_ends_at ? `Pilot ends ${dateOnly(b.trial_ends_at)}.` : null}
               {b.self_serve && b.status !== 'trial' && b.status !== 'incomplete' ? ` Billed ${b.interval === 'year' ? 'yearly' : 'monthly'}.` : null}
             </CardDescription>
           </CardHeader>
@@ -287,7 +287,7 @@ export default function Billing() {
       <div className="mt-4 space-y-4">
         {needsPlan && b.billing_enabled && <PlanPicker b={b} />}
         {!b.billing_enabled && b.self_serve && (
-          <p className="text-sm text-muted-foreground">Billing isn't configured on this server (development) — your trial runs without a card.</p>
+          <p className="text-sm text-muted-foreground">Billing isn't configured on this server (development) — your pilot runs without a card.</p>
         )}
         <div className="grid gap-4 lg:grid-cols-2">
           {b.self_serve && <VerifyPhoneCard b={b} />}

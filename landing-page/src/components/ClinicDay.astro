@@ -1,8 +1,8 @@
 ---
 /**
- * "Built around real clinic hours": a 24-hour scrubber over a split-shift day. Choosing a phase
+ * "Built around real practice hours": a 24-hour scrubber over a split-shift day. Choosing a phase
  * (tabs below the bar, or pointing at the bar) previews what callers hear, the diary rule and the
- * text-back status for that part of the day. clinic-day.ts runs it; without JavaScript the first
+ * what happens after the call for that part of the day. clinic-day.ts runs it; without JavaScript the first
  * phase shows and the tabs still read as a list of the four phases.
  */
 import R from './R.astro';
@@ -24,9 +24,9 @@ const phases = [
     title: 'Busy overflow',
     tone: 'overflow',
     forwarding: 'When every line is busy, or after 4 rings',
-    greeting: both((_, f) => `Thanks for calling ${f.practice.name}. The team is on another line, so I'm the practice's AI assistant. I can book you in or take a message.`),
+    greeting: both((_, f) => `Just so you know, this call is transcribed for the practice. Thanks for calling ${f.practice.name}. Our receptionists are helping other patients right now. I'm the practice's AI assistant and can help get you booked in straight away. How can I help?`),
     diary: 'Books into open slots only. Appointments reception is holding are left alone.',
-    sms: 'Armed: a caller who hangs up before the greeting ends gets a text within 15 seconds.',
+    after: 'Transcript and summary in the dashboard the moment the caller hangs up, so reception can see what was booked.',
   },
   {
     id: 'lunch',
@@ -37,9 +37,9 @@ const phases = [
     title: 'Lunch break cover',
     tone: 'lunch',
     forwarding: 'All calls, for the hour',
-    greeting: both((_, f) => `Hi, you've reached ${f.practice.name}. The team is on their lunch break until 1:50, and I'm the practice's AI assistant. How can I help?`),
-    diary: '12:50–13:50 stays blocked in the diary. The first slot offered is 13:50 or later.',
-    sms: 'Armed, with a lunch-break wording that says when the desk reopens.',
+    greeting: both((_, f) => `Just so you know, this call is transcribed for the practice. Thanks for calling ${f.practice.name}. Our reception team is currently on a short lunch break, so I'm their AI assistant and can book your appointment right now. How can I help?`),
+    diary: '12:50–1:50 pm stays blocked in the diary. The first slot offered is 1:50 pm or later.',
+    after: 'Messages for the team wait in the dashboard inbox, ready when the desk reopens at 1:50 pm.',
   },
   {
     id: 'afternoon',
@@ -50,9 +50,9 @@ const phases = [
     title: 'Busy overflow',
     tone: 'overflow',
     forwarding: 'When every line is busy, or after 4 rings',
-    greeting: both((_, f) => `Thanks for calling ${f.practice.name}. The team is on another line, so I'm the practice's AI assistant. I can book you in or take a message.`),
+    greeting: both((_, f) => `Just so you know, this call is transcribed for the practice. Thanks for calling ${f.practice.name}. Our receptionists are helping other patients right now. I'm the practice's AI assistant and can help get you booked in straight away. How can I help?`),
     diary: 'Back to overflow only. Same-day gaps are offered first, then the next open slot.',
-    sms: 'Armed: one text per caller per 24 hours, and STOP is always honoured.',
+    after: 'Implant and cosmetic enquiries are flagged as leads with their estimated value, for a follow-up call.',
   },
   {
     id: 'evening',
@@ -63,9 +63,9 @@ const phases = [
     title: 'After hours and weekends',
     tone: 'after',
     forwarding: 'All calls, until the desk opens',
-    greeting: both((_, f) => `You've reached ${f.practice.name}. We're closed for the evening, and I'm the practice's AI assistant. I can book you in or help with an urgent problem.`),
+    greeting: both((_, f) => `Just so you know, this call is transcribed for the practice. Thanks for calling ${f.practice.name}. We're currently closed, but I'm the practice's AI assistant and can book your consultation or take an urgent message for the team. How can I help?`),
     diary: 'Books tomorrow and weekend sessions. Urgent problems get the earliest same-day slot.',
-    sms: both((_, f) => `Armed. Red-flag symptoms are told to call ${f.emergency.number} first${f.emergency.extra ? `, and other urgent problems are pointed to ${f.emergency.extra}` : ''}.`),
+    after: both((_, f) => `Urgent problems alert the team by e-mail or WhatsApp. Red-flag symptoms are told to call ${f.emergency.number} first${f.emergency.extra ? `, and other urgent problems out of hours are pointed to ${f.emergency.extra}` : ''}.`),
   },
 ] as const;
 
@@ -81,7 +81,7 @@ const toR = (v: string | { au: string; uk: string }) => (typeof v === 'string' ?
   <div class="container-page section-pad">
     <SectionRule idx="04" label="How it works">Your hours, your rules</SectionRule>
     <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
-      <h2 id="day-title" class="h2 lg:col-span-8">Built around real clinic hours. <span class="hl">Set them once.</span></h2>
+      <h2 id="day-title" class="h2 lg:col-span-8">Built around real practice hours. <span class="hl">Set them once.</span></h2>
       <p class="lede lg:col-span-4">
         It works alongside your receptionists, not instead of them. The greeting, the forwarding and the diary rules follow the clock.
       </p>
@@ -175,9 +175,9 @@ const toR = (v: string | { au: string; uk: string }) => (typeof v === 'string' ?
               <div class="border-t border-[var(--line)] px-4 py-6 sm:border-l sm:border-t-0 sm:px-6 lg:py-7">
                 <dt class="flex items-center gap-2 text-[0.8125rem] text-slate">
                   <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" /></svg>
-                  Text-back
+                  After the call
                 </dt>
-                <dd class="mt-2.5 text-[0.9375rem] leading-relaxed text-ink"><R v={toR(p.sms)} /></dd>
+                <dd class="mt-2.5 text-[0.9375rem] leading-relaxed text-ink"><R v={toR(p.after)} /></dd>
               </div>
             </dl>
           </div>

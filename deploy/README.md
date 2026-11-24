@@ -202,6 +202,27 @@ rebuild too.
 **4. Point the providers at it.** LiveKit, Twilio, Meta and Google OAuth callbacks use
 `https://<API_DOMAIN>/…`, the same paths as in [docs/TELEPHONY_TESTING.md](../docs/TELEPHONY_TESTING.md).
 
+**5. Turn on the landing page's live demo ("Talk to it now").** Off by default; the page then shows
+the sample-call player instead. To switch it on:
+
+1. Google Cloud console → APIs & Services → Credentials → create an OAuth client of type *Web
+   application* with `https://<SITE_DOMAIN>` (e.g. `https://laudline.weblaud.com`) as an authorised
+   JavaScript origin. Copy its client ID.
+2. `AI-receptionist-1/.env`: `WEB_DEMO_ENABLED=true` and `GOOGLE_SIGNIN_CLIENT_ID=<that client ID>`
+   (the API checks visitors' Google sign-in against it; it falls back to `GOOGLE_OAUTH_CLIENT_ID`). A Cartesia key (`CARTESIA_API_KEY`,
+   `CARTESIA_VOICE_ID`) gives the demo the platform voice.
+3. Seed the two demo practices, then put their ids in the same `.env`:
+   `./deploy/dev-server.sh exec api python -m scripts.seed_web_demo`, then
+   `WEB_DEMO_TENANT_AU=ten_demo_au` and `WEB_DEMO_TENANT_GB=ten_demo_gb`.
+4. `deploy/dev-server.env`: `VITE_WEB_DEMO=true`, `VITE_GOOGLE_CLIENT_ID=<same client ID>`, and
+   `LIVEKIT_WSS_URL=wss://<your-project>.livekit.cloud` (not the `YOUR-PROJECT` placeholder).
+5. Rebuild and restart: `./deploy/dev-server.sh`.
+6. Check: open the site, sign in, tap the orb. `./deploy/dev-server.sh logs worker` should show
+   `Call demo-… started for ten_demo_au` and a `Voice order:` line. If the page says the receptionist
+   didn't pick up, no worker took the job: make sure exactly one worker is registered as
+   `receptionist` on this LiveKit project (a laptop running `start.bat` against the same project can
+   take demo jobs and fail them).
+
 **Host already has a reverse proxy on 80/443** (e.g. another project's nginx container)? Don't
 start our Caddy; fill in the `EDGE_*` block in `deploy/dev-server.env`: the proxy's Docker network
 and container, the host folder it includes `*.conf` from, and its certbot volumes. Then:

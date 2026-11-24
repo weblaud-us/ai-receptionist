@@ -1,11 +1,9 @@
 ---
-/** Wordmark: two diary slots, the lower one booked, and the lowercase brand. Inherits colour from its band. */
+/** The LaudLine wordmark (src/assets/laudline.svg, from brand/laudline.svg). Takes its colour from its band. */
+import Wordmark from '../assets/laudline.svg';
 import { BRAND } from '../data/site';
 ---
-<span class="inline-flex items-center gap-2.5 text-[var(--fg)]">
-  <svg width="20" height="20" viewBox="0 0 22 22" aria-hidden="true" focusable="false">
-    <rect x="1.75" y="2.75" width="18.5" height="6.5" rx="0.5" fill="none" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.5"></rect>
-    <rect x="1" y="12" width="20" height="8" rx="0.5" fill="var(--accent)"></rect>
-  </svg>
-  <span class="text-[max(1.25rem,1.45vw)] font-[450] lowercase leading-none tracking-[-0.06em]">{BRAND}</span>
+<span class="inline-flex items-center text-[var(--fg)]">
+  <Wordmark class="h-[max(1.35rem,1.5vw)] w-auto" aria-hidden="true" focusable="false" />
+  <span class="sr-only">{BRAND}</span>
 </span>

@@ -13,7 +13,7 @@ import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
 import { Switch } from '@receptionist/shared/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@receptionist/shared/components/ui/tabs'
-import { CURRENCIES, TIMEZONES, dateOnly, dateTime, duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
+import { COUNTRIES, CURRENCIES, TIMEZONES, dateOnly, dateTime, duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { impersonateUrl } from '@receptionist/shared/lib/urls'
 import { AddNumberDialog } from '@/components/add-number-dialog'
 import { OrderProgress } from '@/components/number-chooser'
@@ -332,9 +332,14 @@ function ControlsTab({ tenant: t }: { tenant: TenantDoc }) {
               <SimpleSelect value={v.timezone} onChange={(s) => set({ timezone: s })}
                 options={[...new Set([t.timezone, ...TIMEZONES])].map((z) => ({ value: z, label: z }))} />
             </Field>
-            <Field label="Public phone"><Input value={v.phone} placeholder="+15125551234" onChange={(e) => set({ phone: e.target.value })} /></Field>
+            <Field label="Public phone"><Input value={v.phone} placeholder="+61 2 5550 4120" onChange={(e) => set({ phone: e.target.value })} /></Field>
             <Field label="Website"><Input value={v.website} onChange={(e) => set({ website: e.target.value })} /></Field>
-            <Field label="Country (ISO)"><Input maxLength={2} value={v.country} onChange={(e) => set({ country: e.target.value.toUpperCase() })} /></Field>
+            <Field label="Country">
+              <SimpleSelect value={v.country} onChange={(s) => set({ country: s })}
+                options={[...new Set([t.country, ...COUNTRIES.map(([c]) => c as string)])].filter(Boolean).map((c) => ({
+                  value: c, label: COUNTRIES.find(([k]) => k === c)?.[1] ?? c,
+                }))} />
+            </Field>
             <Field label="Currency">
               <SimpleSelect value={v.currency} onChange={(s) => set({ currency: s })}
                 options={[...new Set([t.currency, ...CURRENCIES])].map((c) => ({ value: c, label: c }))} />
@@ -349,7 +354,7 @@ function ControlsTab({ tenant: t }: { tenant: TenantDoc }) {
         {(v, set) => (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Alert e-mail"><Input type="email" value={v.owner_email} onChange={(e) => set({ owner_email: e.target.value })} /></Field>
-            <Field label="Alert phone (SMS)"><Input value={v.owner_phone} placeholder="+15125551234" onChange={(e) => set({ owner_phone: e.target.value })} /></Field>
+            <Field label="Alert phone (SMS)"><Input value={v.owner_phone} placeholder="+61 412 345 678" onChange={(e) => set({ owner_phone: e.target.value })} /></Field>
           </div>
         )}
       </FormCard>

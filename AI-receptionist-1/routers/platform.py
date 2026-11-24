@@ -173,7 +173,7 @@ async def _welcome_owner(tenant_name: str, email: str, link: Optional[str]) -> b
     else:
         body = (f"You now have access to {tenant_name}'s AI receptionist.\n\n"
                 f"Sign in with your existing account: {auth_service.dashboard_link('/login')}")
-    return await send_email(email, f"Your AI receptionist for {tenant_name} is ready", body)
+    return await send_email(email, f"LaudLine: your AI receptionist for {tenant_name} is ready", body)
 
 
 @platform_router.post("/tenants")

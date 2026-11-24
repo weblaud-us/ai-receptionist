@@ -1,5 +1,5 @@
 """
-AI Receptionist — configuration.
+LaudLine — configuration.
 
 Every variable the code reads is declared here and documented in .env.example.
 Defaults are production-safe: a missing variable must never make the system less secure.
@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     TWILIO_REGION: str = Field(default="")
 
     # ── Dental practice-management systems (core/integrations/cliniko.py, dentally.py) ──
-    # Cliniko requires a User-Agent naming the app and a contact address, e.g. "AI Receptionist (ops@yourco.com)".
+    # Cliniko requires a User-Agent naming the app and a contact address, e.g. "LaudLine (ops@yourco.com)".
     CLINIKO_USER_AGENT: str = Field(default="")
     # The shard used when a practice's API key carries none (keys normally end in -au1, -au2, -uk1).
     CLINIKO_SHARD: str = Field(default="au1")
@@ -161,7 +161,7 @@ class Settings(BaseSettings):
 
     # ── Transactional e-mail (Resend) ─────────────────────
     RESEND_API_KEY: str = Field(default="")
-    EMAIL_FROM:     str = Field(default="")   # e.g. "Receptionist <hello@yourdomain.com>" — set SPF/DKIM/DMARC first
+    EMAIL_FROM:     str = Field(default="")   # e.g. "LaudLine <hello@yourdomain.com>" — set SPF/DKIM/DMARC first
 
     # ── Meta WhatsApp Cloud API ───────────────────────────
     META_WA_VERIFY_TOKEN:    str = Field(default="")
@@ -311,7 +311,7 @@ class Settings(BaseSettings):
     # dialer can never take customers' inbound numbers down. Outside production it may be empty
     # (LIVEKIT_SIP_OUTBOUND_TRUNK_ID is used); production refuses to dial on the shared trunk.
     SALES_SIP_OUTBOUND_TRUNK_ID: str = Field(default="")
-    SALES_COMPANY_NAME:       str  = Field(default="WEBLAUD")
+    SALES_COMPANY_NAME:       str  = Field(default="LaudLine")
     SALES_PERSONA_NAME:       str  = Field(default="Max")           # the name the sales assistant gives
     SALES_FOUNDER_NAME:       str  = Field(default="")              # who runs the demo
     SALES_DEMO_SERVICE:       str  = Field(default="Demo")          # service name on the sales tenant that demos are booked as

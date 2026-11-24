@@ -96,17 +96,18 @@ The page only claims what the product does today:
 
 ## Placeholders to replace before launch
 
-- [ ] **Brand name:** `BRAND` in `src/data/site.ts` ("Front Desk" is a placeholder). Then
-  `npm run og -w landing-page` to re-render the social card.
+- [x] **Brand name:** LaudLine (`BRAND` in `src/data/site.ts`). Re-run `npm run og -w landing-page`
+  after changing it. Logo: `brand/laudline.svg` (as supplied) → `src/assets/laudline.svg` (cropped, `currentColor`,
+  used by Logo, Footer, Preloader and the social card) and `packages/shared/src/components/laudline-path.ts`
+  (dashboards). The favicons are the joined "dl" from the wordmark.
 - [ ] **Production domain and links:** `VITE_SITE_URL`, `VITE_DASHBOARD_SIGNUP_URL`,
   `VITE_DASHBOARD_LOGIN_URL`.
 - [ ] **Legal pages:** `VITE_PRIVACY_URL`, `VITE_TERMS_URL`, `VITE_DPA_URL`. The footer leaves out
   empty links. The drafts in `docs/legal/` still need counsel review.
-- [ ] **Recorded demo audio:** the sample calls are simulated with timed transcripts. Add recordings
-  of the real product on a demo practice (never a patient) to `public/audio/`; see the README there.
+- [ ] **Sample-call audio:** render it with `AI-receptionist-1/scripts/render_sample_calls.py` (writes
+  `public/audio/` and `src/data/recordings/`) and re-render whenever `src/data/scenarios.ts` changes.
 - [ ] **Demo line and booking link:** `VITE_DEMO_PHONE_AU`, `VITE_DEMO_PHONE_UK`, `VITE_DEMO_CALL_URL`,
-  `VITE_BOOK_DEMO_URL`. Note that `AI-receptionist-1/ui/call.html` is hotel-branded ("Hotel AI
-  Receptionist"), so make a dental version before linking to it.
+  `VITE_BOOK_DEMO_URL`. `AI-receptionist-1/ui/call.html` shows the practice's own name.
 - [ ] **Prices:** `plans.py` marks the dental prices and onboarding fees as placeholders. Set the real
   ones there and in Stripe, then mirror them in `src/data/plans.ts`.
 - [ ] **Sample practice details** (fictional names; ACMA and Ofcom reserved phone numbers) and the

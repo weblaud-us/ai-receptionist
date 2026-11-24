@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@rece
 import { Input } from '@receptionist/shared/components/ui/input'
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { isValidPhone, normalizePhone } from '@receptionist/shared/lib/format'
+import { DENTAL_COUNTRIES, practiceTypesFor } from '@receptionist/shared/lib/dental'
 import { useCtx } from '@/lib/tenant'
 import { TIMEZONES } from '@/lib/tenant-format'
 import { useOnboarding, useServiceMutations, useServices, useSiteImport, useUpdateSettings, useVerticals } from '@/lib/tenant-hooks'
@@ -24,7 +25,7 @@ import { TestCallButton } from './Assistant'
 const STEPS = ['website', 'type', 'basics', 'hours', 'services', 'handoff', 'voice', 'test', 'number'] as const
 type Step = (typeof STEPS)[number]
 const TITLES: Record<Step, string> = {
-  website: 'Start from your website', type: 'What kind of business?', basics: 'The basics', hours: 'Opening hours', services: 'What callers can book',
+  website: 'Start from your website', type: 'What kind of practice?', basics: 'The basics', hours: 'Opening hours', services: 'What callers can book',
   handoff: 'Transfers and alerts', voice: 'Voice and greeting', test: 'Call your assistant', number: 'Get a phone number',
 }
 
@@ -114,12 +115,26 @@ export default function Onboarding() {
 }
 
 /** Optional first step: read the business's website and pre-fill everything, for the owner to check. */
+/** Only dental (and the business's own type, for older accounts) is offered. */
+function offeredVerticals(all: { key: string; label: string }[] | undefined, current: string) {
+  return (all ?? []).filter((v) => v.key === 'dental' || v.key === current).map((v) => ({ key: v.key, label: v.label }))
+}
+
 function WebsiteStep({ onNext }: { onNext: () => void }) {
   const ctx = useCtx()
   const verticals = useVerticals()
   const site = useSiteImport()
   const [url, setUrl] = useState(ctx.tenant.website ?? '')
-  const [draft, setDraft] = useState<SiteDraft | null>(null)
+  const [draft, setDrafted] = useState<SiteDraft | null>(null)
+  // A website can suggest any business type or country; keep the practice's own unless it is AU or the UK.
+  const setDraft = (d: SiteDraft | null) => setDrafted(d && {
+    ...d,
+    profile: {
+      ...d.profile,
+      vertical: ctx.tenant.vertical,
+      country: DENTAL_COUNTRIES.some((c) => c.value === d.profile.country) ? d.profile.country : ctx.tenant.country,
+    },
+  })
   if (!draft) {
     return (
       <>
@@ -158,7 +173,7 @@ function WebsiteStep({ onNext }: { onNext: () => void }) {
   return (
     <>
       <SiteDraftReview draft={draft} onChange={setDraft} showServices={draft.profile.vertical !== 'hotel'}
-        verticals={(verticals.data?.verticals ?? []).map((v) => ({ key: v.key, label: v.label }))} />
+        verticals={offeredVerticals(verticals.data?.verticals, ctx.tenant.vertical)} />
       <div className="flex flex-wrap gap-2">
         <Button disabled={!draft.profile.name.trim() || site.apply.isPending} onClick={save}>
           {site.apply.isPending && <Loader2 className="animate-spin" />} Use these details <ArrowRight />
@@ -173,26 +188,44 @@ function TypeStep({ onNext }: { onNext: () => void }) {
   const ctx = useCtx()
   const verticals = useVerticals()
   const ob = useOnboarding()
+  const save = useUpdateSettings()
+  const dental = ctx.tenant.vertical === 'dental'
   const [picked, setPicked] = useState(ctx.tenant.vertical)
+  const [practiceType, setPracticeType] = useState(ctx.tenant.dental?.practice_type || 'private')
+  const busy = ob.template.isPending || save.isPending
+  const next = () => ob.template.mutate({ vertical: dental ? 'dental' : picked }, {
+    onSuccess: (r) => {
+      if (r.added.services || r.added.knowledge) toast.success(`Added ${r.added.services} example services and ${r.added.knowledge} answers to start from`)
+      onNext()
+    },
+  })
+  const cards = dental
+    ? practiceTypesFor(ctx.tenant.country).map((t) => ({ key: t.value, label: t.label, description: '' }))
+    : (verticals.data?.verticals ?? []).filter((v) => v.key === 'dental' || v.key === ctx.tenant.vertical)
+  const chosen = dental ? practiceType : picked
   return (
     <>
       <div className="grid gap-2 sm:grid-cols-2">
-        {verticals.data?.verticals.map((v) => (
-          <button key={v.key} type="button" onClick={() => setPicked(v.key)}
-            className={cn('rounded-lg border p-3 text-left transition-colors hover:bg-muted', picked === v.key && 'border-primary ring-2 ring-primary/30')}>
+        {cards.map((v) => (
+          <button key={v.key} type="button" onClick={() => (dental ? setPracticeType(v.key) : setPicked(v.key as typeof picked))}
+            className={cn('rounded-lg border p-3 text-left transition-colors hover:bg-muted', chosen === v.key && 'border-primary ring-2 ring-primary/30')}>
             <div className="font-medium">{v.label}</div>
-            <div className="text-xs text-muted-foreground">{v.description}</div>
+            {v.description && <div className="text-xs text-muted-foreground">{v.description}</div>}
           </button>
         ))}
       </div>
-      <Button disabled={ob.template.isPending}
-        onClick={() => ob.template.mutate({ vertical: picked }, {
-          onSuccess: (r) => {
-            if (r.added.services || r.added.knowledge) toast.success(`Added ${r.added.services} example services and ${r.added.knowledge} answers to start from`)
-            onNext()
-          },
-        })}>
-        {ob.template.isPending && <Loader2 className="animate-spin" />} Continue <ArrowRight />
+      <Button disabled={busy}
+        onClick={() => {
+          if (!dental) return next()
+          const d = ctx.tenant.dental
+          save.mutate({
+            dental: {
+              accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false,
+              ...d, practice_type: practiceType, ...(practiceType === 'mixed_nhs' ? { accepts_nhs: true } : {}),
+            },
+          }, { onSuccess: next })
+        }}>
+        {busy && <Loader2 className="animate-spin" />} Continue <ArrowRight />
       </Button>
     </>
   )

@@ -183,7 +183,7 @@ async def insert_event(refresh_token: str, calendar_id: str, *, summary: str, st
         "summary": summary[:200], "description": description[:2000],
         "start": {"dateTime": _iso(start), "timeZone": timezone_name},
         "end": {"dateTime": _iso(end), "timeZone": timezone_name},
-        "source": {"title": "AI receptionist", "url": settings.DASHBOARD_URL or "https://example.com"}}
+        "source": {"title": "LaudLine", "url": settings.DASHBOARD_URL or "https://example.com"}}
     if private:
         body["extendedProperties"] = {"private": {k: str(v)[:1024] for k, v in private.items()}}
     data = await _api(refresh_token, "POST", f"/calendars/{calendar_id}/events", json_body=body)

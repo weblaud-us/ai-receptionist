@@ -25,7 +25,7 @@ const area = `${path} L${W} ${H} L0 ${H} Z`;
 const kpis = [
   { k: 'Overflow calls answered', v: '214' },
   { k: 'Consults booked', v: '31' },
-  { k: 'Recovered by text', v: '18' },
+  { k: 'Emergencies triaged', v: '9' },
 ];
 const terms = [
   { t: 'Invisalign', x: '8%', y: '14%' },
@@ -39,7 +39,7 @@ const terms = [
     <SectionRule idx="06" label="Capabilities">Built for dentistry</SectionRule>
     <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
       <h2 id="cap-title" class="h2 lg:col-span-8">Made for how a dental practice runs. <span class="hl">Down to the diary.</span></h2>
-      <p class="lede lg:col-span-4">Booking, reporting, recalls and speech, each built for dentistry rather than adapted from a generic call bot.</p>
+      <p class="lede lg:col-span-4">Booking, reporting, confirmations and speech, each built for dentistry rather than adapted from a generic call bot.</p>
     </div>
 
     <div class="mt-[max(3rem,4.5vw)] grid grid-cols-1 gap-5 lg:grid-cols-12">
@@ -81,14 +81,14 @@ const terms = [
               <span class="absolute left-[calc(3.25rem+(100%-3.25rem)/2+6px)] top-[4px] flex h-[28px] w-[calc((100%-3.25rem)/2-12px)] items-center rounded-[2px] border border-[var(--line-strong)] bg-paper px-2 text-[0.6875rem] text-slate">Hygiene</span>
               <!-- lunch band 12:50–13:50 -->
               <span class="hatch absolute left-[3.25rem] right-0 top-[60px] flex h-[72px] items-center justify-center border-y border-champagne-ink/30 bg-[#f3eadb]/80">
-                <span class="rounded-[2px] bg-surface px-2 py-0.5 font-mono text-[0.6875rem] text-champagne-ink">12:50–13:50 lunch, blocked</span>
+                <span class="rounded-[2px] bg-surface px-2 py-0.5 font-mono text-[0.6875rem] text-champagne-ink">12:50–1:50 pm lunch, blocked</span>
               </span>
               <!-- incoming -->
               <span class="absolute left-[calc(3.25rem+6px)] top-[148px] flex h-[60px] w-[calc((100%-3.25rem)/2-12px)] flex-col justify-center rounded-[2px] bg-teal px-2.5 text-white">
                 <span class="text-[0.75rem] font-medium leading-tight">Implant consultation</span>
                 <span class="mt-0.5 text-[0.625rem] text-white/80">New patient, booked by {BRAND}</span>
               </span>
-              <span class="absolute right-[6px] top-[152px] hidden rounded-[2px] border border-teal/30 bg-teal-wash px-2 py-1 font-mono text-[0.625rem] text-teal sm:block">synced 1:14 PM</span>
+              <span class="absolute right-[6px] top-[152px] hidden rounded-[2px] border border-teal/30 bg-teal-wash px-2 py-1 font-mono text-[0.625rem] text-teal sm:block">synced 1:14 pm</span>
             </div>
           </div>
         </div>
@@ -100,7 +100,7 @@ const terms = [
           <p class="ord-label text-teal">02</p>
           <h3 class="h3 mt-3">An ROI dashboard you read in a minute</h3>
           <p class="mt-2.5 text-[0.9375rem] text-slate">
-            Overflow calls answered, consultations booked, emergencies triaged, missed calls recovered by text, and the pipeline it captured.
+            Overflow calls answered, consultations booked, emergencies triaged, and the implant and cosmetic pipeline it captured.
           </p>
         </div>
         <div class="tone-dark well mt-auto overflow-hidden !bg-night p-4 sm:p-5" aria-hidden="true">
@@ -136,13 +136,13 @@ const terms = [
         </div>
       </article>
 
-      <!-- 3. Recall SMS phone -->
+      <!-- 3. WhatsApp confirmation phone -->
       <article class="card ord-draw flex flex-col p-2 lg:col-span-5">
         <div class="px-4 pb-6 pt-5 sm:px-6">
           <p class="ord-label text-teal">03</p>
-          <h3 class="h3 mt-3">Recalls lapsed hygiene patients by text</h3>
+          <h3 class="h3 mt-3">Confirms bookings on WhatsApp</h3>
           <p class="mt-2.5 text-[0.9375rem] text-slate">
-            Finds patients overdue for their six-month visit and texts them inside quiet hours, with no clinical details and instant STOP handling.
+            Connect your practice's WhatsApp and patients get the time and the dentist seconds after the call, with no clinical details.
           </p>
         </div>
         <div class="well grid-paper mt-auto flex justify-center overflow-hidden px-4 pt-6" aria-hidden="true">
@@ -150,16 +150,15 @@ const terms = [
             <div class="mx-auto h-1 w-12 rounded-full bg-ink/15"></div>
             <div class="mt-3 flex items-center justify-between border-b border-[var(--line)] pb-2.5">
               <span class="text-[0.75rem] font-medium text-ink"><R v={practice} /></span>
-              <span class="font-mono text-[0.625rem] text-slate">Tue 10:02</span>
+              <span class="font-mono text-[0.625rem] text-slate">Tue 6:44 pm</span>
             </div>
             <div class="mt-3 rounded-[12px] rounded-bl-[3px] bg-paper px-3 py-2.5 text-[0.75rem] leading-[1.5] text-ink">
-              Hi Sam, it's <R v={practice} />. You're due for your six-month check-up and clean. Book a time that suits:{' '}
+              Hi Sam, you're booked in at <R v={practice} />: implant consultation with <R v={{ au: dentists.au[0], uk: dentists.uk[0] }} />, Thursday at 10:30. Need to change it?{' '}
               <span class="text-teal underline"><R v={bookUrl} /></span>
-              <span class="mt-1.5 block text-slate">Reply STOP to opt out.</span>
             </div>
             <div class="mt-3 flex flex-wrap gap-1.5">
               <span class="chip !h-5 border-teal/30 bg-teal-wash !text-[0.625rem] text-teal">no clinical details</span>
-              <span class="chip !h-5 !text-[0.625rem]">quiet hours respected</span>
+              <span class="chip !h-5 !text-[0.625rem]">sent seconds after the call</span>
             </div>
           </div>
         </div>

@@ -126,7 +126,7 @@ def _ics_time(value: Any) -> str:
 async def appointments_ics(db: Any, tenant: TenantConfig) -> str:
     rows = await _rows(db, "appointments", tenant.id, sort="start")
     stamp = _ics_time(utcnow())
-    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//AI Receptionist//Export//EN", "CALSCALE:GREGORIAN",
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//LaudLine//Export//EN", "CALSCALE:GREGORIAN",
              f"X-WR-CALNAME:{_ics_text(tenant.name)}"]
     for a in rows:
         if not isinstance(a.get("start"), datetime):

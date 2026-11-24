@@ -1,6 +1,6 @@
 <div align="center">
 
-# AI Receptionist
+# LaudLine
 
 **A multi-tenant, real-time AI voice receptionist for local businesses.**
 It answers the phone, books appointments, triages urgent calls, qualifies leads and hands off to a person, all on the business's own number.
@@ -48,7 +48,7 @@ It answers the phone, books appointments, triages urgent calls, qualifies leads 
 
 ## Overview
 
-AI Receptionist is a SaaS platform that gives every business its own AI phone receptionist. Each
+LaudLine is a SaaS platform that gives every business its own AI phone receptionist. Each
 business (a **tenant**) has its own phone numbers, opening hours, services, staff, knowledge base,
 voice and rules. The same platform serves salons, home services, restaurants, clinics, professional
 offices, hotels and dental practices through vertical templates.

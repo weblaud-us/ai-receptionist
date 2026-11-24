@@ -106,22 +106,14 @@ export function isValidPhone(normalized: string): boolean {
   return /^\+[1-9]\d{7,14}$/.test(normalized)
 }
 
-/** Timezones offered when a business is created or edited. */
+/** Timezones offered when a business is created or edited: LaudLine serves Australia and the UK only.
+ *  Forms still show a record's own value when it isn't in the list. */
 export const TIMEZONES = [
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles',
-  'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Vancouver', 'America/Halifax',
-  'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
-  'Europe/Amsterdam', 'Europe/Stockholm', 'Europe/Warsaw', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Qatar',
-  'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Dhaka', 'Asia/Kolkata', 'Australia/Sydney', 'Australia/Melbourne',
-  'Australia/Brisbane', 'Australia/Adelaide', 'Australia/Perth', 'Pacific/Auckland', 'UTC',
+  'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Adelaide', 'Australia/Perth',
+  'Australia/Hobart', 'Australia/Darwin', 'Europe/London',
 ]
 
-export const CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR', 'AUD', 'NZD', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'BDT', 'INR']
+export const CURRENCIES = ['AUD', 'GBP']
 
-/** ISO countries offered on business forms (code + name). Anything else can still be typed. */
-export const COUNTRIES = [
-  ['US', 'United States'], ['CA', 'Canada'], ['GB', 'United Kingdom'], ['IE', 'Ireland'], ['AU', 'Australia'],
-  ['NZ', 'New Zealand'], ['AE', 'United Arab Emirates'], ['SA', 'Saudi Arabia'], ['QA', 'Qatar'], ['KW', 'Kuwait'],
-  ['BH', 'Bahrain'], ['BD', 'Bangladesh'], ['IN', 'India'], ['DE', 'Germany'], ['FR', 'France'], ['ES', 'Spain'],
-  ['IT', 'Italy'], ['NL', 'Netherlands'],
-] as const
+/** ISO countries offered on business forms (code + name). */
+export const COUNTRIES = [['AU', 'Australia'], ['GB', 'United Kingdom']] as const

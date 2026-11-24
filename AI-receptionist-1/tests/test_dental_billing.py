@@ -91,6 +91,26 @@ async def test_dental_signup_must_be_au_or_gb(db, client, monkeypatch):
     assert r.status_code == 422 and "Australia" in r.text
 
 
+async def test_dental_signup_stores_the_type_of_practice(db, client, monkeypatch):
+    monkeypatch.setattr(settings, "SIGNUP_ENABLED", True)
+    body = {"email": "dr@wimpole.example", "password": PASSWORD, "business_name": "Wimpole Smiles",
+            "vertical": "dental", "practice_type": "mixed_nhs", "country": "GB", "timezone": "Europe/London",
+            "plan": "dental_essentials", "accept_terms": True}
+    r = client.post("/signup", json=body)
+    assert r.status_code == 200, r.text
+    doc = await db.tenants.find_one({"name": "Wimpole Smiles"})
+    assert doc["dental"]["practice_type"] == "mixed_nhs" and doc["dental"]["accepts_nhs"] is True
+    # "Mixed NHS and private" is a UK option only, and unknown types are refused.
+    au = {**body, "email": "dr@harbour.example", "business_name": "Harbour Smiles", "country": "AU",
+          "timezone": "Australia/Sydney"}
+    assert client.post("/signup", json=au).status_code == 422
+    assert client.post("/signup", json={**au, "practice_type": "orthodontist"}).status_code == 422
+    r = client.post("/signup", json={**au, "practice_type": "implant_cosmetic"})
+    assert r.status_code == 200, r.text
+    doc = await db.tenants.find_one({"name": "Harbour Smiles"})
+    assert doc["dental"]["practice_type"] == "implant_cosmetic" and doc["dental"]["accepts_nhs"] is False
+
+
 async def test_checkout_always_adds_the_dental_onboarding_fee(db, client, monkeypatch):
     monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_123")
     await create_tenant(name="Harbour Smiles", vertical="dental", tenant_id="ten_bill", status="incomplete",

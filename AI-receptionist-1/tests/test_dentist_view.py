@@ -218,7 +218,7 @@ async def test_the_day_includes_the_pms_diary_without_duplicates(db, client, mon
 
     fake = FakePMS()
     monkeypatch.setattr(sp, "TRANSPORT", httpx.MockTransport(fake))
-    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "AI Receptionist (ops@example.com)")
+    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "LaudLine (ops@example.com)")
     t = await create_tenant(name="Harbour Smiles", vertical="dental", country="AU", timezone=SYD, tenant_id="ten_dvp",
                             status="active", seed_template=False)
     await pms_sync.connect(t, "cliniko", KEY, user_id="usr_1")

@@ -1,4 +1,4 @@
-# AI Receptionist — backend
+# LaudLine — backend
 
 FastAPI API + LiveKit voice agent for many local businesses — salons, home services, restaurants,
 clinics, offices and hotels — each with its own number, hours, services, knowledge and voice

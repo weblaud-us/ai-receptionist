@@ -22,10 +22,9 @@ export interface RegionFacts {
   hosting: { city: string; region: string };
   /** Sample practice used in the console mock-up and demo calls (fictional). */
   practice: { name: string; suburb: string; phone: string; dentist: string };
-  /** What the hero headline uses as the typical high-value case. */
-  headlineValue: number;
-  /** Booked consult shown in the hero console. */
-  consoleValue: number;
+  /** A typical implant case: the hero headline, the console's booked lead, the pricing anchor, the
+   *  sample calls and the ROI calculator's default preset all use this one number. */
+  implantValue: number;
   consultFee: number;
   funds: string;
 }
@@ -39,12 +38,11 @@ export const REGION: Regional<RegionFacts> = {
     locale: 'en-AU',
     path: '/',
     pms: { primary: 'Cliniko', secondary: 'Dentally', secondaryNote: 'early access' },
-    emergency: { number: '000', extra: '' },
+    emergency: { number: '000', extra: 'Healthdirect on 1800 022 222' },
     hosting: { city: 'Sydney', region: 'ap-southeast-2' },
     // ACMA reserves (02) 5550 xxxx for fictional use.
     practice: { name: 'Harbourline Dental', suburb: 'Mosman', phone: '(02) 5550 4120', dentist: 'Dr Patel' },
-    headlineValue: 5000,
-    consoleValue: 4500,
+    implantValue: 5000,
     consultFee: 95,
     funds: 'HICAPS, Bupa, Medibank and other health funds',
   },
@@ -55,13 +53,12 @@ export const REGION: Regional<RegionFacts> = {
     currency: 'GBP',
     locale: 'en-GB',
     path: '/uk/',
-    pms: { primary: 'Dentally', secondary: 'Cliniko', secondaryNote: '' },
+    pms: { primary: 'Cliniko', secondary: 'Dentally', secondaryNote: 'early access' },
     emergency: { number: '999', extra: 'NHS 111' },
     hosting: { city: 'London', region: 'eu-west-2' },
     // Ofcom reserves 020 7946 0000–0999 for fictional use.
     practice: { name: 'Wimpole Dental Rooms', suburb: 'Marylebone', phone: '020 7946 0418', dentist: 'Dr Okafor' },
-    headlineValue: 5000,
-    consoleValue: 3200,
+    implantValue: 3500,
     consultFee: 75,
     funds: 'Denplan and practice payment plans',
   },

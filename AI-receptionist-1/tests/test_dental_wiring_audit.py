@@ -167,7 +167,7 @@ class LunchPMS(FakePMS):
 async def test_pms_slots_respect_the_practices_lunch_break_and_closures(db, monkeypatch):
     fake = LunchPMS()
     monkeypatch.setattr(sp, "TRANSPORT", httpx.MockTransport(fake))
-    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "AI Receptionist (ops@example.com)")
+    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "LaudLine (ops@example.com)")
     t = await create_tenant(name="Harbour Smiles", vertical="dental", timezone=SYD, country="AU", currency="AUD",
                             tenant_id="ten_lunch", status="active", seed_template=False,
                             extra={"hours": SPLIT, "scheduling": {"min_notice_minutes": 0}})

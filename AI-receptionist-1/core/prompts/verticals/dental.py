@@ -12,6 +12,9 @@ from core.tenancy.models import TenantConfig
 
 DENTAL_TOOLS = ("triage_dental_emergency", "qualify_cosmetic_lead", "join_waitlist")
 DENTAL_COUNTRIES = ("AU", "GB")     # the dental vertical is built for these two; signup and settings enforce it
+# The kind of practice, picked at signup (dashboard: packages/shared/src/lib/dental.ts) → the country it
+# applies to ("" = both). "mixed_nhs" also switches on DentalSettings.accepts_nhs.
+PRACTICE_TYPES = {"private": "", "mixed_nhs": "GB", "mixed_public": "AU", "implant_cosmetic": "", "specialist": ""}
 
 # ⚖ Audit P0-12: the red-flag track says "call the emergency number in the facts". These lines make
 # that number unambiguous, and separate life-threatening emergencies from after-hours advice.

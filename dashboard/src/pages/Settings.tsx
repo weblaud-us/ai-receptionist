@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@receptionist/shared/c
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { API_BASE } from '@receptionist/shared/lib/api'
 import { titleCase } from '@receptionist/shared/lib/format'
+import { practiceTypesFor } from '@receptionist/shared/lib/dental'
 import { useSystem } from '@/lib/hooks'
 import { useCtx, useTenant } from '@/lib/tenant'
 import { CURRENCIES, TIMEZONES } from '@/lib/tenant-format'
@@ -34,7 +35,7 @@ type Draft = Pick<Tenant, 'name' | 'description' | 'phone' | 'website' | 'addres
 
 const CONFIRMATION_DEFAULTS = { enabled: false, window: '10:00-18:00', only_without_whatsapp: true }
 const ESCALATION_DEFAULTS = { enabled: false, on_call: [], ack_minutes: 10 }
-const DENTAL_DEFAULTS = { accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false }
+const DENTAL_DEFAULTS = { practice_type: '', accepts_nhs: false, accepts_new_nhs_patients: false, accepts_private_health_funds: false, finance_available: false }
 const RECOVERY_DEFAULTS = { enabled: false, template: '', channel: 'sms' as const }
 const ENTITY_DEFAULTS = { registered_name: '', abn: '', company_number: '' }
 
@@ -71,6 +72,12 @@ export default function SettingsPage() {
   )
 }
 
+/** The practice types for the country, plus the saved one if it isn't among them. */
+function withCurrentType(value: string, country: string) {
+  const options = practiceTypesFor(country)
+  return value && !options.some((o) => o.value === value) ? [...options, { value, label: value }] : options
+}
+
 function DentalCard({ draft, set, country, sms }: { draft: Draft; set: (p: Partial<Draft>) => void; country: string; sms: boolean }) {
   const d = draft.dental ?? DENTAL_DEFAULTS
   const r = draft.missed_call_recovery ?? RECOVERY_DEFAULTS
@@ -93,6 +100,11 @@ function DentalCard({ draft, set, country, sms }: { draft: Draft; set: (p: Parti
             Forward calls to your assistant after a few rings. Lunch breaks and after-hours calls follow your opening hours.
           </p>
         </div>
+        <Field label="Type of practice" className="md:col-span-2 md:max-w-sm">
+          <SimpleSelect value={d.practice_type ?? ''} placeholder="Pick one"
+            options={withCurrentType(d.practice_type ?? '', country)}
+            onChange={(v) => set({ dental: { ...d, practice_type: v, ...(v === 'mixed_nhs' ? { accepts_nhs: true } : {}) } })} />
+        </Field>
         <div className="space-y-2">
           <div className="text-sm font-medium">Payments and funding</div>
           {country === 'GB' && (

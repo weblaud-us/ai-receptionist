@@ -90,7 +90,7 @@ def pms(monkeypatch):
     monkeypatch.setattr(sp, "TRANSPORT", httpx.MockTransport(fake))
     from config import settings
 
-    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "AI Receptionist (ops@example.com)")
+    monkeypatch.setattr(settings, "CLINIKO_USER_AGENT", "LaudLine (ops@example.com)")
     return fake
 
 
@@ -142,7 +142,7 @@ async def test_connect_stores_the_key_encrypted_and_mirrors_dentists_and_types(d
     assert settings_["connected"] and settings_["provider"] == "cliniko" and settings_["business_id"] == "b1"
     assert settings_["api_key_enc"] != KEY and KEY not in json.dumps(settings_, default=str)
     req = pms.requests[0]
-    assert req.url.host == "api.au2.cliniko.com" and req.headers["User-Agent"].startswith("AI Receptionist")
+    assert req.url.host == "api.au2.cliniko.com" and req.headers["User-Agent"].startswith("LaudLine")
     assert req.headers["Authorization"] == "Basic " + base64.b64encode(f"{KEY}:".encode()).decode()
     repos = Repos(db, t.id)
     dentists = await repos.resources.find({"source": "cliniko"})

@@ -6,7 +6,7 @@ import Regional from './Regional.astro';
 import { both, money } from '../data/regions';
 import { CLAIM_ZDR, WEB_DEMO } from '../data/site';
 
-const headlineValue = both((r, f) => money(r, f.headlineValue));
+const headlineValue = both((r, f) => money(r, f.implantValue));
 const accent = { au: 'Australian', uk: 'British' };
 const facts = [
   { k: 'About a second', v: both((r) => `to reply, in a natural ${accent[r]} voice`) },
@@ -17,7 +17,7 @@ const facts = [
   CLAIM_ZDR
     ? { k: 'Zero data retention', v: { au: 'on AI processing of patient calls', uk: 'on AI processing of patient calls' } }
     : { k: 'No AI training', v: { au: "on your patients' calls, by anyone", uk: "on your patients' calls, by anyone" } },
-  { k: 'Text-back in 15 s', v: { au: 'when a caller hangs up before the greeting ends', uk: 'when a caller hangs up before the greeting ends' } },
+  { k: 'Every call transcribed', v: { au: 'with a summary in your dashboard; never recorded', uk: 'with a summary in your dashboard; never recorded' } },
 ];
 ---
 <section id="top" data-tone="dark" data-orb="hero" class="tone-dark glow overflow-hidden" aria-labelledby="hero-title">

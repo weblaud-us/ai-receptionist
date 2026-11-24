@@ -29,7 +29,8 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 const manualDraft = (): SiteDraft => {
   const d = emptyDraft()
-  d.profile = { ...d.profile, vertical: 'home_services', country: 'US', timezone: 'America/Chicago', currency: 'USD' }
+  // LaudLine sells to dental practices in Australia and the UK.
+  d.profile = { ...d.profile, vertical: 'dental', country: 'AU', timezone: 'Australia/Sydney', currency: 'AUD' }
   return d
 }
 
@@ -54,7 +55,7 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
 
   const p = draft.profile
   const detailsOk = p.name.trim().length >= 2 && !!p.vertical && !!p.timezone && /^[A-Z]{2}$/.test(p.country)
-  const vlist = (verticals.data?.verticals ?? []).map((v) => ({ key: v.key, label: v.label }))
+  const vlist = (verticals.data?.verticals ?? []).filter((v) => v.key === 'dental').map((v) => ({ key: v.key, label: v.label }))
   const verticalLabel = vlist.find((v) => v.key === p.vertical)?.label ?? titleCase(p.vertical)
 
   const fetchSite = () =>
@@ -70,7 +71,7 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
   const create = () => {
     const kept = draftForApi(draft)
     m.provision.mutate({
-      name: p.name.trim(), vertical: p.vertical, timezone: p.timezone, country: p.country, currency: p.currency || 'USD',
+      name: p.name.trim(), vertical: p.vertical, timezone: p.timezone, country: p.country, currency: p.currency || (p.country === 'GB' ? 'GBP' : 'AUD'),
       phone: p.phone.trim(), description: p.description.trim(), website: p.website.trim(), address: p.address,
       ...kept, owner_email: owner.email.trim(), owner_name: owner.name.trim(),
       number: number.source === 'none' ? { source: 'none', e164: '' } : number,

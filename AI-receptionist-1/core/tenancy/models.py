@@ -454,6 +454,9 @@ class DentalSettings(BaseModel):
     """Dental vertical plug-in settings (AU private health funds, UK NHS / private mix)."""
 
     model_config = ConfigDict(extra="ignore")
+    # private | mixed_nhs (UK) | mixed_public (AU) | implant_cosmetic | specialist; "" = not said
+    # (core/prompts/verticals/dental.py PRACTICE_TYPES).
+    practice_type: str = Field(default="", max_length=32)
     accepts_nhs: bool = False                   # UK: any NHS dentistry at all
     accepts_new_nhs_patients: bool = False      # UK: taking on new NHS patients (most mixed practices don't)
     accepts_private_health_funds: bool = False  # AU: HICAPS on-the-spot claiming

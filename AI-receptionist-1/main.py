@@ -1,5 +1,5 @@
 """
-AI Receptionist — FastAPI application.
+LaudLine — FastAPI application.
 Entry point: uvicorn main:app --host 127.0.0.1 --port 8002 --proxy-headers --forwarded-allow-ips=127.0.0.1
 """
 
@@ -81,7 +81,7 @@ _ROUTERS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("AI Receptionist starting (env=%s)", settings.APP_ENV)
+    logger.info("LaudLine starting (env=%s)", settings.APP_ENV)
 
     await connect_db()
 
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
         except Exception as _pw_err:
             logger.warning("TTS prewarm skipped: %s", _pw_err)
 
-    logger.info("AI Receptionist is live on port %s", settings.PORT)
+    logger.info("LaudLine is live on port %s", settings.PORT)
     yield
 
     # Audit SRE-09: owner alerts and confirmations still being sent must go out before we exit.
@@ -130,12 +130,12 @@ async def lifespan(app: FastAPI):
     await close_job_queue()
     await redis_store.close()
     await disconnect_db()
-    logger.info("AI Receptionist stopped")
+    logger.info("LaudLine stopped")
 
 
 _docs = not settings.is_production
 app = FastAPI(
-    title="AI Receptionist",
+    title="LaudLine",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs" if _docs else None,

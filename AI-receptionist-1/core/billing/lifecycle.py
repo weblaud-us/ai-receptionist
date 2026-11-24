@@ -189,7 +189,7 @@ async def cancel(db: Any, tenant: TenantConfig, *, billing_extra: Optional[Dict[
     await apply(db, tenant, billing, status="cancelled", audit="billing.cancelled", actor=actor)
     if first_time:
         when = billing["delete_after"].strftime("%d %B %Y")
-        await email_owners(db, tenant, f"Your {tenant.name} receptionist is cancelled",
+        await email_owners(db, tenant, f"LaudLine for {tenant.name} is cancelled",
                            f"Your subscription has ended. Calls to your number are now forwarded to your "
                            f"transfer number (or callers are asked to call back).\n\n"
                            f"Your data is kept until {when}; download it any time before then from "
@@ -235,8 +235,8 @@ async def on_checkout_completed(db: Any, session: Dict[str, Any]) -> str:
                 await apply(db, refreshed, {"trial_used": True}, status="trial")
                 status = "trial"
     if first:
-        await email_owners(db, tenant, "You're in — let's set up your receptionist",
-                           f"Thanks for subscribing. Finish setting up {tenant.name} (about 10 minutes): "
+        await email_owners(db, tenant, "You're in — let's set up LaudLine",
+                           f"Thanks for signing up. Finish setting up {tenant.name} here; most practices are answering calls within days: "
                            f"{dashboard('/onboarding')}")
     return status
 

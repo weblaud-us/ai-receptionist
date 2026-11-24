@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Renders public/og.png (1200×630) for link previews, in the site's Ordin-style look: ink ground,
- * a diagonal mint aurora, a dotted sphere with orbital rings, the lowercase wordmark and headline.
+ * a diagonal mint aurora, a dotted sphere with orbital rings, the LaudLine wordmark and headline.
  * Run after changing the brand or headline:
  *   npm run og -w landing-page
  * The result is committed; the build doesn't run this.
@@ -13,7 +13,12 @@ import sharp from 'sharp';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const site = readFileSync(resolve(here, '../src/data/site.ts'), 'utf8');
-const brand = site.match(/export const BRAND = '([^']+)'/)?.[1] ?? 'Front Desk';
+const brand = site.match(/export const BRAND = '([^']+)'/)?.[1] ?? 'LaudLine';
+// The wordmark itself (src/assets/laudline.svg): its path and the viewBox it is cropped to.
+const logo = readFileSync(resolve(here, '../src/assets/laudline.svg'), 'utf8');
+const logoPath = logo.match(/ d="([^"]+)"/)[1];
+const [lx, ly, , lh] = logo.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
+const logoScale = 44 / lh; // 44 px tall
 
 // librsvg uses installed system fonts, so list close fallbacks after the site's faces.
 const sans = "'Geist', 'Segoe UI', Helvetica, Arial, sans-serif";
@@ -72,10 +77,8 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" v
   ${ring(R * 1.28, R * 0.62, -22, 0.5)}
   ${ring(R * 1.04, R * 0.98, 35, 0.3)}
 
-  <g transform="translate(72 64)">
-    <rect x="1" y="1" width="32" height="11" fill="none" stroke="${BONE}" stroke-opacity=".45" stroke-width="2"/>
-    <rect x="0" y="17" width="34" height="13" fill="${MINT}"/>
-    <text x="50" y="27" font-family="${sans}" font-size="32" fill="${BONE}" letter-spacing="-1.8">${brand.toLowerCase()}</text>
+  <g transform="translate(72 58) scale(${logoScale}) translate(${-lx} ${-ly})" aria-label="${brand}">
+    <path d="${logoPath}" fill="${BONE}" fill-rule="evenodd"/>
   </g>
 
   <text x="72" y="196" font-family="${mono}" font-size="15" fill="${STONE}">AI OVERFLOW RECEPTIONIST · DENTAL PRACTICES · AU / UK</text>

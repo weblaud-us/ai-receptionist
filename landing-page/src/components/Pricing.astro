@@ -13,7 +13,7 @@ const overage = both((r) => money(r, OVERAGE_PER_MIN[r], { cents: true }));
 const freeMonths = 12 - ANNUAL_MONTHS_CHARGED;
 /** "1 booked implant covers N+ months": the hero console's consult value over the plan price. */
 const anchor = (monthly: { au: number; uk: number }) =>
-  both((r) => `One booked implant case (about ${money(r, REGION[r].consoleValue)}) covers ${Math.floor(REGION[r].consoleValue / monthly[r])}+ months of the plan.`);
+  both((r) => `One booked implant case (about ${money(r, REGION[r].implantValue)}) covers ${Math.floor(REGION[r].implantValue / monthly[r])}+ months of the plan.`);
 const featureText = (f: string) =>
   f === 'Books into Cliniko or Dentally' ? { au: 'Books into Cliniko (Dentally in early access)', uk: 'Books into Dentally (early access) or Cliniko' } : { au: f, uk: f };
 ---
@@ -28,7 +28,7 @@ const featureText = (f: string) =>
     <!-- Pilot -->
     <div class="card mt-[max(3rem,4.5vw)] grid grid-cols-1 gap-8 p-6 sm:p-8 lg:grid-cols-12 lg:items-center lg:gap-12 lg:p-10">
       <div class="lg:col-span-6">
-        <p class="chip border-teal/30 bg-teal-wash text-teal">{TRIAL.days}-day after-hours pilot</p>
+        <p class="chip border-teal/30 bg-teal-wash text-teal">{TRIAL.days}-day pilot</p>
         <h3 class="mt-4 text-[clamp(1.625rem,1.2rem+1.2vw,2.125rem)] leading-[1.15] tracking-[-0.04em]">Start with lunch breaks and evenings only.</h3>
         <p class="mt-3 max-w-[56ch] text-[0.9375rem] text-slate">
           Cover lunch and after hours for two weeks without touching daytime reception. Forwarding goes on your existing number, your team stays on the

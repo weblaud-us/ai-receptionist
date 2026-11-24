@@ -172,7 +172,7 @@ function SubjectRequests({ legal }: { legal: LegalStatus }) {
       <CardContent className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-[1fr_12rem_auto] sm:items-end">
           <Field label="Their phone number">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 512 555 0123" inputMode="tel"
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+61 412 345 678" inputMode="tel"
               onKeyDown={(e) => e.key === 'Enter' && void lookup()} />
           </Field>
           <Field label="Request received on">

@@ -190,7 +190,7 @@ function Brand() {
         {ctx?.vertical.key === 'hotel' ? <ConciergeBell className="size-5" /> : <Building2 className="size-5" />}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-sidebar-foreground">{ctx?.tenant.name ?? 'AI Receptionist'}</div>
+        <div className="truncate text-sm font-semibold text-sidebar-foreground">{ctx?.tenant.name ?? 'LaudLine'}</div>
         <div className="text-xs text-sidebar-foreground/60">{ctx?.vertical.label.split(',')[0]}</div>
       </div>
     </div>

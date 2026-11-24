@@ -32,7 +32,7 @@ export const FAQS: Faq[] = [
   {
     q: 'What if a patient has an emergency, or asks for an exact price?',
     a: {
-      au: `If a caller describes swelling that affects breathing or swallowing, heavy bleeding or facial trauma, the first thing it says is to call 000, and it alerts the practice straight away. Other urgent problems get your earliest same-day slot. It never estimates treatment costs or gives clinical advice; it quotes only the consultation fees and “from” prices you set.`,
+      au: `If a caller describes swelling that affects breathing or swallowing, heavy bleeding or facial trauma, the first thing it says is to call 000, and it alerts the practice straight away. Other urgent problems get your earliest same-day slot, and out of hours they're also pointed to Healthdirect on 1800 022 222. It never estimates treatment costs or gives clinical advice; it quotes only the consultation fees and “from” prices you set.`,
       uk: `If a caller describes swelling that affects breathing or swallowing, heavy bleeding or facial trauma, the first thing it says is to call 999, and it alerts the practice straight away. Out of hours, other urgent problems are pointed to NHS 111. It never estimates treatment costs or gives clinical advice; it quotes only the consultation fees and “from” prices you set.`,
     },
   },

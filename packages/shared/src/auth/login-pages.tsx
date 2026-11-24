@@ -1,8 +1,9 @@
 /** Sign-in, forgot-password and reset-password screens, shared by the client and platform apps. */
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { CheckCircle2, Headset, Loader2, type LucideIcon } from 'lucide-react'
+import { CheckCircle2, Loader2, type LucideIcon } from 'lucide-react'
 import { ErrorBanner } from '../components/blocks'
+import { LaudlineLogo } from '../components/laudline-logo'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -10,7 +11,8 @@ import { Label } from '../components/ui/label'
 import { api, API_BASE } from '../lib/api'
 import { useAuth } from './auth'
 
-export function AuthCard({ title, description, icon: Icon = Headset, children }: {
+/** The LaudLine wordmark heads every auth screen; pass `icon` to show that instead. */
+export function AuthCard({ title, description, icon: Icon, children }: {
   title: string
   description: string
   icon?: LucideIcon
@@ -20,9 +22,13 @@ export function AuthCard({ title, description, icon: Icon = Headset, children }:
     <div className="flex min-h-screen items-center justify-center bg-sidebar p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Icon className="size-6" />
-          </div>
+          {Icon ? (
+            <div className="mb-2 flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <Icon className="size-6" />
+            </div>
+          ) : (
+            <LaudlineLogo className="mx-auto mb-3 h-7 text-foreground" />
+          )}
           <CardTitle className="text-xl">{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>

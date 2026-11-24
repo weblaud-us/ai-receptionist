@@ -76,7 +76,7 @@ class ClinikoProvider:
 
     def _headers(self) -> Dict[str, str]:
         return {"Accept": "application/json", "Content-Type": "application/json",
-                "User-Agent": settings.CLINIKO_USER_AGENT.strip() or "AI Receptionist (support)"}
+                "User-Agent": settings.CLINIKO_USER_AGENT.strip() or "LaudLine (support)"}
 
     async def _call(self, method: str, path: str, *, params: Any = None, json_body: Any = None,
                     write: bool = False) -> Any:

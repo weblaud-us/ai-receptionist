@@ -66,7 +66,7 @@ def ics_text(t: TenantConfig, appt: Dict[str, Any], now: datetime | None = None)
     with_whom = f" with {appt['resource_name']}" if appt.get("resource_name") else ""
     change = f"To change or cancel, call {t.phone}." if t.phone else "To change or cancel, call the practice."
     lines = [
-        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//AI Receptionist//Appointments//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//LaudLine//Appointments//EN", "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH", "BEGIN:VEVENT",
         f"UID:{appt['appointment_id']}@{t.id}",
         f"DTSTAMP:{_utc(now or datetime.now(timezone.utc))}",

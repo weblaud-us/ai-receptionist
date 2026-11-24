@@ -51,6 +51,8 @@ export interface EscalationConfig {
 
 /** Dental vertical settings (AU private health funds, UK NHS / private mix). */
 export interface DentalSettings {
+  /** packages/shared/src/lib/dental.ts DENTAL_PRACTICE_TYPES; '' = not said. */
+  practice_type?: string
   accepts_nhs: boolean
   accepts_new_nhs_patients: boolean
   accepts_private_health_funds: boolean

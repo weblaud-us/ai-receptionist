@@ -64,7 +64,7 @@ def test_totp_matches_rfc6238_vector():
     assert totp.verify(secret, "287082", now=59 + 30)        # one step of drift allowed
     assert not totp.verify(secret, "287082", now=59 + 90)
     assert not totp.verify(secret, "12345", now=59) and not totp.verify(secret, "abcdef", now=59)
-    assert totp.otpauth_uri(secret, "a@b.co").startswith("otpauth://totp/AI%20Receptionist%3Aa%40b.co?secret=")
+    assert totp.otpauth_uri(secret, "a@b.co").startswith("otpauth://totp/LaudLine%3Aa%40b.co?secret=")
 
 
 async def test_mfa_setup_login_and_enforcement(db, client, monkeypatch):

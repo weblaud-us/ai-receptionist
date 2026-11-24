@@ -52,6 +52,6 @@ def verify(secret: str, code: str, *, now: Optional[float] = None, window: int =
     return matched_step(secret, code, now=now, window=window) is not None
 
 
-def otpauth_uri(secret: str, account: str, issuer: str = "AI Receptionist") -> str:
+def otpauth_uri(secret: str, account: str, issuer: str = "LaudLine") -> str:
     label = quote(f"{issuer}:{account}")
     return f"otpauth://totp/{label}?secret={secret}&issuer={quote(issuer)}&algorithm=SHA1&digits={DIGITS}&period={STEP}"

@@ -16,7 +16,7 @@ export function AssignNumberDialog({ tenant, onClose }: { tenant: { id: string; 
           <DialogTitle>Assign a number to {tenant.name}</DialogTitle>
           <DialogDescription>Calls to this number will be answered as {tenant.name}. It must already route to the LiveKit SIP trunk.</DialogDescription>
         </DialogHeader>
-        <Input value={e164} placeholder="+15125551234" onChange={(e) => setE164(e.target.value)} />
+        <Input value={e164} placeholder="+61 2 5550 4120" onChange={(e) => setE164(e.target.value)} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button disabled={e164.replace(/\D/g, '').length < 8 || m.assignNumber.isPending}

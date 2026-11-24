@@ -8,13 +8,12 @@ import { Button } from '@receptionist/shared/components/ui/button'
 import { Input } from '@receptionist/shared/components/ui/input'
 import { useNumberOrders, useNumberSearch, useOrderNumber, useResendVerification, type NumberOrder } from '@/lib/billing'
 import { cn } from '@receptionist/shared/lib/utils'
+import { DENTAL_COUNTRIES } from '@receptionist/shared/lib/dental'
+import { useCtx } from '@/lib/tenant'
 
-const COUNTRIES = [
-  { value: 'US', label: 'United States' },
-  { value: 'CA', label: 'Canada' },
-  { value: 'GB', label: 'United Kingdom' },
-  { value: 'AE', label: 'United Arab Emirates' },
-]
+// LaudLine practices are in Australia and the UK. Both need a regulatory bundle before the number is bought.
+const COUNTRIES = DENTAL_COUNTRIES
+const AREA_CODE_HINT: Record<string, string> = { AU: '2', GB: '20' }
 
 const STEP_LABEL: Record<string, string> = {
   purchased: 'Reserving the number',
@@ -58,7 +57,8 @@ function OrderProgress({ order }: { order: NumberOrder }) {
 /** Search → pick → buy, then live progress of the order. */
 export function NumberPicker({ onLive }: { onLive?: () => void }) {
   const { user } = useAuth()
-  const [country, setCountry] = useState('US')
+  const ctx = useCtx()
+  const [country, setCountry] = useState(ctx.tenant.country === 'GB' ? 'GB' : 'AU')
   const [areaCode, setAreaCode] = useState('')
   const [query, setQuery] = useState<{ country: string; area_code: string } | null>(null)
   const orders = useNumberOrders(true)
@@ -102,7 +102,7 @@ export function NumberPicker({ onLive }: { onLive?: () => void }) {
         onSubmit={(e) => { e.preventDefault(); setQuery({ country, area_code: areaCode.trim() }) }}>
         <Field label="Country"><SimpleSelect value={country} onChange={setCountry} options={COUNTRIES} className="w-48" /></Field>
         <Field label="Area code (optional)">
-          <Input className="w-32" inputMode="numeric" maxLength={5} value={areaCode} placeholder="512"
+          <Input className="w-32" inputMode="numeric" maxLength={5} value={areaCode} placeholder={AREA_CODE_HINT[country]}
             onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, ''))} />
         </Field>
         <Button type="submit" variant="outline" disabled={search.isFetching}>

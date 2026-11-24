@@ -1,7 +1,7 @@
-# Front Desk Dashboard
+# LaudLine dashboard
 
 React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui (Base UI) + TanStack Query.
-Talks to the AI Receptionist backend in `../AI-receptionist-1`.
+Talks to the LaudLine backend in `../AI-receptionist-1`.
 
 ## Pages
 | Route | What it does |

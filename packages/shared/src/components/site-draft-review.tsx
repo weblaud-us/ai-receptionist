@@ -78,7 +78,7 @@ export function SiteDraftReview({
               <SimpleSelect value={p.vertical} onChange={(v) => setProfile({ vertical: v })}
                 options={verticals.map((v) => ({ value: v.key, label: v.label }))} />
             </Field>
-            <Field label="Public phone" hint="International format, e.g. +15125551234">
+            <Field label="Public phone" hint="International format, e.g. +61 2 5550 4120 or +44 20 7946 0418">
               <Input value={p.phone} onChange={(e) => setProfile({ phone: e.target.value })} />
             </Field>
             <Field label="One sentence about the business" className="sm:col-span-2" hint="The assistant says this when callers ask what you do.">

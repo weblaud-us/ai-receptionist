@@ -110,7 +110,7 @@ def generate_booking_ics(
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Hotel AI Receptionist//Booking Calendar//EN",
+        "PRODID:-//LaudLine//Booking Calendar//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         "BEGIN:VEVENT",

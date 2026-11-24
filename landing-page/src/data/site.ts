@@ -18,8 +18,8 @@ import type { Region } from './regions';
 import { REGION } from './regions';
 import type { PlanKey } from './plans';
 
-/** ⚠ Placeholder brand. Change it here; nothing else hard-codes the name. */
-export const BRAND = 'Front Desk';
+/** The product name. Change it here; nothing else on the site hard-codes it. */
+export const BRAND = 'LaudLine';
 export const YEAR = 2026;
 
 export const NAV = [
@@ -54,7 +54,7 @@ export const WEB_DEMO = {
 };
 
 /** The fictional demo practices (AI-receptionist-1/scripts/seed_web_demo.py), as on the sample calls. */
-export const DEMO_PRACTICE = { au: 'Harbourline Dental', uk: 'Wimpole Dental' } as const;
+export const DEMO_PRACTICE = { au: REGION.au.practice.name, uk: REGION.uk.practice.name } as const;
 
 /** Dashboard signup, preselecting the dental vertical, the country and (optionally) a plan. */
 export function signupUrl(region: Region, plan: PlanKey = 'dental_essentials'): string {

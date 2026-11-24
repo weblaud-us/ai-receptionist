@@ -1,8 +1,9 @@
 ---
 /**
- * Footer (Ordin): link columns, a full-width lowercase wordmark and a mono status line. On desktop it
+ * Footer (Ordin): link columns, a full-width wordmark and a mono status line. On desktop it
  * is fixed underneath the page and revealed as the last band scrolls away (motion/scenes.ts).
  */
+import Wordmark from '../assets/laudline.svg';
 import Logo from './Logo.astro';
 import R from './R.astro';
 import { BRAND, LINKS, YEAR } from '../data/site';
@@ -19,7 +20,7 @@ const headClass = 'ord-label text-teal';
   <div class="container-page grid grid-cols-1 gap-10 pb-[max(2.5rem,3vw)] pt-[max(4rem,6vw)] sm:grid-cols-2 lg:grid-cols-12">
     <div class="sm:col-span-2 lg:col-span-4">
       <Logo />
-      <p class="mt-5 max-w-[34ch] text-[0.9375rem] text-slate">An AI overflow and after-hours receptionist for private and mixed dental practices.</p>
+      <p class="mt-5 max-w-[34ch] text-[0.9375rem] text-slate">An AI overflow receptionist for private and mixed dental practices.</p>
     </div>
 
     <nav aria-labelledby="f-product" class="lg:col-span-2 lg:col-start-6">
@@ -51,7 +52,7 @@ const headClass = 'ord-label text-teal';
   </div>
 
   <div class="overflow-hidden" aria-hidden="true">
-    <p class="container-page whitespace-nowrap text-[21vw] font-[450] lowercase leading-[0.8] tracking-[-0.075em] text-ink">{BRAND}</p>
+    <div class="container-page text-ink"><Wordmark class="block h-auto w-full" aria-hidden="true" focusable="false" /></div>
   </div>
 
   <div class="container-page">

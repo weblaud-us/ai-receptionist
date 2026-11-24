@@ -9,6 +9,9 @@
  *   LiveKit's `lk.transcription` text streams, written with textContent (never HTML).
  * - The orb follows the audio level (Web Audio analyser on the agent's voice and the microphone);
  *   with reduced motion it only changes colour.
+ * - If the browser blocks playback (autoplay rules), the orb asks for a tap and that tap turns the sound
+ *   on instead of ending the call. If no agent joins the room, the call ends with a message rather than
+ *   leaving the visitor in silence.
  */
 import type { RemoteTrack, Room } from 'livekit-client';
 import { currentRegion } from './region';
@@ -28,6 +31,8 @@ const LABEL: Record<State, string> = {
 const IN_CALL: State[] = ['connecting', 'listening', 'thinking', 'speaking', 'ending'];
 const AGENT_STATES: Record<string, State> = { listening: 'listening', thinking: 'thinking', speaking: 'speaking' };
 const CREDENTIAL_MAX_AGE_MS = 50 * 60_000; // Google ID tokens last an hour
+const AGENT_JOIN_TIMEOUT_MS = 15_000; // the agent normally joins in 1–3 s
+const AGENT_VOICE_TRACK = 'roomio_audio'; // the agent's speech (its other audio track is background sound)
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 
 interface StartResponse {
@@ -121,12 +126,14 @@ export function initLiveDemo() {
   let countdown = 0;
   let deadline = 0;
   let maxSeconds = 180;
+  let soundBlocked = false;
+  let joinTimer = 0;
   const segments = new Map<string, HTMLLIElement>();
 
   const setState = (next: State) => {
     state = next;
     root.dataset.state = next;
-    label.textContent = LABEL[next];
+    label.textContent = soundBlocked && IN_CALL.includes(next) && next !== 'ending' ? 'Tap for sound' : LABEL[next];
     orb.disabled = next === 'signed-out' || next === 'connecting' || next === 'ending';
     orb.setAttribute('aria-label', next === 'ready' || next === 'ended' ? 'Start the demo call' : IN_CALL.includes(next) ? `Call in progress: ${LABEL[next]}` : LABEL[next]);
     endBtn.hidden = !IN_CALL.includes(next) || next === 'ending';
@@ -251,6 +258,8 @@ export function initLiveDemo() {
   const cleanup = () => {
     cancelAnimationFrame(raf);
     window.clearInterval(countdown);
+    window.clearTimeout(joinTimer);
+    soundBlocked = false;
     root.style.setProperty('--lvl', '0');
     audioBox.replaceChildren();
     agentAnalyser = micAnalyser = null;
@@ -311,14 +320,22 @@ export function initLiveDemo() {
     maxSeconds = body.max_seconds ?? maxSeconds;
 
     try {
-      const { Room: LkRoom, RoomEvent, Track } = await import('livekit-client');
+      const { Room: LkRoom, RoomEvent, Track, ParticipantKind } = await import('livekit-client');
       const r = new LkRoom({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       room = r;
 
-      r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+      r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication) => {
         if (track.kind !== Track.Kind.Audio) return;
         audioBox.append(track.attach());
-        agentAnalyser = analyser(track.mediaStreamTrack);
+        // The meter follows the agent's voice, not its background-sound track.
+        if (!agentAnalyser || publication.trackName === AGENT_VOICE_TRACK) agentAnalyser = analyser(track.mediaStreamTrack);
+      });
+      // Autoplay rules can block the agent's audio even after the tap (Safari, iOS, muted sites).
+      r.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        if (room !== r) return;
+        soundBlocked = !r.canPlaybackAudio;
+        setState(state);
+        if (soundBlocked) say('Your browser blocked the sound. Tap the button to hear Ava.');
       });
       r.on(RoomEvent.ParticipantAttributesChanged, (_changed, participant) => {
         if (participant === r.localParticipant) return;
@@ -355,12 +372,29 @@ export function initLiveDemo() {
         return fail(denied ? 'Microphone access was blocked. Allow it in your browser’s address bar, then tap again.'
           : 'No microphone found. Plug one in, or play the sample calls below.');
       }
-      await r.startAudio();
+      try {
+        await r.startAudio();
+      } catch {
+        // Not fatal: the orb asks for a tap (AudioPlaybackStatusChanged) and that tap retries.
+      }
+      soundBlocked = !r.canPlaybackAudio;
       const mic = r.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
       if (mic) micAnalyser = analyser(mic);
-      setState('listening');
-      say(`Connected to ${body.practice_name ?? 'the practice'}. Ava will answer in a moment.`);
+      // The agent may already be speaking its greeting; don't overwrite that.
+      if (state === 'connecting') setState('listening');
+      else setState(state);
+      say(soundBlocked
+        ? 'Your browser blocked the sound. Tap the button to hear Ava.'
+        : `Connected to ${body.practice_name ?? 'the practice'}. Ava will answer in a moment.`);
       startCountdown(maxSeconds);
+      // A worker that is down or busy would otherwise leave the visitor in silence for the whole call.
+      joinTimer = window.setTimeout(() => {
+        if (room !== r) return;
+        const agentHere = [...r.remoteParticipants.values()].some((p) => p.kind === ParticipantKind.AGENT);
+        if (agentHere) return;
+        void r.disconnect();
+        showError("The receptionist didn't pick up. Please try again in a minute, or play the sample calls below.");
+      }, AGENT_JOIN_TIMEOUT_MS);
       if (!reduced) raf = requestAnimationFrame(tick);
     } catch {
       void room?.disconnect();
@@ -375,7 +409,17 @@ export function initLiveDemo() {
     void room.disconnect();
   };
 
+  const unblockSound = () => {
+    if (!room) return;
+    void room.startAudio().then(() => {
+      soundBlocked = !room?.canPlaybackAudio;
+      setState(state);
+      if (!soundBlocked) say('Sound on. Go ahead and talk to Ava.');
+    }).catch(() => undefined);
+  };
+
   orb.addEventListener('click', () => {
+    if (soundBlocked && room) return unblockSound();
     if (state === 'ready' || state === 'ended') void start();
     else if (state === 'listening' || state === 'thinking' || state === 'speaking') stop();
   });

@@ -1,68 +1,38 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { Check, CheckCircle2, Headset, Loader2 } from 'lucide-react'
+import { Check, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { ErrorBanner, Field } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
-import { Badge } from '@receptionist/shared/components/ui/badge'
 import { Button } from '@receptionist/shared/components/ui/button'
-import { Card, CardContent } from '@receptionist/shared/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Checkbox } from '@receptionist/shared/components/ui/checkbox'
 import { Input } from '@receptionist/shared/components/ui/input'
 import { api, type TokenResponse } from '@receptionist/shared/lib/api'
-import { formatPrice, usePlans } from '@/lib/billing'
+import { formatPrice, usePlans, type PlanInfo } from '@/lib/billing'
 import { cn } from '@receptionist/shared/lib/utils'
 import { AuthCard } from '@receptionist/shared/auth/login-pages'
-
-const BUSINESS_TYPES = [
-  { value: 'home_services', label: 'Home services (plumbing, HVAC, electrical…)' },
-  { value: 'salon', label: 'Salon, barber or spa' },
-  { value: 'dental', label: 'Dental practice' },
-  { value: 'clinic', label: 'Clinic, physio or therapy' },
-  { value: 'restaurant', label: 'Restaurant or café' },
-  { value: 'professional', label: 'Professional services (law, accounting…)' },
-  { value: 'hotel', label: 'Hotel or guesthouse' },
-  { value: 'generic', label: 'Something else' },
-]
-
-// Launch markets first (English-speaking: Australia, UK, Ireland, Malta).
-const COUNTRIES = [
-  { value: 'AU', label: 'Australia' },
-  { value: 'GB', label: 'United Kingdom' },
-  { value: 'IE', label: 'Ireland' },
-  { value: 'MT', label: 'Malta' },
-  { value: 'US', label: 'United States' },
-  { value: 'CA', label: 'Canada' },
-  { value: 'DE', label: 'Germany' },
-  { value: 'FR', label: 'France' },
-  { value: 'ES', label: 'Spain' },
-  { value: 'NL', label: 'Netherlands' },
-  { value: 'AE', label: 'United Arab Emirates' },
-  { value: 'SA', label: 'Saudi Arabia' },
-]
-
-// Dental practices are AU / UK only (emergency numbers, health funds and NHS rules are written for them).
-const DENTAL_COUNTRIES = COUNTRIES.filter((c) => c.value === 'AU' || c.value === 'GB')
+import { LaudlineLogo } from '@receptionist/shared/components/laudline-logo'
+import { DENTAL_COUNTRIES, defaultTimezone, practiceTypesFor, type DentalCountry } from '@receptionist/shared/lib/dental'
 
 /** A first guess from the browser's time zone; the visitor can change it. */
-function guessCountry(tz: string): string {
-  if (tz.startsWith('Australia/')) return 'AU'
-  const byZone: Record<string, string> = {
-    'Europe/London': 'GB', 'Europe/Belfast': 'GB', 'Europe/Dublin': 'IE', 'Europe/Malta': 'MT',
-    'Europe/Berlin': 'DE', 'Europe/Paris': 'FR', 'Europe/Madrid': 'ES', 'Europe/Amsterdam': 'NL',
-    'Asia/Dubai': 'AE', 'Asia/Riyadh': 'SA',
-  }
-  if (byZone[tz]) return byZone[tz]
-  if (tz.startsWith('America/')) return /Toronto|Vancouver|Edmonton|Winnipeg|Halifax|Regina|St_Johns/.test(tz) ? 'CA' : 'US'
-  return 'GB'
+function guessCountry(tz: string): DentalCountry {
+  return tz.startsWith('Australia/') ? 'AU' : 'GB'
 }
 
-function guessTimezone(): string {
+function browserTimezone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
   } catch {
-    return 'America/New_York'
+    return ''
   }
+}
+
+/** The browser's zone when it is in the practice's country, else that country's main zone. */
+function timezoneFor(country: string): string {
+  const tz = browserTimezone()
+  const fits = country === 'AU' ? tz.startsWith('Australia/') : tz === 'Europe/London' || tz === 'Europe/Belfast'
+  return fits ? tz : defaultTimezone(country)
 }
 
 interface SignupResponse extends TokenResponse {
@@ -73,25 +43,33 @@ interface SignupResponse extends TokenResponse {
 export default function Signup() {
   const { status, applyTokens } = useAuth()
   const navigate = useNavigate()
-  const [params] = useSearchParams()
-  const [plan, setPlan] = useState(params.get('plan') ?? 'growth')
+  const [params, setParams] = useSearchParams()
+  // Two steps (pick a plan, then create the account), kept in the URL: the browser's Back button returns to the
+  // plans and a reload keeps the choice.
+  const step = params.get('step') === 'account' ? 'account' : 'plan'
+  const [plan, setPlan] = useState(params.get('plan') ?? '')
   const [annual, setAnnual] = useState(params.get('interval') === 'year')
+  // LaudLine is for dental practices in Australia and the UK only, so the business type is always dental;
+  // the visitor says what kind of practice it is.
   const [form, setForm] = useState(() => {
-    const vertical = BUSINESS_TYPES.some((b) => b.value === params.get('vertical')) ? String(params.get('vertical')) : 'home_services'
-    const country = (params.get('country') ?? '').toUpperCase() || guessCountry(guessTimezone())
-    const ok = vertical !== 'dental' || DENTAL_COUNTRIES.some((c) => c.value === country)
-    return { name: '', email: '', password: '', business_name: '', vertical, country: ok ? country : 'AU' }
+    const asked = (params.get('country') ?? '').toUpperCase()
+    const country = DENTAL_COUNTRIES.some((c) => c.value === asked) ? asked : guessCountry(browserTimezone())
+    const pt = params.get('practice_type') ?? ''
+    const practice_type = practiceTypesFor(country).some((t) => t.value === pt) ? pt : 'private'
+    return { name: '', email: '', password: '', business_name: '', vertical: 'dental', practice_type, country }
   })
-  // Dental practices have their own plans (retainer + onboarding fee); the list follows the business type.
   const plans = usePlans(form.country, form.vertical)
   const [accept, setAccept] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => {
     const next = { ...f, [k]: v }
-    if (next.vertical === 'dental' && !DENTAL_COUNTRIES.some((c) => c.value === next.country)) next.country = 'AU'
+    // "Mixed NHS and private" is UK only, "Mixed private and public" AU only.
+    if (!practiceTypesFor(next.country).some((t) => t.value === next.practice_type)) next.practice_type = 'private'
     return next
   })
+
+  useEffect(() => { window.scrollTo(0, 0) }, [step])
 
   if (status === 'authenticated' && !busy) return <Navigate to="/" replace />
   const cat = plans.data
@@ -107,6 +85,34 @@ export default function Signup() {
   const chosen = selfServe.some((p) => p.key === plan)
     ? plan
     : (selfServe.find((p) => p.recommended) ?? selfServe[0])?.key ?? plan
+  const chosenPlan = selfServe.find((p) => p.key === chosen)
+  const trialLine = cat
+    ? `${cat.trial.days}-day pilot with your first ${cat.trial.minutes} minutes included.`
+      + (chosenPlan?.setup_fee_required ? ' The onboarding fee is charged at sign-up.' : '')
+      + (cat.trial.card_required ? ' Cancel during the pilot and the monthly fee is never charged.' : '')
+    : ''
+
+  function choosePlan(key: string) {
+    setPlan(key)
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      next.set('step', 'account')
+      next.set('plan', key)
+      next.set('interval', annual ? 'year' : 'month')
+      next.set('vertical', form.vertical)
+      next.set('practice_type', form.practice_type)
+      next.set('country', form.country)
+      return next
+    })
+  }
+
+  function backToPlans() {
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      next.delete('step')
+      return next
+    })
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -115,7 +121,7 @@ export default function Signup() {
     try {
       const res = await api<SignupResponse>('/signup', {
         method: 'POST', auth: false,
-        body: { ...form, email: form.email.trim(), plan: chosen, interval: annual ? 'year' : 'month', timezone: guessTimezone(), accept_terms: accept },
+        body: { ...form, email: form.email.trim(), plan: chosen, interval: annual ? 'year' : 'month', timezone: timezoneFor(form.country), accept_terms: accept },
       })
       applyTokens(res)
       if (res.next === 'checkout') {
@@ -131,80 +137,119 @@ export default function Signup() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-sidebar px-4 py-10">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-8 flex flex-col items-center text-center text-sidebar-foreground">
-          <div className="mb-3 flex size-12 items-center justify-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground">
-            <Headset className="size-6" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">An AI receptionist that answers every call</h1>
-          <p className="mt-2 max-w-xl text-sm text-sidebar-foreground/70">
-            {cat ? `${cat.trial.days}-day free trial (${cat.trial.minutes} minutes). Card required, cancel any time. ` : ''}
-            Live in about 15 minutes.
-          </p>
-        </div>
+  const plansFailed = plans.isError && (
+    <div className="rounded-xl border border-sidebar-border p-5 text-sm">
+      Plans didn't load. Check your connection, then{' '}
+      <button type="button" onClick={() => plans.refetch()} className="font-medium underline">try again</button>.
+    </div>
+  )
 
-        <div className="mb-4 flex justify-center">
-          <div className="inline-flex rounded-full bg-sidebar-accent p-1 text-sm">
-            {[false, true].map((a) => (
-              <button key={String(a)} type="button" onClick={() => setAnnual(a)}
-                className={cn('rounded-full px-4 py-1.5 font-medium text-sidebar-foreground/70 transition-colors',
-                  annual === a && 'bg-background text-foreground shadow-sm')}>
-                {a ? `Yearly — ${cat?.annual_months_free ?? 2} months free` : 'Monthly'}
-              </button>
+  if (step === 'plan') {
+    const darkSelect = 'w-full border-sidebar-border bg-sidebar-accent/60 text-sidebar-foreground hover:bg-sidebar-accent'
+    const three = (cat ? selfServe.length : 2) >= 3
+    return (
+      <SignupShell>
+        <main className="mx-auto max-w-4xl px-4 pt-6 pb-16 sm:px-6 lg:pt-12">
+          <div className="text-center">
+            <h1 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+              The AI overflow receptionist for dental practices
+            </h1>
+            <p className="mx-auto mt-3 max-w-xl text-pretty text-sidebar-foreground/70">
+              {trialLine} Most practices are answering calls within days of sign-up.
+            </p>
+          </div>
+
+          <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="grid gap-4 sm:grid-cols-[21rem_12rem]">
+              <Field label="Type of practice">
+                <SimpleSelect className={darkSelect} value={form.practice_type} onChange={set('practice_type')}
+                  options={practiceTypesFor(form.country)} />
+              </Field>
+              <Field label="Country">
+                <SimpleSelect className={darkSelect} value={form.country} onChange={set('country')}
+                  options={DENTAL_COUNTRIES} />
+              </Field>
+            </div>
+            <div role="group" aria-label="Billing period" className="inline-flex self-start rounded-full bg-sidebar-accent p-1 text-sm sm:self-auto">
+              {[false, true].map((a) => (
+                <button key={String(a)} type="button" aria-pressed={annual === a} onClick={() => setAnnual(a)}
+                  className={cn('rounded-full px-3.5 py-1 font-medium transition-colors',
+                    annual === a ? 'bg-sidebar-foreground text-sidebar' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground')}>
+                  {a ? 'Yearly' : 'Monthly'}
+                  {a && (
+                    <span className={cn('ml-1.5 text-xs', annual ? 'text-primary' : 'text-sidebar-primary')}>
+                      {cat?.annual_months_free ?? 2} months free
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={cn('mt-6 grid gap-4', three ? 'lg:grid-cols-3' : 'md:grid-cols-2')}>
+            {plans.isLoading && Array.from({ length: three ? 3 : 2 }, (_, n) => (
+              <div key={n} className="h-96 animate-pulse rounded-xl bg-sidebar-accent/60" />
+            ))}
+            {plansFailed}
+            {selfServe.map((p) => (
+              <PlanCard key={p.key} plan={p} annual={annual} highlighted={chosen === p.key} onChoose={() => choosePlan(p.key)} />
             ))}
           </div>
-        </div>
+          {cat && (
+            <p className="mt-6 text-center text-xs text-pretty text-sidebar-foreground/60">
+              Prices exclude VAT/GST. Extra minutes cost {formatPrice(cat.overage_per_min, cat.currency, true)} each, or set a hard cap. Agencies and chains: contact us.
+            </p>
+          )}
+        </main>
+      </SignupShell>
+    )
+  }
 
-        <div className="mb-8 grid gap-3 md:grid-cols-3">
-          {plans.isLoading && [0, 1, 2].map((n) => <div key={n} className="h-56 animate-pulse rounded-xl bg-sidebar-accent" />)}
-          {selfServe.map((p) => (
-            <button key={p.key} type="button" onClick={() => setPlan(p.key)}
-              className={cn('rounded-xl border bg-card p-5 text-left text-card-foreground transition-shadow',
-                chosen === p.key ? 'border-primary ring-2 ring-primary/40' : 'hover:shadow-md')}>
-              <div className="flex items-center justify-between">
-                <span className="font-semibold">{p.name}</span>
-                {p.recommended && <Badge>Most popular</Badge>}
+  return (
+    <SignupShell>
+      <main className="mx-auto max-w-md px-4 pt-6 pb-16 sm:pt-12">
+        <Card className="[--card-spacing:--spacing(6)]">
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold">Create your account</CardTitle>
+            {trialLine && <CardDescription className="text-pretty">{trialLine}</CardDescription>}
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-0.5 rounded-lg bg-muted p-4 text-sm">
+              <div className="flex items-baseline justify-between gap-4">
+                {chosenPlan ? <span className="font-medium">{chosenPlan.name}</span>
+                  : plans.isError ? <span className="text-muted-foreground">Plans didn't load.</span>
+                  : <span className="h-4 w-28 animate-pulse rounded bg-foreground/10" />}
+                <button type="button" onClick={backToPlans} className="shrink-0 font-medium text-primary hover:underline">
+                  Change plan
+                </button>
               </div>
-              <div className="mt-2 text-3xl font-semibold tabular-nums">
-                {formatPrice(annual ? p.annual / 12 : p.monthly, p.currency)}
-                <span className="text-sm font-normal text-muted-foreground">/mo</span>
-              </div>
-              {annual && <div className="text-xs text-muted-foreground">{formatPrice(p.annual, p.currency)} billed yearly</div>}
-              {p.setup_fee_required && p.setup_fee ? (
-                <div className="text-xs text-muted-foreground">+ {formatPrice(p.setup_fee, p.currency)} one-time onboarding</div>
+              {chosenPlan && (
+                <div className="tabular-nums text-muted-foreground">
+                  {formatPrice(annual ? chosenPlan.annual / 12 : chosenPlan.monthly, chosenPlan.currency)}/mo,{' '}
+                  {annual ? `${formatPrice(chosenPlan.annual, chosenPlan.currency)} billed yearly` : 'billed monthly'}
+                </div>
+              )}
+              {chosenPlan?.setup_fee_required && chosenPlan.setup_fee ? (
+                <div className="tabular-nums text-muted-foreground">
+                  + {formatPrice(chosenPlan.setup_fee, chosenPlan.currency)} one-time onboarding
+                </div>
               ) : null}
-              <p className="mt-2 text-sm text-muted-foreground">{p.tagline}</p>
-              <ul className="mt-3 space-y-1 text-sm">
-                {p.features.map((f) => (
-                  <li key={f} className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0 text-primary" /> {f}</li>
-                ))}
-              </ul>
-            </button>
-          ))}
-        </div>
-        {cat && (
-          <p className="-mt-5 mb-8 text-center text-xs text-sidebar-foreground/60">
-            Prices exclude VAT/GST. Extra minutes {formatPrice(cat.overage_per_min, cat.currency, true)} each — or set a hard cap. Agencies and chains: contact us.
-          </p>
-        )}
+            </div>
 
-        <Card className="mx-auto max-w-xl">
-          <CardContent className="pt-6">
-            <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
-              <Field label="Your name"><Input autoComplete="name" value={form.name} onChange={(e) => set('name')(e.target.value)} /></Field>
-              <Field label="Work e-mail"><Input type="email" autoComplete="email" required value={form.email} onChange={(e) => set('email')(e.target.value)} /></Field>
-              <Field label="Password" className="sm:col-span-2" hint="At least 10 characters.">
+            <form onSubmit={onSubmit} className="space-y-4">
+              <Field label="Your name">
+                <Input autoFocus autoComplete="name" value={form.name} onChange={(e) => set('name')(e.target.value)} />
+              </Field>
+              <Field label="Work e-mail">
+                <Input type="email" autoComplete="email" required value={form.email} onChange={(e) => set('email')(e.target.value)} />
+              </Field>
+              <Field label="Password" hint="At least 10 characters.">
                 <Input type="password" autoComplete="new-password" required minLength={10} value={form.password} onChange={(e) => set('password')(e.target.value)} />
               </Field>
-              <Field label="Business name" className="sm:col-span-2">
+              <Field label="Business name">
                 <Input required value={form.business_name} onChange={(e) => set('business_name')(e.target.value)} />
               </Field>
-              <Field label="Type of business"><SimpleSelect value={form.vertical} onChange={set('vertical')} options={BUSINESS_TYPES} /></Field>
-              <Field label="Country"><SimpleSelect value={form.country} onChange={set('country')}
-                options={form.vertical === 'dental' ? DENTAL_COUNTRIES : COUNTRIES} /></Field>
-              <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <label className="flex items-start gap-2.5 text-sm">
                 <Checkbox checked={accept} onCheckedChange={(v) => setAccept(v === true)} className="mt-0.5" />
                 <span className="text-muted-foreground">
                   I agree to the{' '}
@@ -214,18 +259,70 @@ export default function Signup() {
                   Callers are told they're speaking with a virtual assistant.
                 </span>
               </label>
-              <div className="sm:col-span-2"><ErrorBanner error={error} /></div>
-              <Button type="submit" size="lg" className="sm:col-span-2" disabled={busy || !accept || !selfServe.length}>
+              {error ? <ErrorBanner error={error} /> : null}
+              <Button type="submit" size="lg" className="w-full" disabled={busy || !accept || !selfServe.length}>
                 {busy && <Loader2 className="animate-spin" />}
-                {cat?.billing_enabled === false ? 'Start free trial' : 'Continue to payment'}
+                {cat?.billing_enabled === false ? `Start ${cat.trial.days}-day pilot` : 'Continue to payment'}
               </Button>
-              <p className="text-center text-sm text-muted-foreground sm:col-span-2">
-                Already have an account? <Link to="/login" className="font-medium text-foreground hover:underline">Sign in</Link>
-              </p>
             </form>
           </CardContent>
         </Card>
+      </main>
+    </SignupShell>
+  )
+}
+
+function SignupShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-sidebar text-sidebar-foreground">
+      <header className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-5 sm:px-6">
+        <LaudlineLogo className="h-6 text-sidebar-foreground" />
+        <p className="text-sm text-sidebar-foreground/70">
+          <span className="hidden sm:inline">Already have an account? </span>
+          <Link to="/login" className="font-medium text-sidebar-foreground hover:underline">Sign in</Link>
+        </p>
+      </header>
+      {children}
+    </div>
+  )
+}
+
+/** One plan on the first step. Choosing it moves straight on to the account form. */
+function PlanCard({ plan: p, annual, highlighted, onChoose }: {
+  plan: PlanInfo
+  annual: boolean
+  highlighted: boolean
+  onChoose: () => void
+}) {
+  return (
+    <div className={cn('flex flex-col rounded-xl border p-6',
+      highlighted ? 'border-sidebar-primary bg-sidebar-accent' : 'border-sidebar-border bg-sidebar-accent/40')}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">{p.name}</h2>
+        {p.recommended && (
+          <span className="rounded-full bg-sidebar-primary/15 px-2 py-0.5 text-xs font-medium text-sidebar-primary">Recommended</span>
+        )}
       </div>
+      <p className="mt-1 min-h-10 text-sm text-pretty text-sidebar-foreground/70">{p.tagline}</p>
+      <div className="mt-4 text-3xl font-semibold tabular-nums">
+        {formatPrice(annual ? p.annual / 12 : p.monthly, p.currency)}
+        <span className="text-sm font-normal text-sidebar-foreground/60">/mo</span>
+      </div>
+      {annual && <div className="mt-1 text-xs text-sidebar-foreground/60">{formatPrice(p.annual, p.currency)} billed yearly</div>}
+      {p.setup_fee_required && p.setup_fee ? (
+        <div className="mt-1 text-xs text-sidebar-foreground/60">+ {formatPrice(p.setup_fee, p.currency)} one-time onboarding</div>
+      ) : null}
+      <ul className="mt-5 mb-6 space-y-2 text-sm text-sidebar-foreground/85">
+        {p.features.map((f) => (
+          <li key={f} className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0 text-sidebar-primary" /> {f}</li>
+        ))}
+      </ul>
+      <Button size="lg" onClick={onChoose}
+        className={cn('mt-auto w-full', highlighted
+          ? 'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/85'
+          : 'bg-sidebar-foreground/10 text-sidebar-foreground hover:bg-sidebar-foreground/15')}>
+        Choose {p.name}
+      </Button>
     </div>
   )
 }

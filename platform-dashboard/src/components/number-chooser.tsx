@@ -61,7 +61,7 @@ function OwnedTab({ value, onChange }: { value: NumberChoice; onChange: (v: Numb
 }
 
 function BuyTab({ value, onChange, defaultCountry }: { value: NumberChoice; onChange: (v: NumberChoice) => void; defaultCountry: string }) {
-  const [country, setCountry] = useState(COUNTRIES.some(([c]) => c === defaultCountry) ? defaultCountry : 'US')
+  const [country, setCountry] = useState(COUNTRIES.some(([c]) => c === defaultCountry) ? defaultCountry : 'AU')
   const [areaCode, setAreaCode] = useState('')
   const [contains, setContains] = useState('')
   const [search, setSearch] = useState<{ country: string; area_code: string; contains: string } | null>(null)
@@ -72,7 +72,7 @@ function BuyTab({ value, onChange, defaultCountry }: { value: NumberChoice; onCh
         <Field label="Country">
           <SimpleSelect value={country} onChange={setCountry} options={COUNTRIES.map(([c, name]) => ({ value: c, label: name }))} />
         </Field>
-        <Field label="Area code"><Input value={areaCode} inputMode="numeric" placeholder="512" onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, ''))} /></Field>
+        <Field label="Area code"><Input value={areaCode} inputMode="numeric" placeholder={country === 'GB' ? '20' : '2'} onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, ''))} /></Field>
         <Field label="Contains (optional)"><Input value={contains} placeholder="e.g. 2000" onChange={(e) => setContains(e.target.value.replace(/[^\d*]/g, ''))} /></Field>
         <Button variant="outline" onClick={() => setSearch({ country, area_code: areaCode, contains })} disabled={q.isFetching}>
           {q.isFetching ? <Loader2 className="animate-spin" /> : <Search />} Search
@@ -102,7 +102,7 @@ function BuyTab({ value, onChange, defaultCountry }: { value: NumberChoice; onCh
  * Pick the business's phone number: one already in the Twilio account, a new one to buy, or none yet.
  * Whatever is picked is then set up end to end (Twilio trunk, LiveKit trunk, routing, test call).
  */
-export function NumberChooser({ value, onChange, allowNone, defaultCountry = 'US' }: {
+export function NumberChooser({ value, onChange, allowNone, defaultCountry = 'AU' }: {
   value: NumberChoice
   onChange: (v: NumberChoice) => void
   allowNone?: boolean

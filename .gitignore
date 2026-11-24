@@ -6,6 +6,7 @@
 # Logs and runtime data
 *.log
 temp_audio/
+# *.md
 
 # Python
 __pycache__/
@@ -28,6 +29,7 @@ dist/
 Thumbs.db
 desktop.ini
 .idea/
+.agents/
 
 # Dev server settings (deploy/dev-server.env.example is the template)
 deploy/dev-server.env

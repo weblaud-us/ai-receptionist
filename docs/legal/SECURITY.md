@@ -3,7 +3,7 @@
 > **DRAFT.** Version `2026-11-19`. For customers' due diligence. Keep it true: every line below
 > describes something the product does today. Fill in the hosting details in brackets.
 
-**WEBLAUD LLC — AI Receptionist**  ·  Last reviewed: [date]  ·  Contact: [security@domain]
+**WEBLAUD LLC — LaudLine**  ·  Last reviewed: [date]  ·  Contact: [security@domain]
 
 ## Architecture
 
