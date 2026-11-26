@@ -7,23 +7,23 @@ requires-python = ">=3.12,<3.14"
 # Upgrade deliberately: change a pin, `uv lock`, run the tests, commit both files.
 dependencies = [
     # Core framework
-    "fastapi==0.162.3",
-    "starlette==1.6.0",
+    "fastapi==0.165.0",
+    "starlette==1.10.0",
     "uvicorn[standard]==0.54.0",
-    "python-multipart==0.0.33",          # form parsing for Twilio webhooks
-    "pydantic==2.9.2",
-    "pydantic-settings==2.6.0",
-    "python-dotenv==1.2.2",
+    "python-multipart==0.0.34",          # form parsing for Twilio webhooks
+    "pydantic==2.14.4",
+    "pydantic-settings==2.16.3",
+    "python-dotenv==1.2.4",
     "protobuf==5.29.6",
     # Database
     "motor==3.7.1",
-    "pymongo==4.18.3",
+    "pymongo==4.20.1",
     # LLM / speech
     "openai==2.54.0",
-    "elevenlabs==2.78.0",
+    "elevenlabs==2.79.0",
     # Telephony / messaging
-    "twilio==9.3.7",
-    "httpx==0.27.2",
+    "twilio==9.13.0",
+    "httpx==0.28.1",
     # LiveKit
     "livekit==1.1.20",
     "livekit-api==1.2.2",
@@ -53,7 +53,7 @@ dependencies = [
     "prometheus-client==0.26.0",       # /metrics on the API (the worker has its own: LIVEKIT_PROMETHEUS_PORT)
     "livekit-plugins-anthropic==1.8.6",  # fallback LLM when OpenAI is down (must match livekit-agents)
     # Phase 4: outbound dialer
-    "phonenumbers==9.0.43",            # E.164 normalisation, number → timezone / region for the compliance gate
+    "phonenumbers==9.0.44",            # E.164 normalisation, number → timezone / region for the compliance gate
 ]
 
 [dependency-groups]
