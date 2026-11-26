@@ -13,9 +13,9 @@
   "dependencies": {
     "@receptionist/shared": "*",
     "@tailwindcss/vite": "^4.3.5",
-    "@tanstack/react-query": "^5.107.1",
+    "@tanstack/react-query": "^5.108.3",
     "date-fns": "^4.4.0",
-    "lucide-react": "^1.72.0",
+    "lucide-react": "^1.77.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
