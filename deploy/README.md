@@ -202,8 +202,11 @@ rebuild too.
 **4. Point the providers at it.** LiveKit, Twilio, Meta and Google OAuth callbacks use
 `https://<API_DOMAIN>/…`, the same paths as in [docs/TELEPHONY_TESTING.md](../docs/TELEPHONY_TESTING.md).
 
-**5. Turn on the landing page's live demo ("Talk to it now").** Off by default; the page then shows
-the sample-call player instead. To switch it on:
+**5. Turn on the landing page's live demo ("Talk to Ava").** Do this before showing the site to anyone:
+without it the demo section only has recorded sample calls, and visitors can't take part. With it,
+visitors sign in with Google and talk to the assistant, with live captions and a "What Ava is doing"
+feed (checking the diary, booking, emergency flags), and the recordings fold under "Prefer to listen?".
+To switch it on:
 
 1. Google Cloud console → APIs & Services → Credentials → create an OAuth client of type *Web
    application* with `https://<SITE_DOMAIN>` (e.g. `https://laudline.weblaud.com`) as an authorised

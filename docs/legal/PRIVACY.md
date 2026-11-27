@@ -21,7 +21,7 @@ us at [PRIVACY_CONTACT_EMAIL] and we will pass your request to the business and 
 | Account owners | Billing contact, address, tax ID; card details are held by Stripe, not us | Billing, tax | Contract; legal obligation |
 | Account owners | Feedback scores and comments you give in the dashboard | Improve the service; testimonials only with your consent | Legitimate interests; consent for publication |
 | Website visitors | [Analytics data, form submissions] | Run and improve the website | [Consent for non-essential cookies]; legitimate interests |
-| Businesses we contact for sales | Business name, business phone number, contact name, call outcome, whether you asked for a call or asked us to stop | Offer our product (B2B) | Legitimate interests; consent where required (e.g. "get a call from our AI" form) |
+| Businesses we contact for sales | Business name, business phone number, contact name, call outcome, whether you asked for a call or asked us to stop; the transcript of the call and notes on what was discussed (for example who we spoke to and the best time to call) | Offer our product (B2B); remember what was said when we call again; improve how our calls go (our AI reviews each call, with names removed, and learns general lessons from many calls) | Legitimate interests; consent where required (e.g. "get a call from our AI" form) |
 | People who ask us not to contact them | Phone number, date, channel | Make sure we never contact you again | Legal obligation; legitimate interests |
 
 When we call you, the call is made or assisted by an AI assistant, which tells you so at the start,

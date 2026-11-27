@@ -10,9 +10,8 @@
 	header ?Referrer-Policy "strict-origin-when-cross-origin"
 }
 
-{$API_DOMAIN} {
-	encode gzip
-	import secure
+# The API replicas (shared by both routes below).
+(api_upstream) {
 	reverse_proxy api-a:8002 api-b:8002 {
 		lb_policy round_robin
 		lb_try_duration 5s
@@ -25,6 +24,22 @@
 		# purpose when a practice's diary or a phone provider is down, which says nothing about the replica.
 		fail_duration 10s
 		max_fails 2
+		# Pass every byte on at once: progress streams (server-sent events) must not wait in a buffer.
+		flush_interval -1
+	}
+}
+
+{$API_DOMAIN} {
+	import secure
+	# Streamed responses (e.g. POST /t/onboarding/site-import/stream): no compression, which would hold
+	# events back until a buffer fills.
+	@stream path */stream
+	handle @stream {
+		import api_upstream
+	}
+	handle {
+		encode gzip
+		import api_upstream
 	}
 }
 

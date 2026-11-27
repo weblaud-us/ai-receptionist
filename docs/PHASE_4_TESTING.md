@@ -45,10 +45,13 @@ what to do when something goes wrong is in [RUNBOOK.md](RUNBOOK.md#outbound-dial
 
 ## Setting it up (staging first)
 
-1. **Your business as a tenant.** Provision it on the Platform page (vertical "professional"),
-   set its timezone, opening hours (the demo hours), transfer number (for `transfer_to_founder`),
-   connect Google Calendar, and add a 15-minute service named `Demo` (or `SALES_DEMO_SERVICE`).
-   Put its id in `SALES_TENANT_ID`.
+1. **Your business as a tenant.** The New business form only makes AU/UK dental practices, so use
+   the script: `uv run python -m scripts.seed_sales_tenant --timezone Asia/Dhaka` (options:
+   `--open/--close/--days` = meeting hours, `--owner-email` = "meeting booked" alerts,
+   `--transfer` = the number for `transfer_to_founder`). It creates `ten_sales_weblaud` (vertical
+   "professional") with a 15-minute service named `Demo` (`SALES_DEMO_SERVICE`); re-run it to
+   change those. Optionally connect Google Calendar on its Platform page. Put
+   `SALES_TENANT_ID=ten_sales_weblaud` in `.env` and restart.
 2. **A sales trunk.** A separate Twilio subaccount with its own Elastic SIP trunk and numbers;
    `lk sip outbound create` for it → `SALES_SIP_OUTBOUND_TRUNK_ID`. (Outside production the
    customers' `LIVEKIT_SIP_OUTBOUND_TRUNK_ID` is used if this is empty.)
@@ -89,3 +92,26 @@ lead and check the number lands on the DNC list (Compliance tab) and is never di
 | AMD correctly classifies ≥ 90% of a 100-call hand-labelled sample | Results → open each call → "Who really answered?". The Results card shows accuracy and how many real people were hung up on. Tune `DetectionOptions` in `agent/sales.py` if it is under 90% |
 | 50 real calls made: answer rate, conversation rate and demos booked recorded | Results → Funnel (dialled → connected → person → talked > 30 s → interested → demo), answer rate, demo rate, cost per demo |
 | Outbound numbers show A-attestation and CNAM; no spam label after week 1 | Account steps (checklist). Watch the answer rate daily; a sudden drop = a new spam label |
+
+## The agent that learns from its calls (SALES_LEARNING_PLAN.md)
+
+Automated: `tests/test_sales_learning_stats.py`, `test_sales_memory.py`, `test_sales_coach.py`, `test_sales_playbook.py`,
+`test_sales_experiments.py`, `test_sales_learn.py`, `test_sales_timing.py`, `test_sales_bandit.py`, `test_learning_demo.py`.
+
+See it working without weeks of calls:
+1. `uv run python -m migrations.m0006_sales_offers --apply` and `uv run python -m migrations.m0008_sales_learning --apply`.
+2. `uv run python -m scripts.seed_learning_demo --apply` → Sales dialer → Offers → WebLaud → **Learning**: playbook v1 live,
+   v2 rolled back (with why), v3 being tested on a third of calls; the learning curve; Reports → "When businesses pick up".
+3. `uv run python -m scripts.seed_learning_demo --apply --fast-forward 30` prints each simulated day until the test decides.
+4. `uv run python -m scripts.learning_replay --offer off_weblaud_studio` replays the planned checks over the calls (read-only).
+5. `uv run python -m scripts.seed_learning_demo --remove` deletes only the demo data.
+
+Manual checks on a real setup:
+- A lead with an earlier "call me Tuesday" call: Leads → the lead → "What the agent remembers"; the offer's Full prompt
+  preview for that lead shows `<earlier_calls>`. Forget empties it (audited).
+- After an AI call: Results → the call → **AI coach** (scores, moments, lessons, flags) within about a minute.
+- Offer → Learning → Edit lessons: a lesson with a price or a figure is refused; a valid one runs its test calls (Linux
+  jobs worker), then goes live or into a live test. Without a Linux worker it ends in "Failed its test calls" and calls
+  keep the baseline.
+- Start a campaign: the legal sign-off dialog has "Let the agent use lessons from earlier calls". Untick it → new calls
+  record `arm: off`.
