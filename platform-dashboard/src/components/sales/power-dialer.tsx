@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Loader2, PhoneCall, PhoneOutgoing, Timer } from 'lucide-react'
 import { ConfirmDialog, Field } from '@receptionist/shared/components/blocks'
@@ -187,8 +187,13 @@ function CallTimer({ attemptId, running }: { attemptId: string; running: boolean
 }
 
 function Transcript({ segments }: { segments: TranscriptSegment[] }) {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = box.current
+    if (el) el.scrollTop = el.scrollHeight                          // follow the conversation
+  }, [segments])
   return (
-    <div className="h-72 space-y-1.5 overflow-y-auto rounded-md border p-2 text-sm">
+    <div ref={box} role="log" aria-live="polite" aria-label="Live transcript" className="h-72 space-y-1.5 overflow-y-auto rounded-md border p-2 text-sm">
       {segments.length === 0 ? <p className="text-xs text-muted-foreground">What they say appears here as they speak.</p> : segments.map((s) => (
         <div key={s.id} className={cn(!s.final && 'text-muted-foreground')}>
           <span className="mr-1 text-xs font-medium uppercase">{s.identity === 'lead' ? 'Them' : 'AI'}</span>{s.text}

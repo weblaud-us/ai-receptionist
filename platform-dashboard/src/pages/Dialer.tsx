@@ -99,7 +99,7 @@ function Compliance() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <CardHeader><CardTitle>Do-not-call registries</CardTitle><CardDescription>A number can't be dialled unless its country's list is loaded for its area code and is under {status.registry_max_age_days} days old. Load them with <code>python -m scripts.import_dnc_registry</code>.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>Do-not-call registries</CardTitle><CardDescription>A number can't be dialled unless its country's list is loaded for its area code and is under {status.registry_max_age_days} days old.{can('admin') && <> Load them with <code>python -m scripts.import_dnc_registry</code>.</>}</CardDescription></CardHeader>
         <CardContent className="space-y-2 text-sm">
           {status.registries.length === 0 && <p className="text-destructive">No registry is loaded. US numbers cannot be dialled.</p>}
           {status.registries.map((r) => (
@@ -123,7 +123,7 @@ function Compliance() {
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle>Australia: Do Not Call Register</CardTitle>
-          <CardDescription>The register can't be downloaded: you wash numbers at donotcall.gov.au and get a result per number, good for {30} days. An Australian number without a fresh result is never called.</CardDescription>
+          <CardDescription>The register can't be downloaded: you wash numbers at donotcall.gov.au and get a result per number, good for {status.au_dncr_wash_max_age_days ?? 30} days. An Australian number without a fresh result is never called.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3 text-sm">
           {status.au_dncr_needs_wash > 0

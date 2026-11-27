@@ -82,7 +82,7 @@ export function CallAudio({ join, title, onLeave, onHangUp, onTranscript, onEnde
       {state === 'connecting' ? <Loader2 className="size-4 animate-spin" /> : takeover ? <Mic className="size-4 text-emerald-600" /> : <Ear className="size-4 text-emerald-600" />}
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{title}</div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
           {state === 'connecting' && 'Joining…'}
           {state === 'connected' && (takeover ? 'You are on the call. The AI is silent and will not speak again.' : 'Listening. Nobody on the call can hear you.')}
           {state === 'ended' && 'The call has ended.'}

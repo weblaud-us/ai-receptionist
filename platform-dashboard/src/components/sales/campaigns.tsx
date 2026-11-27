@@ -29,7 +29,7 @@ const STATUS_STYLE: Record<string, string> = {
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const BLANK: CampaignInput = {
-  name: '', mode: 'ai_cold_b2b_us', persona_ids: ['sales_v1'], from_numbers: [],
+  name: '', mode: 'human_assisted', persona_ids: ['sales_v1'], from_numbers: [],
   calling_window: { start: '09:30', end: '17:00', days: [1, 2, 3, 4, 5] },
   max_attempts: 3, retry_after_hours: [48, 96], max_concurrent: 2, daily_cap: 150,
   voicemail_policy: 'hang_up', vertical: '', notes: '', offer_id: null, offer_version: null, variant_ids: [],

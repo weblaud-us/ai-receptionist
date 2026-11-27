@@ -519,6 +519,7 @@ export interface SalesStatus {
   company: string
   registries: { list: string; refreshed_at: string; area_codes: string[]; stale_area_codes: string[]; rows: number }[]
   registry_max_age_days: number
+  au_dncr_wash_max_age_days?: number
   blocked_us_states: string[]
   modes: { key: CampaignMode; countries: string[] }[]
   personas: { id: string; label: string; opener: string }[]
@@ -722,20 +723,6 @@ export const STAGE_LABEL: Record<Stage, string> = {
   proposal: 'Proposal sent', won: 'Won', lost: 'Lost',
 }
 
-export interface PipelineLead {
-  id: string
-  business_name: string
-  contact_name: string
-  phone: string
-  email: string
-  status: string
-  stage: Stage
-  open_tasks: number
-  demo?: { appointment_id: string; start: string }
-  qualification?: Qualification
-  updated_at: string
-}
-
 export interface SalesTask {
   id: string
   lead_id: string
@@ -763,9 +750,6 @@ export interface Meeting {
 }
 
 export interface OutboxEmail { id: string; to: string; subject: string; kind: string; status: string; tries: number; error: string; created_at: string; lead_id: string | null }
-
-export const usePipeline = () =>
-  useQuery({ queryKey: ['s-pipeline'], queryFn: () => get<{ columns: Record<string, PipelineLead[]>; counts: Record<string, number> }>('/pipeline'), refetchInterval: 60_000 })
 
 export const useTasks = (params: Params = {}) =>
   useQuery({ queryKey: ['s-tasks', params], queryFn: () => get<{ tasks: SalesTask[] }>('/tasks', params) })

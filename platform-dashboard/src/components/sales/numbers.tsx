@@ -45,7 +45,7 @@ export function NumbersCard() {
                     {can('manager') && (r.rested_until ? (
                       <Button size="sm" variant="ghost" onClick={() => m.reactivate.mutate(r.number, { onSuccess: () => toast.success('Calling from it again') })}><PlayCircle /> Reactivate</Button>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={() => m.rest.mutate({ number: r.number }, { onSuccess: () => toast.success('Resting for 3 days') })}><PauseCircle /> Rest</Button>
+                      <Button size="sm" variant="ghost" onClick={() => m.rest.mutate({ number: r.number }, { onSuccess: () => toast.success(`Resting for ${q.data?.rest_hours ?? 72} hours`) })}><PauseCircle /> Rest</Button>
                     ))}
                   </TableCell>
                 </TableRow>

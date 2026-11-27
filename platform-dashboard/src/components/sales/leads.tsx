@@ -79,12 +79,12 @@ export function Leads() {
     setSearch(String(v.filters.q ?? ''))
     setPage(1)
   }
-  const saveView = () => {
-    const name = window.prompt('Name this view')
-    if (!name || name.trim().length < 2) return
+  const [naming, setNaming] = useState<string | null>(null)       // the "Save view" dialog's name, while open
+  const saveView = (name: string) => {
+    if (name.trim().length < 2) return
     crm.saveView.mutate({ name: name.trim(), kind: 'leads', shared: false,
       filters: Object.fromEntries(Object.entries({ status: status === 'all' ? '' : status, owner_id: owner, min_fit: minFit, q: search }).filter(([, v]) => v !== '')) },
-      { onSuccess: () => toast.success('View saved') })
+      { onSuccess: () => { toast.success('View saved'); setNaming(null) } })
   }
   const runBulk = (action: 'assign' | 'stage' | 'tag' | 'queue', value: unknown) =>
     crm.bulk.mutate({ lead_ids: [...picked], action, value }, {
@@ -116,7 +116,7 @@ export function Leads() {
         {views.length > 0 && (
           <SimpleSelect size="sm" value="" onChange={applyView} options={[{ value: '', label: 'Saved views…' }, ...views.map((v) => ({ value: v.id, label: v.name }))]} />
         )}
-        <Button size="sm" variant="ghost" onClick={saveView}><Bookmark /> Save view</Button>
+        <Button size="sm" variant="ghost" onClick={() => setNaming('')}><Bookmark /> Save view</Button>
         <div className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => setDupes(true)}><Copy /> Duplicates</Button>
         {can('manager') && <>
@@ -136,15 +136,16 @@ export function Leads() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {can('manager') && <TableHead className="w-8"><Checkbox checked={rows.every((r) => picked.has(r.id))}
+                  {can('manager') && <TableHead className="w-8"><Checkbox aria-label="Select every lead on this page" checked={rows.every((r) => picked.has(r.id))}
                     onCheckedChange={(v) => setPicked(v ? new Set(rows.map((r) => r.id)) : new Set())} /></TableHead>}
                   <TableHead>Business</TableHead><TableHead>Number</TableHead><TableHead>Status</TableHead><TableHead>Fit</TableHead><TableHead>Owner</TableHead><TableHead>Compliance check</TableHead><TableHead>Attempts</TableHead><TableHead>Source</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((l) => (
-                  <TableRow key={l.id} className="cursor-pointer" onClick={() => setOpen(l.id)}>
-                    {can('manager') && <TableCell onClick={(e) => e.stopPropagation()}><Checkbox checked={picked.has(l.id)} onCheckedChange={() => togglePick(l.id)} /></TableCell>}
+                  <TableRow key={l.id} className="cursor-pointer" tabIndex={0} aria-label={`Open ${l.business_name || l.phone}`}
+                    onClick={() => setOpen(l.id)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen(l.id) } }}>
+                    {can('manager') && <TableCell onClick={(e) => e.stopPropagation()}><Checkbox aria-label={`Select ${l.business_name || l.phone}`} checked={picked.has(l.id)} onCheckedChange={() => togglePick(l.id)} /></TableCell>}
                     <TableCell><div className="font-medium">{l.business_name || '—'}</div><div className="text-xs text-muted-foreground">{l.contact_name}</div></TableCell>
                     <TableCell className="font-mono text-xs">{l.phone}<div className="font-sans text-muted-foreground">{[l.region_code, l.line_type && titleCase(l.line_type)].filter(Boolean).join(' · ')}</div></TableCell>
                     <TableCell><LeadStatus status={l.status} /></TableCell>
@@ -166,6 +167,21 @@ export function Leads() {
       {dupes && <DuplicatesDialog onClose={() => setDupes(false)} onOpen={(id) => { setDupes(false); setOpen(id) }} />}
       <LeadSheet id={open} onClose={() => setOpen(null)} />
       {confirm.dialog}
+      <Dialog open={naming !== null} onOpenChange={(o) => !o && setNaming(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save this view</DialogTitle>
+            <DialogDescription>Keeps the current filters under a name, for you.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); saveView(naming ?? '') }}>
+            <Field label="Name"><Input autoFocus value={naming ?? ''} maxLength={60} onChange={(e) => setNaming(e.target.value)} /></Field>
+            <DialogFooter className="pt-3">
+              <Button type="button" variant="outline" onClick={() => setNaming(null)}>Cancel</Button>
+              <Button type="submit" disabled={(naming ?? '').trim().length < 2 || crm.saveView.isPending}>Save view</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

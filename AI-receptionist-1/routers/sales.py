@@ -133,6 +133,7 @@ async def status(admin: Principal = Depends(viewer)):
         "company": settings.SALES_COMPANY_NAME,
         "registries": await registry.registry_overview(db),
         "registry_max_age_days": settings.SALES_DNC_REGISTRY_MAX_AGE_DAYS,
+        "au_dncr_wash_max_age_days": settings.SALES_AU_DNCR_WASH_MAX_AGE_DAYS,
         "blocked_us_states": sorted(settings.sales_blocked_us_states),
         "modes": [{"key": mode, "countries": sorted(_countries(mode))} for mode in m.MODES],
         "personas": [{"id": v["id"], "label": v["label"],

@@ -52,7 +52,7 @@ export function Offers({ onCreateCampaign }: { onCreateCampaign?: (offerId: stri
       {q.error && <ErrorBanner error={q.error} />}
       <Card className="gap-0 py-0">
         {q.isLoading ? <TableSkeleton rows={3} cols={5} /> : (q.data?.offers.length ?? 0) === 0 ? (
-          <EmptyState title="No offers yet" description="Draft one with AI from your website, or run the m0006 migration to add the LaudLine and WebLaud offers." />
+          <EmptyState title="No offers yet" description="Draft one with AI from your website. The built-in LaudLine and WebLaud offers appear here after the next deploy." />
         ) : (
           <Table>
             <TableHeader><TableRow><TableHead>Offer</TableHead><TableHead>Status</TableHead><TableHead>Published</TableHead><TableHead>Campaigns</TableHead><TableHead /></TableRow></TableHeader>

@@ -77,7 +77,7 @@ export function Team() {
                     <div className="mt-0.5 text-xs text-muted-foreground">{ROLE_HELP[p.role]}</div>
                   </TableCell>
                   <TableCell>
-                    {p.role !== 'admin' && <Switch checked={p.takes_leads} onCheckedChange={(v) => m.update.mutate({ id: p.id, takes_leads: v })} />}
+                    {p.role !== 'admin' && <Switch aria-label={`${p.name || p.email} gets new leads`} checked={p.takes_leads} onCheckedChange={(v) => m.update.mutate({ id: p.id, takes_leads: v })} />}
                   </TableCell>
                   <TableCell className="text-sm">{p.mfa_enabled ? 'On' : <span className="text-amber-700 dark:text-amber-400">Not set up</span>}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{p.last_login_at ? dateTime(p.last_login_at) : 'Never'}</TableCell>
