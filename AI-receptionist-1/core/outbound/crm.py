@@ -383,6 +383,22 @@ async def merge(db: Any, keep_id: str, merge_id: str, *, by: str, now: Optional[
 
 # ── My work ──────────────────────────────────────────────────────────────────
 
+async def stage_totals(db: Any, query: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, float]]:
+    """Per stage: how many deals, their value and their probability-weighted value, over every deal
+    that matches (counted in Mongo, so a big pipeline is never cut short)."""
+    out: Dict[str, Dict[str, float]] = {s: {"count": 0, "value": 0.0, "weighted": 0.0} for s in DEAL_STAGES}
+    rows = await db[DEALS].aggregate([
+        {"$match": query or {}},
+        {"$group": {"_id": {"$ifNull": ["$stage", "qualified"]}, "count": {"$sum": 1},
+                    "value": {"$sum": {"$ifNull": ["$amount", 0]}},
+                    "weighted": {"$sum": {"$multiply": [{"$ifNull": ["$amount", 0]}, {"$ifNull": ["$probability", 0]}]}}}},
+    ]).to_list(len(DEAL_STAGES) + 10)
+    for r in rows:
+        out[str(r["_id"])] = {"count": int(r["count"]), "value": round(float(r["value"] or 0), 2),
+                              "weighted": round(float(r["weighted"] or 0), 2)}
+    return out
+
+
 async def my_work(db: Any, user_id: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or utcnow()
     end = now + timedelta(days=1)

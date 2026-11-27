@@ -1274,6 +1274,9 @@ async def review_attempt(attempt_id: str, request: Request, admin: Principal = D
     return {"attempt": _out(await db[m.ATTEMPTS].find_one({"_id": attempt_id}))}
 
 
+FUNNEL_MAX_CALLS = 50_000
+
+
 @sales_router.get("/funnel")
 async def get_funnel(campaign_id: Optional[str] = None, days: int = Query(30, ge=1, le=365),
                      admin: Principal = Depends(viewer)):
@@ -1283,10 +1286,13 @@ async def get_funnel(campaign_id: Optional[str] = None, days: int = Query(30, ge
     rows = await get_db()[m.ATTEMPTS].find(
         query, {"outcome": 1, "amd": 1, "amd_label": 1, "duration_sec": 1, "cost_usd": 1, "persona_id": 1,
                 "offer_id": 1, "offer_version": 1, "variant_id": 1, "status": 1,
-                **funnel.NEXT_STEP_FIELDS}).limit(50_000).to_list(50_000)
+                **funnel.NEXT_STEP_FIELDS}).sort("created_at", -1).limit(FUNNEL_MAX_CALLS).to_list(FUNNEL_MAX_CALLS)
     result = funnel.funnel(rows)
     result["by_variant"] = await _variant_labels(funnel.by_variant(rows))
+    # Say so when the window has more calls than are counted, rather than show partial numbers as whole.
+    truncated = len(rows) >= FUNNEL_MAX_CALLS
     return {"funnel": result, "amd": funnel.amd_accuracy(rows), "days": days,
+            "counted_calls": len(rows), "truncated": truncated,
             "outcomes": list(m.OUTCOMES), "manual_outcomes": list(m.MANUAL_OUTCOMES),
             "outcome_labels": m.OUTCOME_LABELS}
 

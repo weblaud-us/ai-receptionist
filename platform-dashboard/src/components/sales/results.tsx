@@ -55,7 +55,13 @@ export function Results() {
       {f.error && <ErrorBanner error={f.error} />}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Funnel, last {days} days</CardTitle><CardDescription>From dial to booked meeting.</CardDescription></CardHeader>
+          <CardHeader>
+            <CardTitle>Funnel, last {days} days</CardTitle>
+            <CardDescription>
+              From dial to booked meeting.
+              {f.data?.truncated && ` Counts the latest ${(f.data.counted_calls ?? 0).toLocaleString()} calls only: pick fewer days for the full picture.`}
+            </CardDescription>
+          </CardHeader>
           <CardContent className="space-y-2">
             {(funnel?.stages ?? []).map((s) => (
               <div key={s.key} className="grid grid-cols-[11rem_1fr_3rem] items-center gap-3 text-sm">

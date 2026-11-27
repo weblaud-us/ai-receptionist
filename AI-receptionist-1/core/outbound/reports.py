@@ -34,33 +34,40 @@ def _aware(v: Any) -> Optional[datetime]:
     return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
 
+async def _distinct_leads(db: Any, match: Dict[str, Any]) -> int:
+    """How many different leads have an attempt matching `match` (counted in Mongo)."""
+    rows = await db[m.ATTEMPTS].aggregate([{"$match": match}, {"$group": {"_id": "$lead_id"}},
+                                           {"$count": "n"}]).to_list(1)
+    return int(rows[0]["n"]) if rows else 0
+
+
 async def report(db: Any, *, days: int = 90, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=days)
-    deals = await db[crm.DEALS].find({}).to_list(20_000)
-    by_stage: Dict[str, Dict[str, float]] = {s: {"count": 0, "value": 0.0, "weighted": 0.0} for s in crm.DEAL_STAGES}
-    for d in deals:
-        s = by_stage.setdefault(d.get("stage", "qualified"), {"count": 0, "value": 0.0, "weighted": 0.0})
-        s["count"] += 1
-        s["value"] += float(d.get("amount") or 0)
-        s["weighted"] += float(d.get("amount") or 0) * float(d.get("probability") or 0)
-    closed = [d for d in deals if (_aware(d.get("closed_at")) or since) >= since and d.get("stage") in ("won", "lost")]
+    by_stage = await crm.stage_totals(db)
+    # Closed in the window: by closed_at, or (older deals without it) when they were last changed.
+    closed = await db[crm.DEALS].find(
+        {"stage": {"$in": ["won", "lost"]},
+         "$or": [{"closed_at": {"$gte": since}}, {"closed_at": None, "updated_at": {"$gte": since}}]},
+        {"stage": 1, "amount": 1, "won_at": 1, "created_at": 1, "lead_id": 1}).to_list(20_000)
     won = [d for d in closed if d["stage"] == "won"]
     cycle = [((_aware(d.get("won_at")) or now) - (_aware(d.get("created_at")) or now)).days for d in won]
-    attempts = await db[m.ATTEMPTS].find({"created_at": {"$gte": since}, "status": "done"},
-                                         {"outcome": 1, "amd": 1, "offer_id": 1, "campaign_id": 1, "lead_id": 1}).to_list(100_000)
-    meetings = [a for a in attempts if a.get("outcome") == "demo_booked"]
+    done = {"created_at": {"$gte": since}, "status": "done"}
+    meetings = await db[m.ATTEMPTS].find({**done, "outcome": "demo_booked"},
+                                         {"offer_id": 1, "campaign_id": 1, "lead_id": 1}).to_list(20_000)
+    called = await _distinct_leads(db, done)
+    reached = await _distinct_leads(db, {**done, "$or": [{"amd": "human"}, {"outcome": {"$in": list(m.HUMAN_OUTCOMES)}}]})
     lead_source = {}
     if meetings:
         for lead in await db[m.LEADS].find({"_id": {"$in": [a["lead_id"] for a in meetings]}}, {"source": 1}).to_list(10_000):
             lead_source[lead["_id"]] = lead.get("source") or "—"
     names = {c["_id"]: c.get("name") for c in await db[m.CAMPAIGNS].find({}, {"name": 1}).to_list(1000)}
     offers = {o["_id"]: o.get("name") for o in await db[OFFERS].find({}, {"name": 1}).to_list(1000)}
-    acts = await db[followup.ACTIVITY].find({"at": {"$gte": now - timedelta(weeks=4)}}, {"by": 1, "type": 1, "at": 1}).to_list(100_000)
     activity: Dict[str, Counter] = defaultdict(Counter)
-    for a in acts:
-        activity[str(a.get("by") or "system")][a.get("type") or "note"] += 1
-    reached = [a for a in attempts if a.get("amd") == "human" or a.get("outcome") in m.HUMAN_OUTCOMES]
+    async for a in db[followup.ACTIVITY].aggregate([
+            {"$match": {"at": {"$gte": now - timedelta(weeks=4)}}},
+            {"$group": {"_id": {"by": "$by", "type": "$type"}, "n": {"$sum": 1}}}]):
+        activity[str(a["_id"].get("by") or "system")][a["_id"].get("type") or "note"] += int(a["n"])
     leads_total = await db[m.LEADS].count_documents({"owner": m.OWNER_PLATFORM, "status": {"$ne": "merged"}})
     return {
         "days": days,
@@ -75,7 +82,7 @@ async def report(db: Any, *, days: int = 90, now: Optional[datetime] = None) -> 
                      "by_campaign": dict(Counter(names.get(a.get("campaign_id"), "—") for a in meetings)),
                      "by_source": dict(Counter(lead_source.get(a["lead_id"], "—") for a in meetings))},
         "activity": {who: dict(c) for who, c in activity.items()},
-        "funnel": {"leads": leads_total, "called": len({a["lead_id"] for a in attempts}), "reached": len({a["lead_id"] for a in reached}),
+        "funnel": {"leads": leads_total, "called": called, "reached": reached,
                    "meetings": len({a["lead_id"] for a in meetings}), "won": len({d["lead_id"] for d in won})},
     }
 

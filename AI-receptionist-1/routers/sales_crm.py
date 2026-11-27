@@ -95,12 +95,10 @@ async def board(owner_id: Optional[str] = None, admin: Principal = Depends(viewe
         {"_id": {"$in": list({d["lead_id"] for d in deals})}},
         {"business_name": 1, "contact_name": 1, "phone": 1, "city": 1, "country": 1, "owner_id": 1}).to_list(2000)}
     columns: Dict[str, List[Any]] = {s: [] for s in crm.DEAL_STAGES}
-    totals = {s: {"count": 0, "value": 0.0, "weighted": 0.0} for s in crm.DEAL_STAGES}
+    totals = await crm.stage_totals(db, q)                  # every deal, not just the ones on the board
     for d in deals:
         s = d.get("stage", "qualified")
-        totals[s]["count"] += 1
-        totals[s]["value"] += float(d.get("amount") or 0)
-        totals[s]["weighted"] += float(d.get("amount") or 0) * float(d.get("probability") or 0)
+        columns.setdefault(s, [])
         if len(columns[s]) < 200:
             columns[s].append({**m.with_id(d), "lead": m.with_id(leads.get(d["lead_id"]) or {"_id": d["lead_id"]})})
     return to_jsonable({"columns": columns, "totals": totals, "stages": list(crm.DEAL_STAGES),

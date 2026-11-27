@@ -199,6 +199,10 @@ async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("status", ASCENDING), ("next_eligible_at", ASCENDING)]),
         IndexModel([("phone", ASCENDING)]),
         IndexModel([("created_at", DESCENDING)]),
+        # the Leads tab's filters (routers/sales.py list_leads)
+        IndexModel([("source", ASCENDING)]),
+        IndexModel([("tags", ASCENDING)]),
+        IndexModel([("stage", ASCENDING), ("updated_at", DESCENDING)]),
     ])
     await db.campaigns.create_indexes([
         IndexModel([("status", ASCENDING)]),
@@ -229,7 +233,25 @@ async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("stage", ASCENDING), ("updated_at", DESCENDING)]),
         IndexModel([("owner_id", ASCENDING), ("stage", ASCENDING)]),
     ])
-    await db.sales_outbox.create_indexes([IndexModel([("status", ASCENDING), ("send_after", ASCENDING)])])
+    await db.sales_outbox.create_indexes([
+        IndexModel([("status", ASCENDING), ("send_after", ASCENDING)]),
+        IndexModel([("status", ASCENDING), ("last_try_at", ASCENDING)]),       # retries, and stranded sends
+        IndexModel([("lead_id", ASCENDING), ("status", ASCENDING)]),           # a lead's scheduled follow-ups
+        IndexModel([("sequence_id", ASCENDING)]),                              # one sequence per lead and kind
+    ])
+    # Follow-ups and the lead timeline (SALES_DIALER_PLAN.md Phase 3).
+    await db.sales_tasks.create_indexes([
+        IndexModel([("owner", ASCENDING), ("done_at", ASCENDING), ("due_at", ASCENDING)]),   # My work, the digest
+        IndexModel([("done_at", ASCENDING), ("cancelled", ASCENDING), ("due_at", ASCENDING)]),  # open tasks
+        IndexModel([("lead_id", ASCENDING), ("created_at", DESCENDING)]),
+        IndexModel([("attempt_id", ASCENDING), ("source", ASCENDING)]),
+    ])
+    await db.sales_activity.create_indexes([
+        IndexModel([("lead_id", ASCENDING), ("at", DESCENDING)]),
+        IndexModel([("at", DESCENDING)]),                                       # reports: the last weeks
+    ])
+    await db.sales_views.create_indexes([IndexModel([("kind", ASCENDING), ("owner", ASCENDING)])])
+    await db.sales_offers.create_indexes([IndexModel([("status", ASCENDING), ("updated_at", DESCENDING)])])
     await db.sales_offer_simulations.create_indexes([IndexModel([("checksum", ASCENDING), ("created_at", DESCENDING)]),
                                                      IndexModel([("status", ASCENDING), ("created_at", ASCENDING)]),
                                                      IndexModel([("checksum", ASCENDING), ("playbook_checksum", ASCENDING),

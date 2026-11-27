@@ -548,6 +548,9 @@ export interface Funnel {
     by_variant: { offer_id: string; offer_version: number; variant_id: string; label: string; dialled: number; human: number; demo_booked: number; demo_rate: number | null; reached?: number; next_steps?: number; next_step_rate?: number | null }[]
   }
   amd: { labelled: number; correct: number; accuracy: number | null; hung_up_on_people: number; talked_to_machines: number }
+  /** True when the window had more calls than the funnel counts (the latest `counted_calls`). */
+  truncated?: boolean
+  counted_calls?: number
   outcomes: string[]
   /** What a person may set by hand (never the system-only outcomes, and never "dnc"). */
   manual_outcomes: string[]

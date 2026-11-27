@@ -214,6 +214,12 @@ async def test_reports_add_up(db):
     assert r["pipeline"]["open_value"] == 6000 and r["pipeline"]["forecast"] == 1000 * 0.2 + 5000 * 0.6
     assert r["results"] == {"won": 1, "lost": 1, "win_rate": 0.5, "average_won": 4000.0, "cycle_days": 10.0}
     assert r["meetings"]["total"] == 1 and r["funnel"]["meetings"] == 1
+    assert (r["funnel"]["called"], r["funnel"]["reached"]) == (1, 1)
+    # A deal closed long ago without a closed_at no longer counts in every window's win rate.
+    await db[crm.DEALS].insert_one({"_id": "deal_old", "lead_id": "lead_0199", "stage": "lost", "amount": 1,
+                                    "probability": 0, "created_at": NOW - timedelta(days=400),
+                                    "updated_at": NOW - timedelta(days=300)})
+    assert (await reports.report(db, now=NOW))["results"]["lost"] == 1
 
 
 async def test_the_audit_viewer_shows_sales_entries_and_the_chain_holds(admin, db):
