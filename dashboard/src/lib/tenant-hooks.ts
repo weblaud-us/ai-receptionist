@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@receptionist/shared/lib/api'
 import type { SiteDraft } from '@receptionist/shared/lib/site-import'
-import type { Appointment, Contact, InboxItem, WaitlistEntry, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
+import type { Appointment, Contact, InboxItem, WaitlistEntry, ContactDetail, ContactWhatsApp, DayView, ForwardingRow, GettingStarted, KnowledgeItem, KnowledgeList, KnowledgeSuggestion, KnowledgeTestResult, Lead, Overview, PhoneNumberInfo, Resource, ScheduleException, Service, Slot, TeamMember, Tenant, TenantCall, UnansweredItem, VerticalInfo, VoiceCatalogue, WebhookEndpoint, WhatsAppOutboxItem, WhatsAppStatus, WhatsAppTemplate } from './tenant-types'
 
 type Params = Record<string, string | number | boolean | null | undefined>
 
@@ -16,6 +16,10 @@ function useInvalidate(...keys: string[]) {
 
 export const useOverview = () =>
   useQuery({ queryKey: ['t-overview'], queryFn: () => api<Overview>('/t/overview'), refetchInterval: 60_000 })
+
+/** The overview's getting-started list (owners and admins). Re-checked every minute while it shows. */
+export const useGettingStarted = (enabled = true) =>
+  useQuery({ queryKey: ['t-getting-started'], queryFn: () => api<GettingStarted>('/t/getting-started'), enabled, refetchInterval: 60_000 })
 
 export const useVerticals = () =>
   useQuery({ queryKey: ['t-verticals'], queryFn: () => api<{ verticals: VerticalInfo[] }>('/t/verticals'), staleTime: Infinity })

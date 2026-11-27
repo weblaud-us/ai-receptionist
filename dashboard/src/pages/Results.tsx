@@ -112,6 +112,7 @@ export default function Results() {
     <>
       <PageHeader
         title="Results"
+        help="results"
         description="What your assistant did for you — calls it caught, bookings it made, and time it saved."
         actions={<SimpleSelect value={days} onChange={setDays} options={PERIODS} className="w-40" />}
       />

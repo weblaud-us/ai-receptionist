@@ -10,10 +10,11 @@ import { Progress } from '@receptionist/shared/components/ui/progress'
 import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { duration } from '@receptionist/shared/lib/format'
-import { useCtx } from '@/lib/tenant'
+import { useCtx, useTenant } from '@/lib/tenant'
 import { OUTCOME_LABEL, OUTCOME_STYLE, zoneDateTime } from '@/lib/tenant-format'
 import { useOverview } from '@/lib/tenant-hooks'
 import { DentalRoiCard } from '@/components/app/dental-roi'
+import { GettingStartedCard, useGettingStartedVisible } from '@/components/app/getting-started'
 import { cn } from '@receptionist/shared/lib/utils'
 
 function Stat({ label, value, sub, icon, to }: { label: string; value: ReactNode; sub?: ReactNode; icon: ReactNode; to?: string }) {
@@ -43,6 +44,8 @@ export function OutcomeBadge({ outcome }: { outcome: string | null | undefined }
 
 export default function TenantOverview() {
   const ctx = useCtx()
+  const { can } = useTenant()
+  const checklist = useGettingStartedVisible(ctx, can)
   const q = useOverview()
   const d = q.data
   const tz = ctx.tenant.timezone
@@ -53,7 +56,9 @@ export default function TenantOverview() {
   return (
     <>
       <PageHeader title={`Good to see you`} description={`${ctx.tenant.name} · what your assistant did for you`} />
-      {!setupDone && ctx.role !== 'staff' && (
+      {checklist && <GettingStartedCard ctx={ctx} />}
+      {/* Hidden the list before finishing setup? The setup prompt stays until it's done. */}
+      {!checklist && !setupDone && ctx.role !== 'staff' && ctx.role !== 'dentist' && (
         <Card className="mb-4 border-primary/30 bg-primary/5">
           <CardContent className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">

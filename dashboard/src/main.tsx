@@ -17,9 +17,11 @@ import './index.css'
 initSentry()
 
 const queryClient = new QueryClient({
-  // Every failed mutation surfaces as a toast (401s are handled by the auth layer).
+  // Every failed mutation surfaces as a toast (401s are handled by the auth layer). A mutation
+  // that handles its own errors (e.g. saving tutorial progress) sets meta: { silentError: true }.
   mutationCache: new MutationCache({
-    onError: (error) => {
+    onError: (error, _variables, _result, mutation) => {
+      if (mutation.meta?.silentError) return
       if (error instanceof ApiError && error.status === 401) return
       toast.error(error instanceof Error ? error.message : 'Something went wrong')
     },

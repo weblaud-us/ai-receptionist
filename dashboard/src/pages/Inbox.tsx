@@ -43,7 +43,7 @@ export default function InboxPage() {
 
   return (
     <>
-      <PageHeader title="Inbox" description="Callbacks, leads, emergencies nobody has taken yet, and patients the confirmation call didn't reach. Assign each one, and mark it done when it's handled." />
+      <PageHeader title="Inbox" help="inbox" description="Callbacks, leads, emergencies nobody has taken yet, and patients the confirmation call didn't reach. Assign each one, and mark it done when it's handled." />
       {inbox.error && <ErrorBanner error={inbox.error} onRetry={() => void inbox.refetch()} />}
       <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)} className="mb-3">
         <TabsList>

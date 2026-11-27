@@ -502,3 +502,13 @@ export interface DayView {
   warning: string | null
   pms: string | null
 }
+
+/** GET /t/getting-started: the first things a new business does, ticked off from real data. */
+export type GettingStartedId = 'setup' | 'test_call' | 'number' | 'first_call' | 'knowledge' | 'calendar' | 'team' | 'dpa'
+
+export interface GettingStarted {
+  items: { id: GettingStartedId; done: boolean }[]
+  done: number
+  total: number
+  complete: boolean
+}

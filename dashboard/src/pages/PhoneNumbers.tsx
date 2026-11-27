@@ -17,7 +17,7 @@ export default function PhoneNumbers() {
   const canBuy = can('owner') && !!ctx?.billing?.self_serve
   return (
     <>
-      <PageHeader title="Phone numbers" description="Your assistant's number, and how to send your existing line to it." />
+      <PageHeader title="Phone numbers" help="call-forwarding" description="Your assistant's number, and how to send your existing line to it." />
       {q.error && <ErrorBanner error={q.error} />}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>

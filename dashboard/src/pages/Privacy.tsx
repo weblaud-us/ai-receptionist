@@ -356,7 +356,7 @@ export default function Privacy() {
   const legal = q.data
   return (
     <>
-      <PageHeader title="Legal & privacy" description="Your agreements with us, how long call data is kept, and how to answer a caller’s data request." />
+      <PageHeader title="Legal & privacy" help="caller-privacy" description="Your agreements with us, how long call data is kept, and how to answer a caller’s data request." />
       {q.error && <ErrorBanner error={q.error} onRetry={() => void q.refetch()} />}
       {!legal && !q.error && <Skeleton className="h-96 w-full" />}
       {legal && (

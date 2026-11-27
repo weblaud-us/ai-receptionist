@@ -67,7 +67,7 @@ export default function Team() {
 
   return (
     <>
-      <PageHeader title="Team" description="Who can sign in to this dashboard, and your own sign-in security." />
+      <PageHeader title="Team" help="team-and-roles" description="Who can sign in to this dashboard, and your own sign-in security." />
       {q.error && <ErrorBanner error={q.error} />}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-3 lg:max-w-md"><SecurityCard /></div>

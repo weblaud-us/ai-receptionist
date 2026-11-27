@@ -55,7 +55,7 @@ export default function SettingsPage() {
   const tab = params.get('tab') ?? 'business'
   return (
     <>
-      <PageHeader title="Settings" description="Your business details. Your assistant uses them on every call." />
+      <PageHeader title="Settings" help="troubleshooting" description="Your business details. Your assistant uses them on every call." />
       <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) })}>
         <TabsList>
           <TabsTrigger value="business">Business</TabsTrigger>

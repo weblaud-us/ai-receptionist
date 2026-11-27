@@ -36,6 +36,8 @@ const Billing = lazy(() => import('@/pages/Billing'))
 const Results = lazy(() => import('@/pages/Results'))
 const Privacy = lazy(() => import('@/pages/Privacy'))
 const Account = lazy(() => import('@/pages/Account'))
+const Help = lazy(() => import('@/pages/Help'))
+const HelpArticle = lazy(() => import('@/pages/Help').then((m) => ({ default: m.HelpArticle })))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -130,6 +132,8 @@ export default function App() {
           <Route path="privacy" element={<Only role="owner"><Privacy /></Only>} />
           {/* Your own account: every role, including a dentist. */}
           <Route path="account" element={<Account />} />
+          <Route path="help" element={<Help />} />
+          <Route path="help/:slug" element={<HelpArticle />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

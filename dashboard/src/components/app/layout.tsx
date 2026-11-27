@@ -1,5 +1,5 @@
 import { useState, type ComponentType } from 'react'
-import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BedDouble,
   Bell,
@@ -15,7 +15,6 @@ import {
   Contact,
   CreditCard,
   Inbox,
-  LifeBuoy,
   LayoutDashboard,
   Loader2,
   Menu,
@@ -37,16 +36,20 @@ import { ExitToPlatformButton, ImpersonationBanner, ToPlatform } from '@/compone
 import { AccountMenu } from '@receptionist/shared/components/account-menu'
 import { ErrorBanner } from '@receptionist/shared/components/blocks'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
+import { HelpMenu } from '@receptionist/shared/components/help-menu'
+import { TourProvider, useTour } from '@receptionist/shared/components/tour'
+import { useTutorials } from '@receptionist/shared/hooks/use-tutorials'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
-import { usePublicSite } from '@/lib/compliance'
 import { useLiveCalls } from '@/lib/hooks'
 import { useInbox } from '@/lib/tenant-hooks'
 import { useTenant } from '@/lib/tenant'
 import { ROLE_LABEL } from '@/lib/tenant-format'
 import type { Role, TenantContext } from '@/lib/tenant-types'
 import { useTheme } from '@receptionist/shared/providers/theme'
+import { tourFor } from '@/tours/dashboard-tours'
+import { checklistKey, useAutoTour } from '@/tours/use-auto-tour'
 import { cn } from '@receptionist/shared/lib/utils'
 
 interface NavItem {
@@ -118,18 +121,24 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
 
 /** Pages a business without an active plan can still open (to pay, export, answer a data request or leave). */
 const INACTIVE_OK = ['/billing', '/privacy', '/account']
+const inactiveOk = (path: string) => INACTIVE_OK.includes(path) || path === '/help' || path.startsWith('/help/')
 
-/** Help centre, support e-mail and status page (Phase 7) — shown only when configured. */
-function HelpLinks() {
-  const site = usePublicSite().data
-  if (!site || !(site.help_center_url || site.support_email || site.status_page_url)) return null
-  const link = 'flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
+/** "/" → "nav-overview", "/my-day" → "nav-my-day": what welcome tours point at. */
+const tourId = (to: string) => `nav-${to === '/' ? 'overview' : to.slice(1)}`
+
+/** Help → tour, checklist, guides and support (Phase 7 links come from /public/site). */
+function DashboardHelpMenu() {
+  const { ctx, can } = useTenant()
+  const tour = useTour()
+  const tutorials = useTutorials()
+  const navigate = useNavigate()
+  if (!ctx) return <HelpMenu />
+  const checklist = can('admin') && !ctx.legacy
   return (
-    <div className="mt-4 flex flex-col gap-0.5 px-3">
-      {site.help_center_url && <a className={link} href={site.help_center_url} target="_blank" rel="noopener"><LifeBuoy className="size-3.5" /> Help centre</a>}
-      {site.support_email && <a className={link} href={`mailto:${site.support_email}`}><LifeBuoy className="size-3.5" /> Contact support</a>}
-      {site.status_page_url && <a className={link} href={site.status_page_url} target="_blank" rel="noopener"><LifeBuoy className="size-3.5" /> Service status</a>}
-    </div>
+    <HelpMenu
+      onTour={() => tour.start(tourFor(ctx), ctx)}
+      onShowChecklist={checklist ? () => { tutorials.reset(checklistKey(ctx)); navigate('/') } : undefined}
+    />
   )
 }
 
@@ -154,6 +163,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
                 to={to}
                 end={end}
                 onClick={onNavigate}
+                data-tour={tourId(to)}
                 className={({ isActive }) =>
                   cn(
                     'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
@@ -233,6 +243,15 @@ function ThemeToggle() {
 }
 
 export function AppLayout() {
+  return (
+    <TourProvider>
+      <Shell />
+    </TourProvider>
+  )
+}
+
+function Shell() {
+  useAutoTour()
   const { user } = useAuth()
   const { ctx, loading, error, needsTenant, refetch } = useTenant()
   const location = useLocation()
@@ -242,7 +261,7 @@ export function AppLayout() {
   if (needsTenant) return <ToPlatform />
   // Not subscribed yet, paused or cancelled: the dashboard's data is locked, billing is not.
   const inactive = ctx && !ctx.platform_admin && ['incomplete', 'suspended', 'cancelled'].includes(ctx.billing?.status ?? '')
-  if (inactive && !INACTIVE_OK.includes(location.pathname)) return <Navigate to="/billing" replace />
+  if (inactive && !inactiveOk(location.pathname)) return <Navigate to="/billing" replace />
 
   const role = ctx ? (ctx.platform_admin ? 'Platform admin' : ROLE_LABEL[ctx.role]) : user?.is_platform_admin ? 'Platform admin' : ''
 
@@ -253,9 +272,8 @@ export function AppLayout() {
         <BusinessSwitcher />
         <div className="flex-1 overflow-y-auto pb-4">
           <NavList />
-          <HelpLinks />
         </div>
-        <div className="border-t border-sidebar-border p-3">
+        <div className="border-t border-sidebar-border p-3" data-tour="account-menu">
           <AccountMenu roleLabel={role} />
         </div>
       </aside>
@@ -264,12 +282,13 @@ export function AppLayout() {
         <div className="sticky top-0 z-20">
           <ImpersonationBanner />
           <header className="flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur lg:px-8">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu">
+            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu" data-tour="menu-button">
               <Menu />
             </Button>
             <div className="flex-1" />
+            <DashboardHelpMenu />
             <ThemeToggle />
-            <div className="lg:hidden"><AccountMenu roleLabel={role} compact /></div>
+            <div className="lg:hidden" data-tour="account-menu"><AccountMenu roleLabel={role} compact /></div>
           </header>
         </div>
         <main className="flex-1 px-4 py-6 lg:px-8">
@@ -294,7 +313,6 @@ export function AppLayout() {
           <Brand />
           <BusinessSwitcher />
           <NavList onNavigate={() => setMenu(false)} />
-          <HelpLinks />
         </SheetContent>
       </Sheet>
     </div>

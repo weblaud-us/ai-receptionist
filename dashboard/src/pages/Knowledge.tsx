@@ -39,7 +39,7 @@ export default function Knowledge() {
 
   return (
     <>
-      <PageHeader title="Knowledge" description="What your assistant knows about your business. Callers get these answers instead of “someone will call you back”." />
+      <PageHeader title="Knowledge" help="knowledge" description="What your assistant knows about your business. Callers get these answers instead of “someone will call you back”." />
       <TryItCard onAdd={(question) => setEditing({ question, active: true, tags: [] })} />
       <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) })} className="mt-6">
         <TabsList>

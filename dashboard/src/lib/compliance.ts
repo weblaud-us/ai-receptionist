@@ -90,12 +90,8 @@ export interface DentalInsights {
   reactivation_bookings_attributed?: number
 }
 
-export interface PublicSite {
-  demo_phone_number: string
-  status_page_url: string
-  support_email: string
-  help_center_url: string
-}
+/** /public/site moved to shared: the platform app's Help menu needs it too. */
+export { usePublicSite, type PublicSite } from '@receptionist/shared/lib/site'
 
 /* ───────────── legal ───────────── */
 
@@ -152,6 +148,3 @@ export function useFeedback() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['t-insights'] }),
   })
 }
-
-export const usePublicSite = () =>
-  useQuery({ queryKey: ['public-site'], queryFn: () => api<PublicSite>('/public/site', { tenant: null }), staleTime: Infinity })

@@ -88,7 +88,7 @@ export default function MyDay() {
 
   return (
     <>
-      <PageHeader title={staff ? `${L?.resources ?? 'Dentists'}' day` : 'My day'}
+      <PageHeader help={staff ? 'first-day-front-desk' : 'first-day-dentist'} title={staff ? `${L?.resources ?? 'Dentists'}' day` : 'My day'}
         description={staff ? 'Who each dentist is seeing today and tomorrow.' : 'Your patients today and tomorrow, with what the practice knows about each one.'} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {(['today', 'tomorrow'] as const).map((d) => (
