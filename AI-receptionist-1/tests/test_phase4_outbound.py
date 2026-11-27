@@ -957,6 +957,11 @@ async def test_listen_in_is_hidden_and_take_over_is_announced_to_the_agent(admin
     grants = jwt.decode(take["token"], options={"verify_signature": False})
     assert grants["video"]["canPublish"] is True and grants["attributes"] == {"role": "takeover"}
     assert (await seeded[m.ATTEMPTS].find_one({}))["operator"] == "api-key"
+    assert admin.post(f"/platform/sales/live/{attempt_id}/join", json={"mode": "takeover"}).status_code == 200  # same person
+    await seeded[m.ATTEMPTS].update_one({}, {"$set": {"operator": "usr_someone_else"}})
+    refused = admin.post(f"/platform/sales/live/{attempt_id}/join", json={"mode": "takeover"})
+    assert refused.status_code == 409 and (await seeded[m.ATTEMPTS].find_one({}))["operator"] == "usr_someone_else"
+    assert admin.post(f"/platform/sales/live/{attempt_id}/join", json={"mode": "listen"}).status_code == 200
 
 
 async def test_consent_form_records_consent_and_queues_the_call(client, db, ready, monkeypatch, frozen_api_clock):

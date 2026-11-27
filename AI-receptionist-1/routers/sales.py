@@ -1027,7 +1027,13 @@ async def join_call(attempt_id: str, body: JoinBody, request: Request, admin: Pr
     attempt = await _active_attempt(attempt_id)
     takeover = body.mode == "takeover"
     if takeover:
-        await get_db()[m.ATTEMPTS].update_one({"_id": attempt_id}, {"$set": {"operator": admin.user_id, "taken_over_at": utcnow()}})
+        # One person speaks on a call: never silently replace someone who already took it over.
+        claimed = await get_db()[m.ATTEMPTS].update_one(
+            {"_id": attempt_id, "status": {"$in": list(m.ACTIVE_ATTEMPT_STATUSES)},
+             "operator": {"$in": [None, admin.user_id]}},
+            {"$set": {"operator": admin.user_id, "taken_over_at": utcnow()}})
+        if not claimed.matched_count:
+            raise HTTPException(409, "Someone else is already on this call. You can still listen in.")
     await _audit(admin, request, f"sales.call.{body.mode}", "call_attempt", attempt_id)
     return _room_token(attempt["call_id"], takeover=takeover, user=admin)
 

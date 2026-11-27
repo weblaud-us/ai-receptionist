@@ -70,10 +70,21 @@ export function PowerDialer() {
       next[i] = seg
       return next
     })
-  const finished = (andNext: boolean) => {
-    setDone((n) => n + 1)
-    setCall(null)
-    if (andNext) dial()
+  const finished = (andNext: boolean, endCall: boolean) => {
+    const current = call
+    const next = () => {
+      setDone((n) => n + 1)
+      setCall(null)
+      if (andNext) dial()
+    }
+    if (current && !ended) {
+      // Still connected. A plain save keeps the call going (closing the panel would only drop you, and
+      // leave them on the line). Dialling on, or a do-not-call, ends the call first, so the next lead
+      // never rings while someone is still on the phone.
+      if (andNext || endCall) m.hangUp.mutate(current.attemptId, { onSettled: next })
+      return
+    }
+    next()
   }
 
   return (
@@ -200,7 +211,7 @@ function CheatSheet({ context }: { context: CallContext | null }) {
   )
 }
 
-function WrapUpForm({ attemptId, ended, onDone }: { attemptId: string; ended: boolean; onDone: (andNext: boolean) => void }) {
+function WrapUpForm({ attemptId, ended, onDone }: { attemptId: string; ended: boolean; onDone: (andNext: boolean, endCall: boolean) => void }) {
   const m = useSalesMutations()
   const [outcome, setOutcome] = useState('')
   const [notes, setNotes] = useState('')
@@ -216,7 +227,7 @@ function WrapUpForm({ attemptId, ended, onDone }: { attemptId: string; ended: bo
       callback_at: outcome === 'callback' && callbackAt ? new Date(callbackAt).toISOString() : null,
       task: task.trim() ? { title: task.trim() } : null, ...body,
     }
-    m.wrapUp.mutate(payload, { onSuccess: () => { toast.success('Saved'); onDone(andNext) } })
+    m.wrapUp.mutate(payload, { onSuccess: () => { toast.success('Saved'); onDone(andNext, payload.outcome === 'dnc') } })
   }
   const ready = !!outcome && (outcome !== 'callback' || !!callbackAt)
 
@@ -234,7 +245,7 @@ function WrapUpForm({ attemptId, ended, onDone }: { attemptId: string; ended: bo
         options={[{ value: 'auto', label: 'Stage: automatic' }, ...(['interested', 'meeting_booked', 'proposal', 'won', 'lost'] as const).map((s) => ({ value: s, label: `Stage: ${STAGE_LABEL[s]}` }))]} />
       <div className="flex flex-wrap gap-2 pt-1">
         <Button size="sm" disabled={!ready || m.wrapUp.isPending} onClick={() => save(true)}>
-          {m.wrapUp.isPending && <Loader2 className="animate-spin" />} Save &amp; dial next
+          {m.wrapUp.isPending && <Loader2 className="animate-spin" />} {ended ? 'Save & dial next' : 'Hang up, save & dial next'}
         </Button>
         <Button size="sm" variant="outline" disabled={!ready || m.wrapUp.isPending} onClick={() => save(false)}>Save</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setConfirmDnc(true)}>They asked not to be called</Button>
