@@ -70,6 +70,8 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
 
   const [form, setForm] = useState<OfferSettings>(() => (offer ? settingsOf(offer) : start?.form ?? BLANK_OFFER))
   const [unconfirmed, setUnconfirmed] = useState<string[]>(() => offer?.ai_unconfirmed ?? start?.unconfirmed ?? [])
+  // Facts ticked as confirmed since the last save: sent as ai_confirmed, then cleared.
+  const [confirmed, setConfirmed] = useState<string[]>([])
   const [aiFields, setAiFields] = useState<Set<string>>(() => new Set(start?.aiFields ?? []))
   const [sources, setSources] = useState<Record<string, string>>(() => start?.sources ?? {})
   const [offerLocal, setOfferLocal] = useState<LocalDraft | null>(local)
@@ -112,7 +114,14 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
     })
   }
   const addUnconfirmed = (paths: string[]) => setUnconfirmed((u) => [...new Set([...u, ...paths])])
-  const confirmFact = (path: string, ok: boolean) => setUnconfirmed((u) => (ok ? u.filter((p) => p !== path) : [...new Set([...u, path])]))
+  const confirmFact = (path: string, ok: boolean) => {
+    setUnconfirmed((u) => (ok ? u.filter((p) => p !== path) : [...new Set([...u, path])]))
+    setConfirmed((c) => (ok ? [...new Set([...c, path])] : c.filter((p) => p !== path)))
+  }
+  const shiftFacts = (list: string, removed: number) => {
+    setUnconfirmed((u) => shiftUnconfirmed(u, list, removed))
+    setConfirmed((c) => shiftUnconfirmed(c, list, removed))
+  }
 
   // Keep an unsaved new offer in this browser, so closing the sheet or the tab doesn't lose it.
   useEffect(() => {
@@ -136,9 +145,9 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
   }, [dirty])
 
   const body = useCallback((extra: { autosave?: boolean; force?: boolean } = {}) => ({
-    ...form, ai_unconfirmed: unconfirmed, autosave: extra.autosave,
+    ...form, ai_unconfirmed: unconfirmed, ai_confirmed: confirmed, autosave: extra.autosave,
     expected_updated_at: extra.force ? undefined : baseUpdatedAt,
-  }), [form, unconfirmed, baseUpdatedAt])
+  }), [form, unconfirmed, confirmed, baseUpdatedAt])
 
   const onSaveError = (e: Error) => {
     const detail = e instanceof ApiError ? (e.detail as { code?: string; updated_at?: string; by?: string } | undefined) : undefined
@@ -158,8 +167,11 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
       })
       return
     }
+    const sent = confirmed
     m.update.mutate({ id, ...body(opts) }, {
       onSuccess: (r) => {
+        setConfirmed((c) => c.filter((p) => !sent.includes(p)))
+        setUnconfirmed(r.offer.ai_unconfirmed ?? [])          // the server decides what is still unconfirmed
         setBaseUpdatedAt(r.offer.updated_at)
         setSavedAt(Date.now())
         setConflict(null)
@@ -209,6 +221,7 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
         toast.success(`v${version} restored into the draft`)
         setForm(settingsOf(r.offer))
         setUnconfirmed([])
+        setConfirmed([])
         setBaseUpdatedAt(r.offer.updated_at)
       },
       onError: onSaveError,
@@ -326,7 +339,7 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
                   onChange={(value_props) => set({ value_props })}
                   action={assist([{ label: 'Suggest more value points', section: 'value_props' }, { label: 'Reword the value points', section: 'value_props', action: 'rewrite' }])} />
                 <ListEditor label="Proof points" path="proof_points" hint="The ONLY facts and results the agent may claim, e.g. “Used by 40 practices in Sydney.” Add real, public ones only: the agent never makes up any others." items={form.proof_points} ai={aiFields.has('proof_points')}
-                  onChange={(proof_points, removed) => { set({ proof_points }); if (removed !== undefined) setUnconfirmed((u) => shiftUnconfirmed(u, 'proof_points', removed)) }}
+                  onChange={(proof_points, removed) => { set({ proof_points }); if (removed !== undefined) shiftFacts('proof_points', removed) }}
                   fact={(i) => factProps(`proof_points.${i}`)}
                   action={form.proof_points.length > 0 ? assist([{ label: 'Reword the proof points (keeps every fact)', section: 'proof_points', action: 'rewrite' }]) : null} />
               </TabsContent>
@@ -361,7 +374,7 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
                 )}
                 <RoiEditor roi={form.roi ?? BLANK_OFFER.roi} currency={form.deal_currency ?? 'USD'} pricingMode={form.pricing.mode}
                   onChange={(roi) => set({ roi })} fact={(i) => factProps(`roi.factors.${i}`)}
-                  onRemoveFactor={(i) => setUnconfirmed((u) => shiftUnconfirmed(u, 'roi.factors', i))} />
+                  onRemoveFactor={(i) => shiftFacts('roi.factors', i)} />
               </TabsContent>
 
               <TabsContent value="scripts" className="space-y-3">

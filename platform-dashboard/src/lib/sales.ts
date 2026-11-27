@@ -299,8 +299,11 @@ export interface Offer extends OfferSettings {
   last_review?: { at: string; by: string; checksum: string; result: OfferReview } | null
 }
 
-/** A save of the draft: AI facts still to confirm, and the updated_at this editor loaded (409 when stale). */
-export type OfferDraft = OfferSettings & { ai_unconfirmed?: string[]; expected_updated_at?: string; autosave?: boolean }
+/** A save of the draft: AI facts still to confirm, facts a person just confirmed (the server only clears a
+ * flag on an explicit confirmation), and the updated_at this editor loaded (409 when stale). */
+export type OfferDraft = OfferSettings & {
+  ai_unconfirmed?: string[]; ai_confirmed?: string[]; expected_updated_at?: string; autosave?: boolean
+}
 
 /** One problem (stops publishing) or warning, tied to the field it's about ("variants.1.cold_opener"). */
 export interface OfferIssue { level: 'problem' | 'warning'; field: string; message: string }

@@ -590,6 +590,38 @@ def clean_unconfirmed(paths: Iterable[str], s: Optional[OfferSettings] = None) -
     return out[:20]
 
 
+def fact_texts(s: OfferSettings) -> Dict[str, str]:
+    """Every fact field the offer has now, by path, with the text a person has to vouch for."""
+    out = {f"proof_points.{i}": p for i, p in enumerate(s.proof_points)}
+    out.update({f"roi.factors.{i}": json.dumps(f.model_dump(), sort_keys=True) for i, f in enumerate(s.roi.factors)})
+    if s.pricing.text.strip():
+        out["pricing.text"] = s.pricing.text
+    if s.consent_text.strip():
+        out["consent_text"] = s.consent_text
+    return out
+
+
+def fact_hash(text: str) -> str:
+    return hashlib.sha256(" ".join(str(text).split()).lower().encode("utf-8")).hexdigest()[:20]
+
+
+def track_unconfirmed(s: OfferSettings, flagged: Iterable[str], *, previous: Iterable[str] = (),
+                      confirmed: Iterable[str] = ()) -> Tuple[List[str], List[str]]:
+    """(unconfirmed paths, their text hashes) after a save.
+
+    `previous` are the hashes of AI-written texts nobody has confirmed yet: such a text stays
+    unconfirmed wherever it now sits (an earlier item was deleted, the list was reordered), even
+    if the editor's paths didn't follow it. Only an explicit `confirmed` path clears one. `flagged`
+    (paths the editor marks as AI-written) can only add."""
+    texts = fact_texts(s)
+    keep = set(previous)
+    cleared = {p for p in confirmed if p in texts}
+    out = set(clean_unconfirmed(flagged, s)) - cleared
+    out |= {p for p, t in texts.items() if fact_hash(t) in keep and p not in cleared}
+    paths = [p for p in texts if p in out][:20]
+    return paths, sorted({fact_hash(texts[p]) for p in paths})
+
+
 def unconfirmed_issues(paths: Iterable[str], s: Optional[OfferSettings] = None) -> List[Issue]:
     """One problem per AI-written fact nobody has confirmed yet."""
     return [Issue(level="problem", field=path,
@@ -761,8 +793,9 @@ def changed_keys(before: Mapping[str, Any], after: OfferSettings) -> List[str]:
 async def create_offer(db: Any, s: OfferSettings, *, by: str, offer_id: str, now: Optional[datetime] = None,
                        ai_unconfirmed: Iterable[str] = ()) -> Dict[str, Any]:
     now = now or _utcnow()
+    paths, hashes = track_unconfirmed(s, ai_unconfirmed)
     doc = {"_id": offer_id, **s.model_dump(), "status": "draft", "published_version": None,
-           "ai_unconfirmed": clean_unconfirmed(ai_unconfirmed, s),
+           "ai_unconfirmed": paths, "ai_fact_hashes": hashes,
            "created_by": by, "created_at": now, "updated_at": now, "updated_by": by}
     await db[OFFERS].insert_one(doc)
     return doc
@@ -770,20 +803,31 @@ async def create_offer(db: Any, s: OfferSettings, *, by: str, offer_id: str, now
 
 async def update_offer(db: Any, offer_id: str, s: OfferSettings, *, now: Optional[datetime] = None,
                        by: str = "", ai_unconfirmed: Optional[Iterable[str]] = None,
+                       ai_confirmed: Iterable[str] = (), reset_facts: bool = False,
                        expected_updated_at: Any = None) -> Optional[Dict[str, Any]]:
-    """Save the draft. With `expected_updated_at`, refuse (StaleDraft) when someone saved it since."""
+    """Save the draft. With `expected_updated_at`, refuse (StaleDraft) when someone saved it since.
+    AI-written facts stay unconfirmed until a person confirms each one (`ai_confirmed`); see
+    track_unconfirmed. `reset_facts` (restoring a published version, whose facts were confirmed)
+    clears them."""
     now = now or _utcnow()
     query: Dict[str, Any] = {"_id": offer_id}
+    current = await db[OFFERS].find_one({"_id": offer_id})
+    if current is None:
+        return None
     if expected_updated_at is not None:
-        current = await db[OFFERS].find_one({"_id": offer_id}, {"updated_at": 1, "updated_by": 1})
-        if current is None:
-            return None
         if not same_moment(current.get("updated_at"), expected_updated_at):
             raise StaleDraft(current.get("updated_at"), str(current.get("updated_by") or ""))
         query["updated_at"] = current.get("updated_at")        # and nobody saves in between
     sets: Dict[str, Any] = {**s.model_dump(), "updated_at": now, "updated_by": by}
-    if ai_unconfirmed is not None:
-        sets["ai_unconfirmed"] = clean_unconfirmed(ai_unconfirmed, s)
+    if reset_facts:
+        sets["ai_unconfirmed"], sets["ai_fact_hashes"] = [], []
+    else:
+        previous = current.get("ai_fact_hashes")
+        if previous is None:                                   # saved before facts were tracked by text
+            old = fact_texts(settings_of(current))
+            previous = [fact_hash(old[p]) for p in current.get("ai_unconfirmed") or [] if p in old]
+        sets["ai_unconfirmed"], sets["ai_fact_hashes"] = track_unconfirmed(
+            s, ai_unconfirmed or [], previous=previous, confirmed=ai_confirmed)
     res = await db[OFFERS].update_one(query, {"$set": sets})
     if not res.matched_count:
         if expected_updated_at is not None and await db[OFFERS].count_documents({"_id": offer_id}):
@@ -848,7 +892,7 @@ async def restore_version(db: Any, offer_id: str, version: int, *, by: str, now:
     if snap is None:
         raise OfferError("Version not found")
     restored = await update_offer(db, offer_id, OfferSettings.model_validate(snap["settings"]), now=now, by=by,
-                                  ai_unconfirmed=[], expected_updated_at=expected_updated_at)
+                                  reset_facts=True, expected_updated_at=expected_updated_at)
     if restored is None:
         raise OfferError("Offer not found")
     return restored

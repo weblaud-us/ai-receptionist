@@ -1364,12 +1364,13 @@ class OfferDraftBody(of.OfferSettings):
     editors, the `updated_at` this editor loaded (a stale one is refused with 409)."""
 
     ai_unconfirmed: Optional[List[str]] = Field(default=None, max_length=20)
+    ai_confirmed: List[str] = Field(default_factory=list, max_length=20)    # facts a person just confirmed
     expected_updated_at: Optional[str] = Field(default=None, max_length=40)
     autosave: bool = False
 
     def settings(self) -> of.OfferSettings:
-        return of.OfferSettings.model_validate(self.model_dump(exclude={"ai_unconfirmed", "expected_updated_at",
-                                                                         "autosave"}))
+        return of.OfferSettings.model_validate(self.model_dump(exclude={"ai_unconfirmed", "ai_confirmed",
+                                                                         "expected_updated_at", "autosave"}))
 
 
 def _offer_issues(doc: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -1563,16 +1564,17 @@ async def update_offer(offer_id: str, body: OfferDraftBody, request: Request,
     s = body.settings()
     try:
         updated = await of.update_offer(get_db(), offer_id, s, now=utcnow(), by=admin.user_id,
-                                        ai_unconfirmed=body.ai_unconfirmed,
+                                        ai_unconfirmed=body.ai_unconfirmed, ai_confirmed=body.ai_confirmed,
                                         expected_updated_at=body.expected_updated_at)
     except of.StaleDraft as e:
         raise _stale(e)
     if updated is None:
         raise HTTPException(404, "Offer not found")
     changed = of.changed_keys(doc, s)
-    if changed or body.ai_unconfirmed is not None:
+    confirmed = sorted(set(doc.get("ai_unconfirmed") or []) & set(body.ai_confirmed))
+    if changed or body.ai_unconfirmed is not None or confirmed:
         await _audit(admin, request, "sales.offer.autosave" if body.autosave else "sales.offer.update", "offer",
-                     offer_id, {"name": s.name, "changed": changed,
+                     offer_id, {"name": s.name, "changed": changed, "ai_confirmed": confirmed,
                                 "ai_unconfirmed": updated.get("ai_unconfirmed") or []})
     return to_jsonable({"offer": m.with_id(updated), "issues": _offer_issues(updated)})
 

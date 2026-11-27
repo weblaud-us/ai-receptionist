@@ -264,9 +264,29 @@ async def test_publishing_waits_until_every_ai_fact_is_confirmed(admin, db):
     assert refused.status_code == 422 and "Proof point 1 was written by AI" in refused.text
     preview = admin.post(f"/platform/sales/offers/{oid}/preview", json={}).json()
     assert any(i["field"] == "pricing.text" for i in preview["issues"])
-    confirmed = admin.patch(f"/platform/sales/offers/{oid}", json={**_offer(name="WebLaud: AI facts"), "ai_unconfirmed": []})
-    assert confirmed.status_code == 200
+    # Dropping the flags is not confirming them: the server remembers which texts the AI wrote.
+    dropped = admin.patch(f"/platform/sales/offers/{oid}", json={**_offer(name="WebLaud: AI facts"), "ai_unconfirmed": []})
+    assert dropped.json()["offer"]["ai_unconfirmed"] == ["proof_points.0", "pricing.text"]
+    confirmed = admin.patch(f"/platform/sales/offers/{oid}", json={
+        **_offer(name="WebLaud: AI facts"), "ai_unconfirmed": [], "ai_confirmed": ["proof_points.0", "pricing.text"]})
+    assert confirmed.status_code == 200 and confirmed.json()["offer"]["ai_unconfirmed"] == []
+    entry = await db.audit_log.find_one({"action": "sales.offer.update", "target_id": oid}, sort=[("at", -1)])
+    assert entry["diff"]["ai_confirmed"] == ["pricing.text", "proof_points.0"]
     assert admin.post(f"/platform/sales/offers/{oid}/publish").json()["version"] == 1
+
+
+async def test_an_ai_fact_stays_unconfirmed_when_an_earlier_item_is_deleted(admin, db):
+    body = _offer(name="WebLaud: shifting facts")
+    body["proof_points"] = ["Written by a person", "Written by the AI"]
+    oid = admin.post("/platform/sales/offers", json={**body, "ai_unconfirmed": ["proof_points.1"]}).json()["offer"]["id"]
+    # The editor deletes the first point but sends the old, unshifted path (or none at all).
+    shifted = {**body, "proof_points": ["Written by the AI"], "ai_unconfirmed": ["proof_points.1"]}
+    saved = admin.patch(f"/platform/sales/offers/{oid}", json=shifted).json()["offer"]
+    assert saved["ai_unconfirmed"] == ["proof_points.0"]                  # it followed the text
+    assert admin.post(f"/platform/sales/offers/{oid}/publish").status_code == 422
+    # A person rewriting the AI's text makes it theirs once they confirm; restoring a version clears it.
+    saved = admin.patch(f"/platform/sales/offers/{oid}", json={**shifted, "ai_confirmed": ["proof_points.0"]}).json()["offer"]
+    assert saved["ai_unconfirmed"] == []
 
 
 # ── Drafts, autosave and history ─────────────────────────────────────────────
