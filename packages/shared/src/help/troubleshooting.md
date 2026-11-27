@@ -9,7 +9,7 @@
    forwarding.
 3. Is there a banner on **Plan & billing** (payment problem, paused, minutes used up)? Calls then go
    to your transfer number, or callers are asked to call back. Fix the payment or switch off the hard cap.
-4. Still nothing? Check the service status page (link in the dashboard sidebar), then contact support.
+4. Still nothing? Check the service status page (**Help → Service status**), then contact support.
 
 ## "All our lines are busy"
 

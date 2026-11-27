@@ -19,4 +19,15 @@ What callers hear first: "Thanks for calling [your business], this is [name], [y
 virtual assistant." It always says it's a virtual assistant. That's required by law in many places,
 and callers appreciate it.
 
+## After setup
+
+Your overview shows a **Getting started** list: a test call, your number, a first real call, an
+answer of your own, your calendar, your team and the data processing agreement. Each step ticks
+itself off once it's done. Hide it whenever you like; **Help → Getting started checklist** brings
+it back.
+
+The first time you open the dashboard after setup, a one-minute tour shows you where everything is.
+**Help → Take the tour** replays it, and **Help → Guides** has every article, including one for each
+role on your team ([roles](team-and-roles.md)).
+
 Next: [teach it your FAQs](knowledge.md) and [connect your calendar](calendar.md).
