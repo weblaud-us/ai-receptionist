@@ -1,7 +1,7 @@
 # Support process — Task 7.2
 
 How customers reach you, how fast you answer, and what to do with each kind of problem. Technical
-procedures are in [RUNBOOK.md](RUNBOOK.md); customer-facing help articles in [help/](help/README.md).
+procedures are in [RUNBOOK.md](RUNBOOK.md); customer-facing help articles in [packages/shared/src/help/](../packages/shared/src/help/README.md).
 
 ## 1. Channels
 
@@ -9,7 +9,7 @@ procedures are in [RUNBOOK.md](RUNBOOK.md); customer-facing help articles in [he
 |---|---|---|
 | E-mail | `SUPPORT_EMAIL` (shared inbox, e.g. Help Scout, Front or Gmail with labels) | Dashboard sidebar "Contact support", SMS HELP reply, Terms |
 | In-app chat (optional) | Crisp or Intercom snippet in the dashboard | Logged-in owners |
-| Help centre | Publish [help/](help/README.md) at `HELP_CENTER_URL` (Notion, HelpScout Docs, or a static site) | Dashboard sidebar "Help centre" |
+| Help centre | Publish [packages/shared/src/help/](../packages/shared/src/help/README.md) at `HELP_CENTER_URL` (Notion, HelpScout Docs, or a static site) | Help menu in both dashboards ("Guides" in-app; "Help centre" links out) |
 | Status page | `STATUS_PAGE_URL` (Better Stack, Instatus or Atlassian Statuspage), **not** on your own servers | Dashboard sidebar "Service status", SLA, incident updates |
 
 ## 2. Targets
@@ -29,7 +29,7 @@ Business hours: [Mon–Fri 9:00–18:00, time zone]. Out of hours, only severity
 2. **Is it everyone?** Check the status page, Sentry, and the latency dashboard. If several businesses
    are affected, it's an incident: follow [RUNBOOK → Incident response](RUNBOOK.md#incident-response).
 3. **One business?** Most common causes, in order:
-   - call forwarding was turned off or changed on their phone → [help/call-forwarding.md](help/call-forwarding.md);
+   - call forwarding was turned off or changed on their phone → [help/call-forwarding.md](../packages/shared/src/help/call-forwarding.md);
    - plan paused or minutes capped → **Plan & billing** banner;
    - wrong hours or prices in Settings → fix together;
    - the assistant gave a wrong answer → open the call in **Calls & messages**, read the transcript,
@@ -42,7 +42,7 @@ Business hours: [Mon–Fri 9:00–18:00, time zone]. Out of hours, only severity
 2. "It said something wrong": thanks; the fix (Knowledge entry); offer a call.
 3. Change of plan / cancel: Plan & billing → Manage billing; data kept 30 days after cancelling.
 4. Export my data: Plan & billing → Export all data.
-5. A caller wants their data deleted: Legal & privacy → find the number → Delete ([help/caller-privacy.md](help/caller-privacy.md)).
+5. A caller wants their data deleted: Legal & privacy → find the number → Delete ([help/caller-privacy.md](../packages/shared/src/help/caller-privacy.md)).
 6. Recording: only on Pro; announced at the start of the call; retention under Assistant.
 7. Number porting: we forward instead; porting is a manual process with your carrier.
 8. Calendar sync not updating: reconnect Google under Settings → Integrations.
@@ -52,7 +52,7 @@ Business hours: [Mon–Fri 9:00–18:00, time zone]. Out of hours, only severity
 ## 5. Data protection requests that reach you
 
 - **From a caller:** reply within 2 business days: we process data for the business; we have passed
-  your request to them. Forward it to the business owner with a link to [help/caller-privacy.md](help/caller-privacy.md),
+  your request to them. Forward it to the business owner with a link to [help/caller-privacy.md](../packages/shared/src/help/caller-privacy.md),
   and note the date. The business answers. Help them if asked; acting yourself needs their written instruction.
 - **From a business owner about their own account:** handle it yourself (`PRIVACY_CONTACT_EMAIL`).
 - **From an authority:** don't answer the substance yourself. Contact counsel the same day.

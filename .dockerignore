@@ -9,6 +9,9 @@ deploy
 docs
 *.md
 !packages/shared/README.md
+# Help articles are bundled into the dashboards (Help → Guides)
+!packages/shared/src/help/*.md
+!platform-dashboard/src/help/*.md
 **/.astro
 # Secrets never go into an image
 **/.env

@@ -581,7 +581,7 @@ The product enforces these controls today (details and open legal items in
 | Incident runbook | [docs/RUNBOOK.md](docs/RUNBOOK.md) |
 | Compliance | [docs/COMPLIANCE.md](docs/COMPLIANCE.md) |
 | Legal drafts (Terms, Privacy, DPA, AUP, SLA, sub-processors, security) | [docs/legal/](docs/legal/) |
-| Customer help centre | [docs/help/](docs/help/) |
+| Customer help centre (also shown in-app under Help → Guides) | [packages/shared/src/help/](packages/shared/src/help/) |
 | Support, pilots and sales | [docs/SUPPORT.md](docs/SUPPORT.md), [docs/PILOT_PLAYBOOK.md](docs/PILOT_PLAYBOOK.md), [docs/SALES_PLAYBOOK.md](docs/SALES_PLAYBOOK.md) |
 | Product roadmap (Phases 0–7) | [ROADMAP.md](ROADMAP.md), [ROADMAP_PLAN.md](ROADMAP_PLAN.md) |
 | Dental vertical plan | [DENTAL_ROADMAP.md](DENTAL_ROADMAP.md) |

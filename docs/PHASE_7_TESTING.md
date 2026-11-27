@@ -7,7 +7,7 @@ What Phase 7 added to the product (ROADMAP §12). The non-code half lives in its
 | 7.1 Pilot | [PILOT_PLAYBOOK.md](PILOT_PLAYBOOK.md) |
 | 7.2 Launch checklist | [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md) |
 | 7.2 Support process, status page | [SUPPORT.md](SUPPORT.md) |
-| 7.2 Help centre | [help/](help/README.md) |
+| 7.2 Help centre | [packages/shared/src/help/](../packages/shared/src/help/README.md) |
 | 7.3 Sales motion, demo script, partners · 7.4 what to build next | [SALES_PLAYBOOK.md](SALES_PLAYBOOK.md) |
 
 ## What's in the code
@@ -22,7 +22,7 @@ What Phase 7 added to the product (ROADMAP §12). The non-code half lives in its
 | 7.1 Review every transcript, then a sample | **Transcript review → Queue** (`GET /platform/reviews/queue`): every call from pilot businesses, plus a fixed `REVIEW_SAMPLE_PCT` sample of everyone else, chosen by call-id hash so the same call is always in or out. Open a call, read the transcript, mark it **Good** or **Something went wrong** with issue categories (prompt, tool, knowledge, latency, speech, transfer, hallucination, other) and notes (`POST /platform/reviews` → `call_reviews`) |
 | 7.1 Each failure → a new eval test case | Tick **Make it an eval test case** in the review. `core/services/reviews.case_from_call` saves the caller's turns (phone numbers, e-mails, long digit runs, street numbers and the caller's name redacted), the business's facts, services and FAQs, plus your rubric and must / must-not tools, as a **draft**. Approve it under **Eval cases**, then `uv run python -m scripts.export_eval_cases` writes `tests/evals/cases/<id>.json`. `tests/evals/test_case_evals.py` replays every case against the real LLM (`RUN_EVALS=1`); file validity is checked in every CI run. Four hand-written `seed_*` cases ship with it |
 | 7.2 Monitoring of margin per tenant | **Unit economics → Margin per business** (`GET /platform/margins?days=30`): prorated list price plus overage, minus call cost and the fixed per-business cost. Worst margin first; paying businesses at a loss are flagged; manual (invoiced) businesses show cost only |
-| 7.2 Demo number, status page, support, help | `DEMO_PHONE_NUMBER`, `STATUS_PAGE_URL`, `SUPPORT_EMAIL`, `HELP_CENTER_URL` → `GET /public/site` for the marketing site; the dashboard sidebar shows Help centre / Contact support / Service status when set |
+| 7.2 Demo number, status page, support, help | `DEMO_PHONE_NUMBER`, `STATUS_PAGE_URL`, `SUPPORT_EMAIL`, `HELP_CENTER_URL` → `GET /public/site` for the marketing site; the dashboard Help menu shows Help centre / Contact support / Service status when set |
 | 7.3 Retention: "your assistant this month" | Tenant jobs, on the 1st at `REPORT_HOUR`, once per month (claimed atomically), for the previous calendar month in business-local time. Owners can switch it off (**Settings → Notifications → Monthly results e-mail**), and `MONTHLY_REPORT_ENABLED=false` turns it off everywhere. Not sent in the month a business signed up |
 
 **Not built, deliberately:**

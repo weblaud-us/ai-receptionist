@@ -39,7 +39,7 @@ links to where the detail lives.
 
 ## Help and support ([SUPPORT.md](SUPPORT.md))
 
-- [ ] Help centre published from [help/](help/README.md) at `HELP_CENTER_URL`: setup guide, call
+- [ ] Help centre published from [packages/shared/src/help/](../packages/shared/src/help/README.md) at `HELP_CENTER_URL`: setup guide, call
       forwarding per carrier, calendar connection, editing FAQs, troubleshooting, caller data requests.
 - [ ] Support e-mail (`SUPPORT_EMAIL`) answered, with in-app chat (Crisp or Intercom) if you want
       it. Target: first response in under 4 business hours.

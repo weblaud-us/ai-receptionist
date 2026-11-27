@@ -393,7 +393,7 @@ Details: [PHASE_7_TESTING.md](PHASE_7_TESTING.md) · [PILOT_PLAYBOOK.md](PILOT_P
 
 **Configuration**
 - [ ] `DEMO_PHONE_NUMBER` (assigned to a demo business), `STATUS_PAGE_URL`, `SUPPORT_EMAIL`,
-      `HELP_CENTER_URL` set; `GET /public/site` returns them; the dashboard sidebar shows the links.
+      `HELP_CENTER_URL` set; `GET /public/site` returns them; the dashboard Help menu shows the links.
 - [ ] `PILOT_REPORT_BCC` set to you; `REPORT_HOUR` suits your customers (default 9:00 local).
 - [ ] `MONTHLY_REPORT_ENABLED=true`; one monthly e-mail checked on staging
       (`python -m scripts.tenant_jobs_tick --at <the 1st, 15:00Z>`), not in spam.
