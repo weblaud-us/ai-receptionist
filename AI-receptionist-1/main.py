@@ -56,6 +56,7 @@ _ROUTERS = [
     ("routers.admin", "admin_router"),
     ("routers.livekit", "livekit_router"),
     ("routers.auth", "auth_router"),          # Phase 2: users, sessions, invites
+    ("routers.me", "me_router"),              # the signed-in person's tutorial progress
     ("routers.tenant", "tenant_router"),      # Phase 2: the business's own settings and data
     ("routers.platform", "platform_router"),  # Phase 2: platform super-admin
     ("routers.integrations", "integrations_router"),  # Phase 2: OAuth callbacks (Google Calendar)
