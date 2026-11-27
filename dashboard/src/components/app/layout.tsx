@@ -18,7 +18,6 @@ import {
   LifeBuoy,
   LayoutDashboard,
   Loader2,
-  LogOut,
   Menu,
   MessageSquare,
   Moon,
@@ -35,6 +34,7 @@ import {
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { BillingBanner } from '@/components/app/billing-banner'
 import { ExitToPlatformButton, ImpersonationBanner, ToPlatform } from '@/components/app/to-platform'
+import { AccountMenu } from '@receptionist/shared/components/account-menu'
 import { ErrorBanner } from '@receptionist/shared/components/blocks'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
@@ -117,7 +117,7 @@ function navFor(ctx: TenantContext): { title?: string; items: NavItem[] }[] {
 }
 
 /** Pages a business without an active plan can still open (to pay, export, answer a data request or leave). */
-const INACTIVE_OK = ['/billing', '/privacy']
+const INACTIVE_OK = ['/billing', '/privacy', '/account']
 
 /** Help centre, support e-mail and status page (Phase 7) — shown only when configured. */
 function HelpLinks() {
@@ -233,7 +233,7 @@ function ThemeToggle() {
 }
 
 export function AppLayout() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const { ctx, loading, error, needsTenant, refetch } = useTenant()
   const location = useLocation()
   const [menu, setMenu] = useState(false)
@@ -256,21 +256,7 @@ export function AppLayout() {
           <HelpLinks />
         </div>
         <div className="border-t border-sidebar-border p-3">
-          <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-            <div className="min-w-0 text-sm">
-              <div className="truncate font-medium text-sidebar-foreground">{user?.name || user?.email}</div>
-              <div className="text-xs text-sidebar-foreground/60">{role}</div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Log out"
-              className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              onClick={() => void logout()}
-            >
-              <LogOut />
-            </Button>
-          </div>
+          <AccountMenu roleLabel={role} />
         </div>
       </aside>
 
@@ -283,9 +269,7 @@ export function AppLayout() {
             </Button>
             <div className="flex-1" />
             <ThemeToggle />
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => void logout()} aria-label="Log out">
-              <LogOut />
-            </Button>
+            <div className="lg:hidden"><AccountMenu roleLabel={role} compact /></div>
           </header>
         </div>
         <main className="flex-1 px-4 py-6 lg:px-8">

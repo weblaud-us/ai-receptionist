@@ -8,6 +8,7 @@ import { ToPlatform } from '@/components/app/to-platform'
 import type { Role } from '@/lib/tenant-types'
 import Login, { AcceptInvite, ForgotPassword, ResetPassword } from '@/pages/Login'
 import Signup, { VerifyEmail } from '@/pages/Signup'
+import { ConfirmEmailChange } from '@receptionist/shared/auth/login-pages'
 
 // One chunk per page keeps the first load small (charts only load with the overviews).
 const HotelOverview = lazy(() => import('@/pages/Overview'))
@@ -34,6 +35,7 @@ const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Billing = lazy(() => import('@/pages/Billing'))
 const Results = lazy(() => import('@/pages/Results'))
 const Privacy = lazy(() => import('@/pages/Privacy'))
+const Account = lazy(() => import('@/pages/Account'))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -91,6 +93,7 @@ export default function App() {
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/confirm-email" element={<ConfirmEmailChange />} />
         <Route path="/impersonate/:tenantId" element={<RequireAuth><Impersonate /></RequireAuth>} />
         <Route
           element={
@@ -125,6 +128,8 @@ export default function App() {
           <Route path="billing" element={<Only><Billing /></Only>} />
           <Route path="results" element={<Only><Results /></Only>} />
           <Route path="privacy" element={<Only role="owner"><Privacy /></Only>} />
+          {/* Your own account: every role, including a dentist. */}
+          <Route path="account" element={<Account />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

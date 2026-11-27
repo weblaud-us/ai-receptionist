@@ -57,11 +57,17 @@ export const UNAUTHORIZED_EVENT = 'rcpt-unauthorized'
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** The response's `detail` when it is structured (e.g. {code: "stale_draft", updated_at, by}). */
+  detail?: unknown
+  constructor(status: number, message: string, detail?: unknown) {
     super(message)
     this.status = status
+    this.detail = detail
   }
 }
+
+const detailOf = (data: unknown): unknown =>
+  data && typeof data === 'object' && 'detail' in data ? (data as { detail: unknown }).detail : undefined
 
 type Params = Record<string, string | number | boolean | null | undefined>
 
@@ -77,6 +83,10 @@ function errorMessage(data: unknown, fallback: string): string {
   if (data && typeof data === 'object' && 'detail' in data) {
     const detail = (data as { detail: unknown }).detail
     if (typeof detail === 'string') return detail
+    if (detail && typeof detail === 'object' && !Array.isArray(detail) && typeof (detail as { message?: unknown }).message === 'string') {
+      const d = detail as { message: string; problems?: unknown }
+      return Array.isArray(d.problems) && d.problems.length ? `${d.message}: ${d.problems.join('; ')}` : d.message
+    }
     if (Array.isArray(detail)) {
       // FastAPI validation errors
       return detail
@@ -183,7 +193,84 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
       accessToken = null
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
     }
-    throw new ApiError(res.status, errorMessage(data, `Request failed (${res.status})`))
+    throw new ApiError(res.status, errorMessage(data, `Request failed (${res.status})`), detailOf(data))
   }
   return data as T
+}
+
+/**
+ * POST and read server-sent events as they arrive (e.g. the website import's live progress).
+ * EventSource can't send the Authorization header, so this is fetch + a stream reader. Refreshes the
+ * session once on a 401, like api(). Resolves when the stream ends; rejects with ApiError when the
+ * request is refused before streaming starts, or the connection drops.
+ */
+export async function streamEvents<E = Record<string, unknown>>(
+  path: string,
+  body: unknown,
+  onEvent: (event: E) => void,
+  opts: { signal?: AbortSignal; tenant?: string | null } = {},
+): Promise<void> {
+  const { signal } = opts
+  const tenant = opts.tenant !== undefined ? opts.tenant : tenantOverride
+  const open = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+    if (tenant) headers['X-Tenant-Id'] = tenant
+    return fetch(API_BASE + path, { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', signal })
+  }
+  let res: Response
+  try {
+    res = await open()
+    if (res.status === 401 && (await refreshSession())) res = await open()
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') throw e
+    throw new ApiError(0, `Cannot reach the API at ${API_BASE}. Is the backend running?`)
+  }
+  if (!res.ok || !res.body) {
+    let data: unknown = null
+    try {
+      data = await res.json()
+    } catch {
+      /* not JSON */
+    }
+    if (res.status === 401) {
+      accessToken = null
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    }
+    throw new ApiError(res.status, errorMessage(data, `Request failed (${res.status})`), detailOf(data))
+  }
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  const flush = (block: string) => {
+    // One event per blank-line-separated block; only `data:` lines carry it (`:` lines are keep-alives).
+    const data = block
+      .split('\n')
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).replace(/^ /, ''))
+      .join('\n')
+    if (!data) return
+    try {
+      onEvent(JSON.parse(data) as E)
+    } catch {
+      /* a malformed frame is skipped */
+    }
+  }
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += value.replace(/\r\n/g, '\n')
+      let cut = buffer.indexOf('\n\n')
+      while (cut !== -1) {
+        flush(buffer.slice(0, cut))
+        buffer = buffer.slice(cut + 2)
+        cut = buffer.indexOf('\n\n')
+      }
+    }
+    if (buffer.trim()) flush(buffer)
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') throw e
+    throw new ApiError(0, 'The connection dropped while reading the website.')
+  }
 }

@@ -1,5 +1,5 @@
 /** Sign-in, forgot-password and reset-password screens, shared by the client and platform apps. */
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { CheckCircle2, Loader2, type LucideIcon } from 'lucide-react'
 import { ErrorBanner } from '../components/blocks'
@@ -8,7 +8,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
-import { api, API_BASE } from '../lib/api'
+import { api, refreshSession } from '../lib/api'
 import { useAuth } from './auth'
 
 /** The LaudLine wordmark heads every auth screen; pass `icon` to show that instead. */
@@ -126,7 +126,6 @@ export function LoginPage({ title, description, icon, footer }: LoginPageProps) 
           Sign in
         </Button>
         {footer}
-        <p className="text-center text-xs text-muted-foreground">API: {API_BASE}</p>
       </form>
     </AuthCard>
   )
@@ -255,6 +254,57 @@ export function ResetPassword() {
             setDone(true)
           }}
         />
+      )}
+    </AuthCard>
+  )
+}
+
+/** Opened from the link sent to a new address (account settings → change e-mail). */
+export function ConfirmEmailChange() {
+  const [params] = useSearchParams()
+  const token = params.get('token') ?? ''
+  const { status, applyTokens } = useAuth()
+  const [state, setState] = useState<'working' | 'done' | 'error'>('working')
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<unknown>(null)
+  const sent = useRef(false)
+
+  useEffect(() => {
+    if (sent.current || status === 'loading') return
+    sent.current = true
+    api<{ email: string }>('/auth/email/confirm', { method: 'POST', auth: false, body: { token } })
+      .then(async (res) => {
+        setEmail(res.email)
+        setState('done')
+        // Signed in here already: pick up the new address straight away.
+        if (status === 'authenticated') {
+          const fresh = await refreshSession()
+          if (fresh?.access_token) applyTokens(fresh)
+        }
+      })
+      .catch((err) => {
+        setError(err)
+        setState('error')
+      })
+  }, [token, status, applyTokens])
+
+  return (
+    <AuthCard title="Confirm your new e-mail" description={state === 'done' ? 'All set.' : 'One moment…'}>
+      {state === 'working' && <Loader2 className="mx-auto size-6 animate-spin text-muted-foreground" />}
+      {state === 'done' && (
+        <div className="space-y-4 text-center text-sm">
+          <CheckCircle2 className="mx-auto size-8 text-emerald-600" />
+          <p>From now on you sign in with <span className="font-medium">{email}</span>.</p>
+          <Button className="w-full" nativeButton={false} render={<Link to={status === 'authenticated' ? '/account' : '/login'} />}>
+            {status === 'authenticated' ? 'Back to account settings' : 'Sign in'}
+          </Button>
+        </div>
+      )}
+      {state === 'error' && (
+        <div className="space-y-4">
+          <ErrorBanner error={error} />
+          <Button variant="outline" className="w-full" nativeButton={false} render={<Link to="/" />}>Open the dashboard</Button>
+        </div>
       )}
     </AuthCard>
   )

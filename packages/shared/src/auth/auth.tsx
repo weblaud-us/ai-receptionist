@@ -9,6 +9,8 @@ export interface AuthUser {
   email: string
   name: string
   is_platform_admin: boolean
+  /** The platform's own sales team (platform dashboard → Sales dialer). Platform admins are "admin". */
+  sales_role?: 'admin' | 'manager' | 'caller' | 'viewer' | null
   mfa_enabled?: boolean
   email_verified?: boolean
 }

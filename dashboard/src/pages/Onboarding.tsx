@@ -5,6 +5,8 @@ import { ArrowLeft, ArrowRight, Check, Globe, Loader2, Plus, Trash2 } from 'luci
 import { ErrorBanner, Field, PageHeader } from '@receptionist/shared/components/blocks'
 import { HoursEditor } from '@receptionist/shared/components/hours-editor'
 import { SiteDraftReview } from '@receptionist/shared/components/site-draft-review'
+import { SiteImportProgress } from '@receptionist/shared/components/site-import-progress'
+import { useSiteImportStream } from '@receptionist/shared/hooks/use-site-import-stream'
 import { draftForApi, type SiteDraft } from '@receptionist/shared/lib/site-import'
 import { NumberPicker } from '@/components/app/number-picker'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
@@ -135,23 +137,26 @@ function WebsiteStep({ onNext }: { onNext: () => void }) {
       country: DENTAL_COUNTRIES.some((c) => c.value === d.profile.country) ? d.profile.country : ctx.tenant.country,
     },
   })
+  // Live progress: each step, each page as it's read, then what was found (falls back to the one-shot call).
+  const reading = useSiteImportStream({ path: '/t/onboarding/site-import/stream', fallback: site.fetch.mutateAsync, onDraft: setDraft })
+  const busy = reading.state.running
+  const start = () => { if (url.trim().length > 3 && !busy) void reading.run(url.trim()) }
   if (!draft) {
     return (
       <>
         <CardDescription>
           Enter your website and we'll read it — your hours, services, prices and common questions — so you only check
-          and correct. Nothing is saved until you say so.
+          and correct. You'll see what we read as we go. Nothing is saved until you say so.
         </CardDescription>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Input value={url} placeholder="yourbusiness.com" disabled={site.fetch.isPending} onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && url.trim().length > 3) site.fetch.mutate(url, { onSuccess: (r) => setDraft(r.draft) }) }} />
-          <Button disabled={url.trim().length < 4 || site.fetch.isPending}
-            onClick={() => site.fetch.mutate(url, { onSuccess: (r) => setDraft(r.draft) })}>
-            {site.fetch.isPending ? <Loader2 className="animate-spin" /> : <Globe />} Read my website
+          <Input value={url} placeholder="yourbusiness.com" disabled={busy} onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') start() }} />
+          <Button disabled={url.trim().length < 4 || busy} onClick={start}>
+            {busy ? <Loader2 className="animate-spin" /> : <Globe />} Read my website
           </Button>
         </div>
-        {site.fetch.isPending && <p className="text-sm text-muted-foreground">Reading your website. This usually takes 15–40 seconds…</p>}
-        <Button variant="link" className="px-0" disabled={site.fetch.isPending} onClick={onNext}>No website? Skip this step <ArrowRight /></Button>
+        <SiteImportProgress state={reading.state} />
+        <Button variant="link" className="px-0" disabled={busy} onClick={onNext}>No website? Skip this step <ArrowRight /></Button>
       </>
     )
   }
@@ -172,13 +177,14 @@ function WebsiteStep({ onNext }: { onNext: () => void }) {
   }
   return (
     <>
+      <SiteImportProgress state={reading.state} />
       <SiteDraftReview draft={draft} onChange={setDraft} showServices={draft.profile.vertical !== 'hotel'}
         verticals={offeredVerticals(verticals.data?.verticals, ctx.tenant.vertical)} />
       <div className="flex flex-wrap gap-2">
         <Button disabled={!draft.profile.name.trim() || site.apply.isPending} onClick={save}>
           {site.apply.isPending && <Loader2 className="animate-spin" />} Use these details <ArrowRight />
         </Button>
-        <Button variant="ghost" disabled={site.apply.isPending} onClick={() => setDraft(null)}>Try another address</Button>
+        <Button variant="ghost" disabled={site.apply.isPending} onClick={() => { setDraft(null); reading.reset() }}>Try another address</Button>
       </div>
     </>
   )
