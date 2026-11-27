@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, BookOpen, ChevronLeft, ChevronRight, Inbox, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
 import {
   Dialog,
@@ -16,16 +17,24 @@ export function PageHeader({
   title,
   description,
   actions,
+  help,
 }: {
   title: string
   description?: ReactNode
   actions?: ReactNode
+  /** A help article's slug: shows a "Learn more" link to /help/<slug>. */
+  help?: string
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        {help && (
+          <Link to={`/help/${help}`} className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+            <BookOpen className="size-3.5" /> Learn more
+          </Link>
+        )}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
