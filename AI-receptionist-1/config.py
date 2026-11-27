@@ -322,14 +322,59 @@ class Settings(BaseSettings):
     SALES_RING_TIMEOUT_S:     int  = Field(default=25)
     SALES_MAX_CALLS_PER_NUMBER_PER_DAY: int = Field(default=30)     # volume discipline per caller ID (Task 4.1)
     SALES_COST_PER_MINUTE_USD: float = Field(default=0.10)          # estimate used for cost per demo
+    # "Not interested" (not an opt-out): that offer is never pitched to them again, and no other
+    # offer may call them for this many days (SALES_DIALER_PLAN.md Phase 1A).
+    SALES_NOT_INTERESTED_COOLDOWN_DAYS: int = Field(default=180)
+    # Pre-call research (Phase 2): read each lead's website before the call. Off until switched on;
+    # capped per day. Prices are OPENAI_MODEL's (gpt-4o-mini) per million tokens.
+    SALES_RESEARCH_ENABLED:   bool  = Field(default=False)
+    SALES_RESEARCH_TTL_DAYS:  int   = Field(default=30)
+    SALES_RESEARCH_DAILY_USD: float = Field(default=5.0)
+    SALES_RESEARCH_USD_PER_1M_IN:  float = Field(default=0.15)
+    SALES_RESEARCH_USD_PER_1M_OUT: float = Field(default=0.60)
+    # AI offer copilot (SALES_SUITE_PLAN.md): draft, assist, review, insights and test-call simulations.
+    # It only ever suggests; a person saves and publishes. Capped per day across every admin.
+    SALES_AI_ASSIST_ENABLED:  bool  = Field(default=True)
+    SALES_AI_ASSIST_DAILY_USD: float = Field(default=3.0)
+    SALES_AI_ASSIST_MODEL:    str   = Field(default="")              # empty = OPENAI_MODEL
+    SALES_AI_ASSIST_PER_USER_HOUR: int = Field(default=60)
+    # The agent that learns from its calls (SALES_LEARNING_PLAN.md). Decisions are made in code from
+    # outcomes; the AI only writes coaching, which is tested before and during use.
+    SALES_LEAD_MEMORY_ENABLED: bool = Field(default=True)           # the agent knows its earlier calls with a business
+    SALES_MEMORY_DAYS:        int   = Field(default=180, ge=1, le=730)
+    SALES_COACH_ENABLED:      bool  = Field(default=True)            # an AI coach reviews every AI call afterwards
+    SALES_COACH_BATCH:        int   = Field(default=5, ge=1, le=50)  # reviews per learning tick
+    SALES_LEARNING_MODEL:     str   = Field(default="")              # empty = SALES_AI_ASSIST_MODEL, then OPENAI_MODEL
+    SALES_LEARNING_DAILY_USD: float = Field(default=2.0)             # its own budget: never eats the copilot's
+    SALES_LEARNING_USD_PER_1M_IN:  float = Field(default=0.15)
+    SALES_LEARNING_USD_PER_1M_OUT: float = Field(default=0.60)
+    SALES_REVIEW_RETENTION_DAYS: int = Field(default=90, ge=7, le=730)   # the coach's notes; scores stay
+    SALES_PLAYBOOKS_ENABLED:  bool  = Field(default=True)            # false = every call uses the reviewed baseline
+    SALES_LEARNING_AUTOPILOT: bool  = Field(default=True)            # the AI may write the next playbook to test
+    SALES_LEARNING_MIN_REVIEWS: int = Field(default=20, ge=5, le=1000)
+    SALES_EXPERIMENT_SHARE:   float = Field(default=0.33, ge=0.1, le=0.5)   # calls that try the new playbook
+    SALES_EXPERIMENT_MAX_DAYS: int  = Field(default=45, ge=7, le=180)
+    SALES_SMART_RETRY_MAX_DELAY_H: int = Field(default=24, ge=1, le=168)    # how far a retry may move for a better hour
+    # Launch safety: a campaign can't start until its offer version passed the simulated test calls.
+    SALES_REQUIRE_SIMULATION: bool  = Field(default=True)
+    SALES_ALERT_EMAILS:       str   = Field(default="")              # comma-separated: auto-pause and number alerts
+    SALES_DIGEST_HOUR_UTC:    int   = Field(default=21, ge=0, le=23)  # daily "your sales day" email (21 UTC = 8 am Sydney)
+    # Built-in CRM: replies to sales email (reply+<ref>@domain) via an inbound-parse webhook. Off until set.
+    SALES_INBOUND_DOMAIN:     str   = Field(default="")
+    SALES_INBOUND_EMAIL_SECRET: str = Field(default="")
     # Compliance gate inputs
     TWILIO_LOOKUP_ACCOUNT_SID: str = Field(default="")   # line-type lookups; empty = TWILIO_ACCOUNT_SID
     TWILIO_LOOKUP_AUTH_TOKEN:  str = Field(default="")
     SALES_LINE_TYPE_MAX_AGE_DAYS: int = Field(default=15)   # numbers get ported to mobile; re-check after this
     SALES_DNC_REGISTRY_MAX_AGE_DAYS: int = Field(default=31)  # a national / state list older than this blocks dialling
     SALES_BLOCKED_US_STATES:  str  = Field(default="FL,OK,MD,WA")   # no AI cold calls here until counsel clears each one
-    SALES_AI_CONSENTED_COUNTRIES:   str = Field(default="US")       # where a consent record is enough for an AI call
-    SALES_HUMAN_ASSISTED_COUNTRIES: str = Field(default="US,CA,GB") # where live (human) B2B calls are allowed after list screening
+    SALES_AI_CONSENTED_COUNTRIES:   str = Field(default="US,AU")    # where a consent record is enough for an AI call
+    SALES_HUMAN_ASSISTED_COUNTRIES: str = Field(default="US,CA,GB,AU")  # where live (human) B2B calls are allowed after list screening
+    # AI cold calls to business landlines. US only until counsel signs off another country (AU: is an
+    # AI voice a "recorded message"?). A country here needs a calling window and a do-not-call list.
+    SALES_AI_COLD_COUNTRIES:  str = Field(default="US")
+    SALES_AU_EXTRA_BLOCKED_DATES: str = Field(default="")             # ISO dates, comma-separated: no AU calls on these
+    SALES_AU_DNCR_WASH_MAX_AGE_DAYS: int = Field(default=30)          # a DNCR wash result is good for 30 days
     # "Get a call from our AI" form (POST /public/demo-call): the running ai_consented campaign new sign-ups join
     SALES_CONSENT_CAMPAIGN_ID: str = Field(default="")
     PUBLIC_DEMO_CALL_PER_IP_HOUR: int = Field(default=3)
@@ -368,8 +413,11 @@ class Settings(BaseSettings):
     PRIVACY_URL:             str  = Field(default="")
 
     # ── Legal and compliance (Phase 6) ────────────────────
-    # Where the published documents live (marketing site). Their versions are in core/compliance/legal.py;
-    # bump a version there when the text changes and owners are asked to accept again.
+    # Where the published documents live. The texts are edited in the platform dashboard (Legal documents)
+    # and shown by the marketing site at <LEGAL_SITE_URL>/legal/<key>; a *_URL below overrides one document.
+    LEGAL_SITE_URL:          str  = Field(default="")   # the marketing site, e.g. https://laudline.com
+    SUBSCRIPTION_URL:        str  = Field(default="")
+    COOKIES_URL:             str  = Field(default="")
     DPA_URL:                 str  = Field(default="")
     AUP_URL:                 str  = Field(default="")
     SLA_URL:                 str  = Field(default="")
@@ -434,6 +482,7 @@ class Settings(BaseSettings):
     COOKIE_SECURE:           bool = Field(default=True) # Secure flag on the refresh cookie (false only on http://localhost)
     COOKIE_SAMESITE:         Literal["lax", "strict", "none"] = Field(default="lax")  # "none" if dashboard and API are on different sites
     DASHBOARD_URL:           str = Field(default="")    # public dashboard URL, for invite / password-reset links
+    PLATFORM_DASHBOARD_URL:  str = Field(default="")    # the platform (admin) dashboard, for sales-team invite links
     # Comma-separated browser origins allowed to call the API. Empty = no cross-origin access.
     CORS_ORIGINS:        str = Field(default="")
 
@@ -481,12 +530,20 @@ class Settings(BaseSettings):
         return self._codes(self.SALES_BLOCKED_US_STATES)
 
     @property
+    def sales_alert_emails(self) -> list[str]:
+        return [e.strip() for e in self.SALES_ALERT_EMAILS.split(",") if "@" in e]
+
+    @property
     def sales_ai_consented_countries(self) -> frozenset[str]:
         return self._codes(self.SALES_AI_CONSENTED_COUNTRIES)
 
     @property
     def sales_human_assisted_countries(self) -> frozenset[str]:
         return self._codes(self.SALES_HUMAN_ASSISTED_COUNTRIES)
+
+    @property
+    def sales_ai_cold_countries(self) -> frozenset[str]:
+        return self._codes(self.SALES_AI_COLD_COUNTRIES)
 
     @property
     def sales_trunk_id(self) -> str:
@@ -570,6 +627,11 @@ class Settings(BaseSettings):
         fmt, _, rate = self.ELEVENLABS_ENCODING.partition("_")
         if fmt not in ("pcm", "mp3", "opus") or not rate.split("_")[0].isdigit():
             raise ValueError(f"ELEVENLABS_ENCODING={self.ELEVENLABS_ENCODING!r}: use e.g. pcm_24000 or mp3_44100_128")
+        # An AI cold-call country needs its legal calling hours and do-not-call list encoded first.
+        unruled = sorted(c for c in self.sales_ai_cold_countries if c not in ("US", "AU", "CA", "GB"))
+        if unruled:
+            raise ValueError(f"SALES_AI_COLD_COUNTRIES has {unruled}: add a calling window and do-not-call list "
+                             "for it in core/outbound/rules.py first (and get counsel's sign-off)")
         return self
 
     @model_validator(mode="after")
@@ -641,7 +703,8 @@ class Settings(BaseSettings):
             if not self.DASHBOARD_URL.startswith("https://"):
                 problems.append("SIGNUP_ENABLED needs DASHBOARD_URL (https) for Checkout return links")
             # Phase 6: nobody signs up to terms they can't read (docs/COMPLIANCE.md §11.8).
-            missing_legal = [k for k in ("TERMS_URL", "PRIVACY_URL", "DPA_URL") if not getattr(self, k)]
+            missing_legal = [k for k in ("TERMS_URL", "PRIVACY_URL", "DPA_URL")
+                             if not (getattr(self, k) or self.LEGAL_SITE_URL)]
             if missing_legal:
                 problems.append(f"SIGNUP_ENABLED needs the published legal documents: {', '.join(missing_legal)}")
         if self.billing_enabled and not self.STRIPE_WEBHOOK_SECRET:

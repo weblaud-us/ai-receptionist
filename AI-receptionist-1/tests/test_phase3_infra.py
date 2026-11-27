@@ -178,6 +178,7 @@ def test_worker_registers_the_jobs_and_schedule():
     ws = jobs_worker.WorkerSettings
     assert [f.name for f in ws.functions] == ["whatsapp_inbound", "provision_number", "missed_call_recovery"]
     assert {c.name for c in ws.cron_jobs} == {"tenant_jobs_tick", "booking_reminders_tick", "sales_dialer_tick",
+                                             "sales_research_tick", "sales_safety_tick", "sales_learning_tick",
                                              "billing_tick"}
     assert jobs_worker.every_minutes(5) == set(range(0, 60, 5))
     assert jobs_worker.every_minutes(30) == {0, 30}

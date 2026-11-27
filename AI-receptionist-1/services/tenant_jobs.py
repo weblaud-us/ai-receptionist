@@ -122,6 +122,8 @@ async def retry_pms_rollbacks(t: TenantConfig, now: datetime) -> int:
 
 # ── reminders ────────────────────────────────────────────────────────────────
 
+SALES_BOOKING_SOURCE = "outbound_sales"      # core/outbound/sales_tools.book_demo
+
 async def send_reminders(t: TenantConfig, now: datetime) -> int:
     repos = Repos(get_db(), t.id)
     sent = 0
@@ -129,7 +131,9 @@ async def send_reminders(t: TenantConfig, now: datetime) -> int:
     for key, lead, window in REMINDERS:
         lo, hi = now + lead - window / 2, now + lead + window / 2
         due = await repos.appointments.find(
-            {"status": "confirmed", "start": {"$gte": lo, "$lte": hi}, f"reminders.{key}.sent_at": None}, limit=500)
+            # Meetings booked by the sales dialer are with prospects, not patients: no patient reminders.
+            {"status": "confirmed", "start": {"$gte": lo, "$lte": hi}, f"reminders.{key}.sent_at": None,
+             "source": {"$ne": SALES_BOOKING_SOURCE}}, limit=500)
         for appt in due:
             # Claim first: only the runner whose update matches sends it.
             claim = await repos.appointments.update_one(

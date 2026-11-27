@@ -50,6 +50,7 @@ _TEST_ENV = {
     "HOTEL_NAME": "Grand Azure Hotel",
     "RECEPTIONIST_NAME": "Aria",
     "REQUIRE_ADMIN_MFA": "false",
+    "SALES_REQUIRE_SIMULATION": "false",      # turned on by the launch checklist tests
     "ENABLE_TENANT_JOBS": "false",
     "GOOGLE_OAUTH_CLIENT_ID": "",
     "GOOGLE_OAUTH_CLIENT_SECRET": "",

@@ -33,20 +33,6 @@ livekit_router = APIRouter(tags=["LiveKit"])
 CALL_HTML_PATH = Path(__file__).resolve().parent.parent / "ui" / "call.html"
 
 
-# Per business type: icon, accent gradient, text colour on the accent, glow (r,g,b). Each pair keeps the
-# button label at 4.5:1 or better against both ends of its gradient.
-_THEMES: dict[str, tuple[str, str, str, str, str]] = {
-    "hotel":         ("🏨", "#f7971e", "#ffd200", "#1a1a1a", "247,151,30"),
-    "dental":        ("🦷", "#14b8a6", "#2dd4bf", "#04201d", "20,184,166"),
-    "clinic":        ("🩺", "#0ea5e9", "#38bdf8", "#031525", "14,165,233"),
-    "salon":         ("💇", "#9d174d", "#be185d", "#ffffff", "190,24,93"),
-    "restaurant":    ("🍽️", "#f97316", "#fdba74", "#1f0a00", "249,115,22"),
-    "home_services": ("🔧", "#1d4ed8", "#2563eb", "#ffffff", "37,99,235"),
-    "professional":  ("💼", "#4338ca", "#6366f1", "#ffffff", "99,102,241"),
-    "generic":       ("📞", "#14b8a6", "#2dd4bf", "#04201d", "20,184,166"),
-}
-
-
 async def _link_tenant(request: Request, ref: str, permanent: bool) -> tuple[Optional[TenantConfig], str]:
     """The business a call link belongs to, after checking the link: (tenant, problem message or "")."""
     q = request.query_params
@@ -73,22 +59,19 @@ def _render_call_page(tenant: Optional[TenantConfig], problem: str) -> HTMLRespo
     if not CALL_HTML_PATH.exists():
         logger.error("call.html not found at %s", CALL_HTML_PATH)
         raise HTTPException(status_code=500, detail="Call UI page not found on server")
-    vertical = tenant.vertical if tenant else "generic"
-    icon, a1, a2, on_accent, glow = _THEMES.get(vertical, _THEMES["generic"])
     business = tenant.name if tenant else "Live call"
     agent = (tenant.agent.name or "").strip() if tenant else ""
     agent_label = agent or "The assistant"
     if tenant:
-        subtitle = f"Talk to {agent}, {business}'s virtual assistant" if agent else f"Talk to {business}'s virtual assistant"
-        tip = "Allow microphone access when prompted, then speak naturally — just like phoning us."
+        subtitle = f"Speaking with {agent}, the practice's AI receptionist" if agent else f"Talk to {business}'s AI receptionist"
+        tip = "Allow the microphone when your browser asks, then speak naturally, just like phoning us."
     else:
         subtitle, tip = "", ""
     brand = {"business": business, "agent": agent_label, "problem": problem}
     values = {
         "LANG": html.escape((tenant.locale if tenant else "") or "en"),
-        "TITLE": html.escape(f"{business} — Live Call" if tenant else "Live call"),
-        "THEME": (f"<style>:root{{--a1:{a1};--a2:{a2};--on-accent:{on_accent};--glow:{glow};}}</style>"),
-        "ICON": icon,
+        "TITLE": html.escape(f"{business} · Live call" if tenant else "Live call"),
+        "THEME": "",   # every call page uses the LaudLine look (ui/call.html)
         "NAME": html.escape(business),
         "SUBTITLE": html.escape(subtitle),
         "AGENT": html.escape(agent_label),

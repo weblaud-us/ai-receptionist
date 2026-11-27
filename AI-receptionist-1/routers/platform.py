@@ -268,6 +268,18 @@ async def platform_site_import(body: SiteImportBody, admin: Principal = Depends(
         raise HTTPException(e.status, str(e))
 
 
+@platform_router.post("/site-import/stream")
+async def platform_site_import_stream(body: SiteImportBody, admin: Principal = Depends(require_platform_admin)):
+    """The same import, streamed as server-sent events (see routers/tenant.py)."""
+    from routers.tenant import site_import_error
+    from utils.sse import progress_response
+
+    if not await ratelimit.allow_fixed(f"site-import:platform:{admin.user_id}", 30, 3600):
+        raise HTTPException(429, "Too many website imports. Try again in an hour.")
+    return progress_response(lambda emit: site_import.import_site(body.url, on_progress=emit),
+                             result=lambda draft: {"draft": draft}, on_error=site_import_error)
+
+
 @platform_router.get("/numbers/available")
 async def available_numbers(country: str = Query("US", min_length=2, max_length=2),
                             area_code: str = Query("", max_length=6), contains: str = Query("", max_length=10),

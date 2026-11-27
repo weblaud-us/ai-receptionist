@@ -32,6 +32,15 @@ _OUTCOME_TEXT = {
     "hangup": "The caller hung up early",
     "spam": "The call looked like spam",
     "completed": "The caller's question was handled",
+    # Outbound sales calls (agent/sales.py records the call's real outcome)
+    "demo_booked": "A meeting was booked",
+    "interested": "They were interested in hearing more",
+    "callback": "They asked us to call back",
+    "not_interested": "They said they weren't interested",
+    "gatekeeper": "We reached someone who doesn't decide",
+    "no_conversation": "Someone answered but there was no real conversation",
+    "dnc": "They asked not to be called again",
+    "wrong_number": "It was the wrong number",
 }
 
 _PROMPT = (

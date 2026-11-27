@@ -25,8 +25,9 @@ from typing import Any, Dict, List, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from config import settings
-from core.outbound import lookup, registry, rules
+from core.outbound import lookup, phones, registry, rules
 from core.outbound import models as m
+from core.outbound import offers as of
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ WINDOW_SEARCH_DAYS = 8
 PERMANENT = frozenset({
     "internal_dnc", "country_not_allowed", "state_blocked", "state_unknown", "line_type_not_allowed",
     "registry_listed", "no_consent", "consent_not_written", "max_attempts", "timezone_unknown",
-    "wrong_campaign_type",
+    "wrong_campaign_type", "offer_declined", "cooldown", "consent_scope",
     # patient reactivation
     "opted_out", "not_mobile", "no_consent_basis", "consent_expired", "not_lapsed", "has_future_booking",
     "recall_disabled", "voice_disabled", "pms_marketing_opt_out",
@@ -54,6 +55,7 @@ class GateFacts:
     registry_hits: tuple[str, ...] = ()
     registry_status: Mapping[str, str] = field(default_factory=dict)   # required list → fresh/stale/missing/uncovered
     consent: Optional[Mapping[str, Any]] = None
+    offer_company: str = ""            # the company the campaign's offer calls for ("" = the built-in offer)
 
 
 @dataclass
@@ -76,6 +78,9 @@ class GateDecision:
             return "dnc"
         if "max_attempts" in self.failures:
             return "exhausted"
+        permanent = [f for f in self.failures if f in PERMANENT]
+        if permanent and all(f in ("offer_declined", "cooldown") for f in permanent):
+            return "not_interested"          # said no on an earlier call: not blocked, just resting
         return "blocked"
 
     def to_doc(self) -> Dict[str, Any]:
@@ -109,11 +114,14 @@ def window_open(lead: Mapping[str, Any], campaign: Mapping[str, Any], now: datet
     window = campaign.get("calling_window") or {}
     start, end = _hhmm(window.get("start", "09:30")), _hhmm(window.get("end", "17:00"))
     days = set(window.get("days") or [1, 2, 3, 4, 5])
-    legal = rules.legal_windows(str(lead.get("country") or ""), str(lead.get("region_code") or ""))
+    country = str(lead.get("country") or "")
+    legal = rules.legal_windows(country, str(lead.get("region_code") or ""))
     for zone in zones:
         local = now.astimezone(ZoneInfo(zone))
         t = local.time()
         if local.isoweekday() not in days or not (start <= t < end):
+            return False
+        if rules.closed_day(country, local.date()):       # e.g. an Australian public holiday
             return False
         for w in legal:
             span = w.for_weekday(local.weekday())
@@ -160,15 +168,21 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
     # 2. Is this kind of call allowed in the lead's country (and state)?
     if not country or country not in rules.allowed_countries(mode):
         fail("market", "country_not_allowed", f"{mode} campaigns may not call {country or 'an unknown country'}")
-    elif mode == "ai_cold_b2b_us" and not region:
+    elif mode == "ai_cold_b2b_us" and country == "US" and not region:
         fail("market", "state_unknown", "the US state is unknown, so state rules cannot be checked")
-    elif mode == "ai_cold_b2b_us" and region in settings.sales_blocked_us_states:
+    elif mode == "ai_cold_b2b_us" and country == "US" and region in settings.sales_blocked_us_states:
         fail("market", "state_blocked", f"AI cold calls to {region} are switched off (SALES_BLOCKED_US_STATES)")
     else:
         checks["market"] = "pass"
 
     # 3. Line type — an AI voice may only cold-call business landlines
-    if mode == "ai_cold_b2b_us":
+    if mode == "ai_cold_b2b_us" and country and country != "US":
+        # No paid lookup outside the US: the numbering plan says whether it is a geographic landline.
+        if phones.is_fixed_line(str(lead.get("phone") or "")):
+            checks["line_type"] = "pass: fixed line (numbering plan)"
+        else:
+            fail("line_type", "line_type_not_allowed", "not a geographic landline")
+    elif mode == "ai_cold_b2b_us":
         line_type = str(lead.get("line_type") or "")
         checked = _aware(lead.get("line_type_checked_at"))
         if not line_type or checked is None or checked < now - timedelta(days=settings.SALES_LINE_TYPE_MAX_AGE_DAYS):
@@ -198,6 +212,9 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
             fail("consent", "no_consent", "no consent record for this number")
         elif country == "US" and consent.get("type") != "written":
             fail("consent", "consent_not_written", "US AI calls need written consent")
+        elif not consent_covers(consent, facts.offer_company):
+            fail("consent", "consent_scope", "they agreed to calls from "
+                 f"{consent_company(consent)}, not {facts.offer_company or settings.SALES_COMPANY_NAME}")
         else:
             checks["consent"] = f"pass: {consent.get('type')} via {consent.get('source')}"
     else:
@@ -213,6 +230,16 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
     else:
         checks["frequency"] = "pass"
 
+    # 8. Offer: a "no" to this offer is final for it; a "no" to any offer rests the lead for a while
+    offer_id = of.offer_id_of(campaign)
+    cooldown = _aware(lead.get("cooldown_until"))
+    if offer_id in (lead.get("declined_offers") or []):
+        fail("offer", "offer_declined", "they said they weren't interested in this offer")
+    elif cooldown is not None and cooldown > now:
+        fail("offer", "cooldown", f"they said no to an offer recently; resting until {cooldown:%Y-%m-%d}")
+    else:
+        checks["offer"] = "pass"
+
     # 7. Calling hours, in the lead's local time
     if not lead_timezones(lead):
         fail("calling_window", "timezone_unknown", "the lead's timezone is unknown")
@@ -224,6 +251,19 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
 
     return GateDecision(allowed=not failures, failures=failures, checks=checks, at=now, mode=mode,
                         campaign_id=campaign.get("_id"), retry_at=max(retry) if retry and failures else None)
+
+
+def consent_company(consent: Mapping[str, Any]) -> str:
+    """Who the person agreed to be called by. Records from before offers were for the built-in
+    LaudLine offer."""
+    scope = consent.get("scope") or {}
+    return str(scope.get("company") or settings.SALES_COMPANY_NAME)
+
+
+def consent_covers(consent: Mapping[str, Any], offer_company: str) -> bool:
+    """A consent record covers calls from the company it named, and nobody else."""
+    wanted = (offer_company or settings.SALES_COMPANY_NAME).strip().lower()
+    return consent_company(consent).strip().lower() == wanted
 
 
 async def refresh_line_type(db: Any, lead: Dict[str, Any], now: datetime) -> None:
@@ -243,7 +283,11 @@ async def gather_facts(db: Any, lead: Mapping[str, Any], campaign: Mapping[str, 
     mode, country = str(campaign.get("mode") or ""), str(lead.get("country") or "")
     required = rules.required_registries(mode, country)
     optional = (rules.state_registry(str(lead.get("region_code") or "")),) if required and country == "US" else ()
+    offer_company = ""
+    if mode == "ai_consented":
+        offer_company = str((await of.offer_for_campaign(db, campaign)).get("company_name") or "")
     return GateFacts(
+        offer_company=offer_company,
         internal_dnc=await registry.on_internal_dnc(db, phone),
         registry_hits=tuple(await registry.registry_hits(db, phone, (*required, *optional))),
         registry_status=await registry.registry_status(db, required, phone, now),
@@ -255,7 +299,7 @@ async def run_gate(db: Any, lead: Dict[str, Any], campaign: Mapping[str, Any], n
                    *, lookup_line_type: bool = True, record: bool = True) -> GateDecision:
     """Evaluate the gate for one lead against live data and write the decision on the lead."""
     now = now or datetime.now(timezone.utc)
-    if lookup_line_type and campaign.get("mode") == "ai_cold_b2b_us":
+    if lookup_line_type and campaign.get("mode") == "ai_cold_b2b_us" and lead.get("country") == "US":
         await refresh_line_type(db, lead, now)
     decision = evaluate(lead, campaign, await gather_facts(db, lead, campaign, now), now)
     if record:

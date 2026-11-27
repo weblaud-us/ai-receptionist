@@ -17,6 +17,12 @@ or is older than SALES_DNC_REGISTRY_MAX_AGE_DAYS (31). Run this at least once a 
     # A state list:
     uv run python -m scripts.import_dnc_registry us_state:TX texas.txt --area-codes 512,737
 
+    # Australia's Do Not Call Register can't be downloaded: you submit numbers ("wash") and get a
+    # result per number, valid for 30 days. Export the AU numbers that need one (Dialer → Compliance,
+    # or GET /platform/sales/dncr-wash.csv), wash them at donotcall.gov.au, then load the result —
+    # a CSV with the number and its status ("registered" / "not registered"):
+    uv run python -m scripts.import_dnc_registry au_dncr --wash-result wash.csv --country AU
+
     uv run python -m scripts.import_dnc_registry --status        # what is loaded, and what is stale
 
 Input: one number per line, or CSV with the number in the first column. US files are usually
@@ -72,6 +78,25 @@ def read_numbers(paths: List[str], country: str, stats: Dict[str, Any]) -> Itera
                 yield number
 
 
+def read_wash(path: str, country: str) -> tuple[List[str], List[str], int]:
+    """A wash result: number, then a status column. "registered" (or "yes"/"y"/"1") = on the register."""
+    washed: List[str] = []
+    registered: List[str] = []
+    invalid = 0
+    with open(path, encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            parts = [p.strip().strip('"') for p in re.split(r"[,;\t]", line.strip()) if p.strip()]
+            if not parts or parts[0].lower() in ("number", "phone", "telephone number"):
+                continue
+            info = phones.parse(parts[0], country)
+            if info is None:
+                invalid += 1
+                continue
+            status = (parts[1] if len(parts) > 1 else "").lower()
+            (registered if status in ("registered", "yes", "y", "1", "true") else washed).append(info.e164)
+    return washed, registered, invalid
+
+
 async def run(args: argparse.Namespace) -> int:
     await connect_db(ensure_indexes=False)
     try:
@@ -84,6 +109,12 @@ async def run(args: argparse.Namespace) -> int:
                 stale = f"   STALE: {', '.join(r['stale_area_codes'])}" if r["stale_area_codes"] else ""
                 print(f"{r['list']:<16} {r['rows']:>10} numbers   refreshed {r['refreshed_at']:%Y-%m-%d}   "
                       f"area codes: {', '.join(r['area_codes'])}{stale}")
+            return 0
+        if args.wash_result:
+            washed, registered, invalid = read_wash(args.wash_result, args.country.upper())
+            result = await registry.record_wash(db, args.list or "au_dncr", washed, registered)
+            print(f"{args.list or 'au_dncr'}: {result['washed']} numbers washed, {result['registered']} registered "
+                  f"({invalid} unreadable lines skipped)")
             return 0
         if not args.list or not args.files:
             print("usage: import_dnc_registry <list> <file>... [--area-codes 512,737 | --all]", file=sys.stderr)
@@ -114,12 +145,13 @@ async def run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Load a do-not-call registry for the outbound dialer's gate")
-    p.add_argument("list", nargs="?", help="us_national | us_state:XX | ca_dncl | uk_tps | uk_ctps")
+    p.add_argument("list", nargs="?", help="us_national | us_state:XX | ca_dncl | uk_tps | uk_ctps | au_dncr")
     p.add_argument("files", nargs="*", help="files with one number per line")
     p.add_argument("--country", default="US", help="country the numbers are written in (default US)")
     p.add_argument("--area-codes", help="comma-separated area codes this download covers")
     p.add_argument("--all", action="store_true", help="the file is the complete list (not split by area code)")
     p.add_argument("--status", action="store_true", help="show what is loaded")
+    p.add_argument("--wash-result", help="au_dncr: a wash result CSV (number, registered / not registered)")
     raise SystemExit(asyncio.run(run(p.parse_args())))
 
 

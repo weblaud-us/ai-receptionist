@@ -237,8 +237,16 @@ def catalogue(currency: str = BASE_CURRENCY, vertical: Optional[str] = None) -> 
             "trial": {"days": settings.TRIAL_DAYS, "minutes": settings.TRIAL_MINUTES, "card_required": True},
             "annual_months_free": 12 - ANNUAL_MONTHS_CHARGED, "currency": cur,
             "currencies": list(SUPPORTED_CURRENCIES), "tax_note": "Prices exclude VAT/GST and sales tax.",
-            "terms_url": settings.TERMS_URL, "privacy_url": settings.PRIVACY_URL}
+            # Our published pages (core/compliance/legal.url_for: the *_URL setting, else <LEGAL_SITE_URL>/legal/…).
+            "terms_url": _legal_url("terms"), "privacy_url": _legal_url("privacy"),
+            "subscription_url": _legal_url("subscription")}
 
 
 def plan_keys() -> List[str]:
     return list(PLANS)
+
+
+def _legal_url(key: str) -> str:
+    from core.compliance.legal import url_for
+
+    return url_for(key)

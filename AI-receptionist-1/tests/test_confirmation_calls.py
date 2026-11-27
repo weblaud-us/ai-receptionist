@@ -52,6 +52,7 @@ async def test_only_patients_the_whatsapp_reminder_missed_are_called(db, dialled
     await _seed(db, t, "apt_reached", reminder_error=None)              # WhatsApp got through
     await _seed(db, t, "apt_soon", hours_ahead=1)                       # too close to the visit
     await _seed(db, t, "apt_done", confirmation={"status": "confirmed"})
+    await _seed(db, t, "apt_sales", source="outbound_sales")            # a sales prospect's meeting, not a patient
     assert await cc.run_due(t, NOW) == 1
     assert [r[0] for r in dialled] == ["confirm-apt_missed-1"]
     meta = dialled[0][1]

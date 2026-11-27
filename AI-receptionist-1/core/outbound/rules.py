@@ -16,8 +16,9 @@ calling NARROWER than the country floor, never wider.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import time
-from typing import Mapping, Optional
+from datetime import date, time, timedelta
+from functools import lru_cache
+from typing import Dict, Mapping, Optional
 
 from config import settings
 
@@ -62,6 +63,11 @@ COUNTRY_WINDOWS: Mapping[str, LegalWindow] = {
     "GB": _every_day("09:00", "18:00", "GB: business hours (no statutory window)", saturday=False, sunday=False),
     # UAE Cabinet Resolution 56 of 2024: 9 am – 6 pm.
     "AE": _every_day("09:00", "18:00", "AE: Cabinet Resolution 56/2024, 9 am – 6 pm"),
+    # ⚠ VERIFY: Telecommunications (Telemarketing and Research Calls) Industry Standard 2017 —
+    # weekdays 9 am – 8 pm, Saturday 9 am – 5 pm, never Sunday or a national public holiday
+    # (closed_day below), in the callee's local time.
+    "AU": _weekly(("09:00", "20:00"), ("09:00", "17:00"), None,
+                  "AU: Telemarketing and Research Industry Standard 2017 — weekdays 9–8, Sat 9–5, no Sunday or public holiday"),
 }
 # Anywhere else a consented call is placed: weekday business hours until researched.
 DEFAULT_WINDOW = _every_day("09:00", "18:00", "default: weekday business hours", saturday=False, sunday=False)
@@ -94,7 +100,68 @@ REQUIRED_REGISTRIES: Mapping[str, tuple[str, ...]] = {
     "US": ("us_national",),
     "CA": ("ca_dncl",),
     "GB": ("uk_tps", "uk_ctps"),
+    # The Do Not Call Register is washed number by number (registry.record_wash), not downloaded.
+    "AU": ("au_dncr",),
 }
+# Lists checked number by number: a number is "fresh" when it was washed recently enough.
+PER_NUMBER_LISTS = frozenset({"au_dncr"})
+# Every list the gate knows (plus us_state:XX). Anything else is a typo that would silently never match.
+KNOWN_LISTS = frozenset({"us_national", "ca_dncl", "uk_tps", "uk_ctps", "au_dncr"})
+
+
+def known_list(name: str) -> bool:
+    return name in KNOWN_LISTS or (name.startswith("us_state:") and len(name) == len("us_state:XX"))
+
+
+def _easter(year: int) -> date:
+    """Gregorian Easter Sunday (anonymous Gregorian algorithm)."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    m_ = (32 + 2 * e + 2 * i - h - k) % 7
+    n = (a + 11 * h + 22 * m_) // 451
+    month = (h + m_ - 7 * n + 114) // 31
+    day = (h + m_ - 7 * n + 114) % 31 + 1
+    return date(year, month, day)
+
+
+@lru_cache(maxsize=16)
+def au_national_holidays(year: int) -> Dict[date, str]:
+    """National public holidays, and the weekday that replaces one falling on a weekend. Fails closed:
+    a substitute day observed in only some states is blocked everywhere. ⚠ VERIFY each year."""
+    days: Dict[date, str] = {}
+
+    def add(d: date, name: str, substitute: bool = True) -> None:
+        days[d] = name
+        if substitute and d.weekday() >= 5:              # Saturday or Sunday → the next free weekday
+            sub = d + timedelta(days=7 - d.weekday())
+            while sub in days:
+                sub += timedelta(days=1)
+            days[sub] = f"{name} (substitute)"
+    easter = _easter(year)
+    add(date(year, 1, 1), "New Year's Day")
+    add(date(year, 1, 26), "Australia Day")
+    add(easter - timedelta(days=2), "Good Friday", substitute=False)
+    add(easter - timedelta(days=1), "Easter Saturday", substitute=False)
+    add(easter + timedelta(days=1), "Easter Monday", substitute=False)
+    add(date(year, 4, 25), "Anzac Day")
+    add(date(year, 12, 25), "Christmas Day")
+    add(date(year, 12, 26), "Boxing Day")
+    return days
+
+
+def closed_day(country: str, day: date) -> Optional[str]:
+    """Why no telemarketing call may be made on `day` (local date) in `country`, or None."""
+    if country != "AU":
+        return None
+    name = au_national_holidays(day.year).get(day)
+    if name:
+        return name
+    extra = {d.strip() for d in (settings.SALES_AU_EXTRA_BLOCKED_DATES or "").split(",") if d.strip()}
+    return "blocked date (SALES_AU_EXTRA_BLOCKED_DATES)" if day.isoformat() in extra else None
 
 # Line types an AI voice may cold-call in the US. A mobile needs prior express written consent; a
 # non-fixed VoIP number (Google Voice and the like) usually rings a mobile, so it is treated as one.
@@ -136,7 +203,9 @@ def is_mobile(phone: str, country: str) -> bool:
 def allowed_countries(mode: str) -> frozenset[str]:
     """Where a campaign mode may dial. Empty for an unknown mode: fail closed."""
     if mode == "ai_cold_b2b_us":
-        return frozenset({"US"})                 # UK / EU / CA / UAE: no AI cold calls (Task 4.0)
+        # US business landlines; another country only when counsel adds it (config refuses one with
+        # no calling window or do-not-call list). UK / EU / CA / UAE: no AI cold calls (Task 4.0).
+        return settings.sales_ai_cold_countries
     if mode == "ai_consented":
         return settings.sales_ai_consented_countries
     if mode == "human_assisted":
@@ -155,9 +224,10 @@ def legal_windows(country: str, region_code: str = "") -> list[LegalWindow]:
 def required_registries(mode: str, country: str) -> tuple[str, ...]:
     """Lists to scrub against. A consent record is an exemption from the registry (not from the
     internal list: asking not to be called revokes consent)."""
-    if mode == "ai_consented" and country != "GB":
+    if mode == "ai_consented" and country not in ("GB", "AU"):
         return ()
-    # UK: every voice call is screened against TPS/CTPS, even with a consent record (fail closed).
+    # UK and AU: every voice call is screened against TPS/CTPS / the DNCR, even with a consent record
+    # (fail closed; counsel can relax it).
     lists = REQUIRED_REGISTRIES.get(country, ())
     return lists
 

@@ -1,5 +1,6 @@
 """
-What a phone number tells us: E.164 form, country, US state and the timezone(s) it may be in.
+What a phone number tells us: E.164 form, country, US state / Australian state and the timezone(s)
+it may be in.
 
 The compliance gate needs the callee's LOCAL time. A number does not always pin that down (toll-free
 numbers, states that span two zones), so a lead carries every candidate timezone and the gate
@@ -45,6 +46,40 @@ US_STATE_TIMEZONES: dict[str, tuple[str, ...]] = {
 }
 MAX_TIMEZONES = 6       # more candidates than this = we do not know where the number is
 
+# Australia (SALES_DIALER_PLAN.md Phase 5). The phonenumbers data puts 07 (Queensland) in Sydney's
+# zone, which is an hour wrong in summer (Queensland has no daylight saving), so Australian numbers
+# are located here instead.
+AU_STATES: dict[str, str] = {
+    "New South Wales": "NSW", "Victoria": "VIC", "Queensland": "QLD", "South Australia": "SA",
+    "Western Australia": "WA", "Tasmania": "TAS", "Northern Territory": "NT", "Australian Capital Territory": "ACT",
+}
+_AU_CODES = frozenset(AU_STATES.values())
+AU_STATE_TIMEZONES: dict[str, tuple[str, ...]] = {
+    "NSW": ("Australia/Sydney", "Australia/Broken_Hill"), "ACT": ("Australia/Sydney",), "VIC": ("Australia/Melbourne",),
+    "QLD": ("Australia/Brisbane",), "SA": ("Australia/Adelaide",), "WA": ("Australia/Perth",),
+    "TAS": ("Australia/Hobart",), "NT": ("Australia/Darwin",),
+}
+# Mobiles and 13/1300/1800 numbers can be anywhere: every mainland zone (the gate needs all of them open).
+AU_MAINLAND: tuple[str, ...] = ("Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
+                                "Australia/Adelaide", "Australia/Perth", "Australia/Darwin")
+_AU_AREA_ZONES: dict[str, tuple[str, ...]] = {
+    "2": ("Australia/Sydney",), "3": ("Australia/Melbourne", "Australia/Hobart"), "7": ("Australia/Brisbane",),
+    "8": ("Australia/Adelaide", "Australia/Perth", "Australia/Darwin"),
+}
+_AU_CITY_STATE = {"Sydney": "NSW", "Melbourne": "VIC", "Brisbane": "QLD", "Adelaide": "SA", "Perth": "WA",
+                  "Hobart": "TAS", "Darwin": "NT", "Canberra": "ACT"}
+_AU_CITY_ZONE = {"Sydney": "Australia/Sydney", "Canberra": "Australia/Sydney", "Melbourne": "Australia/Melbourne",
+                 "Brisbane": "Australia/Brisbane", "Adelaide": "Australia/Adelaide", "Perth": "Australia/Perth",
+                 "Hobart": "Australia/Hobart", "Darwin": "Australia/Darwin"}
+
+
+def au_timezones(e164: str, state: str = "") -> tuple[str, ...]:
+    """Candidate zones for an Australian number: the state's, else the area code's, else the mainland's."""
+    if state in AU_STATE_TIMEZONES:
+        return AU_STATE_TIMEZONES[state]
+    national = e164[3:] if e164.startswith("+61") else ""
+    return _AU_AREA_ZONES.get(national[:1], AU_MAINLAND) if national else ()
+
 
 @dataclass(frozen=True)
 class PhoneInfo:
@@ -80,6 +115,27 @@ def normalize_state(value: Optional[str]) -> str:
     return US_STATES.get(text.title(), "")
 
 
+def normalize_region(country: str, value: Optional[str]) -> str:
+    """A state code for the countries whose states the gate knows (US, AU); "" otherwise."""
+    if country == "AU":
+        text = (value or "").strip()
+        if text.upper() in _AU_CODES:
+            return text.upper()
+        return AU_STATES.get(text.title(), "") or next((v for k, v in AU_STATES.items() if k.lower() == text.lower()), "")
+    if country in ("US", ""):
+        return normalize_state(value)
+    return ""
+
+
+def is_fixed_line(e164: str) -> bool:
+    """A geographic landline by its numbering plan (outside the US there is no paid line-type lookup)."""
+    try:
+        number = phonenumbers.parse(e164, None)
+    except phonenumbers.NumberParseException:
+        return False
+    return phonenumbers.number_type(number) == phonenumbers.PhoneNumberType.FIXED_LINE
+
+
 def parse(raw: Optional[str], default_region: str = "US") -> Optional[PhoneInfo]:
     """None when `raw` is not a dialable number. A national number is read in `default_region`."""
     text = (raw or "").strip()
@@ -92,11 +148,17 @@ def parse(raw: Optional[str], default_region: str = "US") -> Optional[PhoneInfo]
     if not phonenumbers.is_valid_number(number):
         return None
     country = phonenumbers.region_code_for_number(number) or ""
+    e164 = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
     zones = tuple(z for z in pn_timezone.time_zones_for_number(number) if valid_timezone(z))
-    state = _state_from_description(geocoder.description_for_number(number, "en")) if country == "US" else ""
+    description = geocoder.description_for_number(number, "en")
+    state = _state_from_description(description) if country == "US" else ""
+    if country == "AU":
+        city = (description or "").strip()
+        state = _AU_CITY_STATE.get(city, "")
+        zones = (_AU_CITY_ZONE[city],) if city in _AU_CITY_ZONE else au_timezones(e164)
     toll_free = phonenumbers.number_type(number) == phonenumbers.PhoneNumberType.TOLL_FREE
     return PhoneInfo(
-        e164=phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164),
+        e164=e164,
         country=country, region_code=state,
         timezones=zones if len(zones) <= MAX_TIMEZONES else (), toll_free=toll_free)
 
@@ -105,6 +167,8 @@ def timezones_for(info: PhoneInfo, *, state: str = "", timezone: str = "") -> tu
     """Best knowledge of where the lead is: an explicit timezone, else the number, else the state."""
     if valid_timezone(timezone):
         return (timezone,)
+    if info.country == "AU":                  # a state from the lead's address beats the area code
+        return au_timezones(info.e164, state or info.region_code)
     if info.timezones:
         return info.timezones
     return US_STATE_TIMEZONES.get(state or info.region_code, ())

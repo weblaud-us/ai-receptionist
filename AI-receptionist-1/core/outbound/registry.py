@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from config import settings
 from core.outbound import models as m
+from core.outbound import rules
 from core.outbound.phones import area_code
 from core.phone import mask_phone
 from core.tenancy.ids import new_id
@@ -73,11 +74,21 @@ async def registry_hits(db: Any, phone: str, lists: Iterable[str]) -> List[str]:
 
 async def registry_status(db: Any, lists: Iterable[str], phone: str, now: datetime) -> Dict[str, str]:
     """Per list: "fresh", "stale" (loaded too long ago), "missing", or "uncovered" (loaded, but not
-    for this number's area code)."""
+    for this number's area code). Number-by-number lists (AU DNCR) are fresh when this number was
+    washed within SALES_AU_DNCR_WASH_MAX_AGE_DAYS."""
     names = [n for n in lists if n]
     out: Dict[str, str] = {n: "missing" for n in names}
     if not names:
         return out
+    per_number = [n for n in names if n in rules.PER_NUMBER_LISTS]
+    if per_number:
+        wash_cutoff = now - timedelta(days=settings.SALES_AU_DNCR_WASH_MAX_AGE_DAYS)
+        async for row in db[m.REGISTRY_COVERAGE].find({"phone": phone, "list": {"$in": per_number}}):
+            washed = _aware(row.get("washed_at"))
+            out[row["list"]] = "fresh" if washed and washed >= wash_cutoff else "stale"
+        names = [n for n in names if n not in rules.PER_NUMBER_LISTS]
+        if not names:
+            return out
     cutoff = now - timedelta(days=settings.SALES_DNC_REGISTRY_MAX_AGE_DAYS)
     code = area_code(phone)
     async for meta in db[m.REGISTRY_META].find({"_id": {"$in": names}}):
@@ -93,6 +104,10 @@ async def registry_status(db: Any, lists: Iterable[str], phone: str, now: dateti
 async def replace_registry(db: Any, list_name: str, phones: Iterable[str], *, area_codes: Iterable[str],
                            now: Optional[datetime] = None, batch: int = 5000) -> int:
     """Load a fresh copy of a list for `area_codes` ("all" = the whole list), replacing the old rows."""
+    if not rules.known_list(list_name):
+        raise ValueError(f"unknown do-not-call list {list_name!r}; use one of {', '.join(sorted(rules.KNOWN_LISTS))} or us_state:XX")
+    if list_name in rules.PER_NUMBER_LISTS:
+        raise ValueError(f"{list_name} is checked number by number: load a wash result with record_wash")
     now = now or datetime.now(timezone.utc)
     codes = sorted(set(area_codes)) or [ALL_AREA_CODES]
     if ALL_AREA_CODES in codes:
@@ -123,6 +138,39 @@ async def replace_registry(db: Any, list_name: str, phones: Iterable[str], *, ar
     return count
 
 
+async def record_wash(db: Any, list_name: str, washed: Iterable[str], registered: Iterable[str], *,
+                      now: Optional[datetime] = None) -> Dict[str, int]:
+    """Store the result of washing numbers against a number-by-number list (AU Do Not Call Register):
+    every washed number is covered as of `now`; the registered ones are listed, the rest un-listed
+    (a number can leave the register)."""
+    if list_name not in rules.PER_NUMBER_LISTS:
+        raise ValueError(f"{list_name} is not a number-by-number list")
+    now = now or datetime.now(timezone.utc)
+    washed_set, registered_set = set(washed), set(registered)
+    washed_set |= registered_set
+    for phone in washed_set:
+        await db[m.REGISTRY_COVERAGE].update_one({"list": list_name, "phone": phone},
+                                                 {"$set": {"washed_at": now}}, upsert=True)
+        if phone in registered_set:
+            await db[m.REGISTRY].update_one({"list": list_name, "phone": phone},
+                                            {"$setOnInsert": {"list": list_name, "phone": phone, "loaded_at": now}}, upsert=True)
+        else:
+            await db[m.REGISTRY].delete_many({"list": list_name, "phone": phone})
+    rows = await db[m.REGISTRY].count_documents({"list": list_name})
+    await db[m.REGISTRY_META].update_one({"_id": list_name}, {"$set": {"refreshed_at": now, "rows": rows,
+                                                                      f"area_codes.{ALL_AREA_CODES}": now}}, upsert=True)
+    return {"washed": len(washed_set), "registered": len(registered_set)}
+
+
+async def needs_wash(db: Any, phones_: Iterable[str], list_name: str, now: datetime) -> List[str]:
+    """Which of these numbers have no fresh wash result."""
+    cutoff = now - timedelta(days=settings.SALES_AU_DNCR_WASH_MAX_AGE_DAYS)
+    numbers = list(dict.fromkeys(phones_))
+    fresh = {r["phone"] async for r in db[m.REGISTRY_COVERAGE].find(
+        {"list": list_name, "phone": {"$in": numbers}, "washed_at": {"$gte": cutoff}}, {"phone": 1})}
+    return [p for p in numbers if p not in fresh]
+
+
 async def registry_overview(db: Any, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=settings.SALES_DNC_REGISTRY_MAX_AGE_DAYS)
@@ -144,10 +192,13 @@ async def active_consent(db: Any, phone: str) -> Optional[Dict[str, Any]]:
 
 
 async def record_consent(db: Any, *, phone: str, type: str, language_shown: str, source: str,
-                         ip: str = "", user_agent: str = "", now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Append a consent record. Records are never edited; an opt-out sets `revoked_at`."""
+                         ip: str = "", user_agent: str = "", now: Optional[datetime] = None,
+                         scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Append a consent record. Records are never edited; an opt-out sets `revoked_at`.
+    `scope` is who they agreed to hear from: {"company", "offer_id"} (gate.consent_covers)."""
     doc = {"_id": new_id("cns"), "phone": phone, "type": type, "language_shown": language_shown[:2000],
            "source": source[:200], "ip": ip[:64], "user_agent": user_agent[:300],
-           "at": now or datetime.now(timezone.utc), "revoked_at": None}
+           "at": now or datetime.now(timezone.utc), "revoked_at": None,
+           "scope": {k: str(v)[:80] for k, v in (scope or {}).items() if k in ("company", "offer_id")}}
     await db[m.CONSENT].insert_one(doc)
     return doc

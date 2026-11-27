@@ -61,6 +61,35 @@ def _utc(dt: datetime) -> str:
     return aware.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def event_ics(uid: str, start: datetime, end: datetime, summary: str, description: str = "", *,
+              location: str = "", url: str = "", organizer_email: str = "", organizer_name: str = "",
+              attendee_email: str = "", attendee_name: str = "", now: datetime | None = None) -> str:
+    """One event as an invite (METHOD:REQUEST), e.g. a sales meeting a prospect booked on a call: the
+    calendar app offers to add it. No alarm: the prospect's own calendar settings apply."""
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//WebLaud//Sales meetings//EN", "CALSCALE:GREGORIAN",
+        "METHOD:REQUEST", "BEGIN:VEVENT",
+        f"UID:{_esc(uid)}",
+        f"DTSTAMP:{_utc(now or datetime.now(timezone.utc))}",
+        f"DTSTART:{_utc(start)}",
+        f"DTEND:{_utc(end)}",
+        f"SUMMARY:{_esc(summary)}",
+        f"DESCRIPTION:{_esc(description)}",
+        "STATUS:CONFIRMED",
+    ]
+    if location or url:
+        lines.append(f"LOCATION:{_esc(location or url)}")
+    if url:
+        lines.append(f"URL:{url}")
+    if organizer_email:
+        lines.append(f"ORGANIZER;CN={_esc(organizer_name or organizer_email)}:mailto:{organizer_email}")
+    if attendee_email:
+        lines.append(f"ATTENDEE;CN={_esc(attendee_name or attendee_email)};ROLE=REQ-PARTICIPANT;"
+                     f"PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:{attendee_email}")
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(part for line in lines for part in _fold(line)) + "\r\n"
+
+
 def ics_text(t: TenantConfig, appt: Dict[str, Any], now: datetime | None = None) -> str:
     what = appt.get("service_name") or "Appointment"
     with_whom = f" with {appt['resource_name']}" if appt.get("resource_name") else ""

@@ -31,20 +31,38 @@ SCANNED = sorted(
 
 PLATFORM = {
     # accounts and routing
-    "tenants", "users", "sessions", "invites", "password_resets", "email_verifications", "phone_numbers",
+    "tenants", "users", "sessions", "invites", "password_resets", "email_verifications", "email_changes",
+    "phone_numbers",
     # Phase 5: number orders are retried across tenants by the platform admin (like the routing table);
     # the deletion log must outlive the tenant's own data; Stripe's event log is per Stripe account.
     "number_orders", "deletion_log", "stripe_events",
     # Phase 4: the sales dialer belongs to the platform (your own outbound), not to a customer
     "sales_leads", "campaigns", "call_attempts", "dnc_list", "consent_records", "dnc_registry", "dnc_registry_meta",
+    # …and what it sells: offers and every published version of them (SALES_DIALER_PLAN.md)
+    "sales_offers", "sales_offer_versions", "sales_test_calls", "sales_research_meta",
+    "sales_activity", "sales_tasks", "sales_outbox", "sales_email_suppression", "dnc_registry_coverage",
+    # …the AI copilot, safe launch and the built-in CRM (SALES_SUITE_PLAN.md)
+    "sales_ai_meta", "sales_offer_simulations", "sales_safety_meta", "sales_number_state", "sales_offer_insights",
+    "sales_deals", "sales_views", "sales_custom_fields", "sales_crm_meta", "sales_digest_meta",
+    # …and the agent that learns from its calls (SALES_LEARNING_PLAN.md)
+    "sales_playbooks", "sales_learning", "sales_experiments", "sales_learning_stats", "sales_learning_meta",
     # Phase 6/7: the platform's consent-revocation evidence, transcript reviews and eval cases
     "consent_events", "call_reviews", "eval_cases",
     # Landing-page demo: visitors who signed in with Google are the platform's own leads, not a business's
     "web_demo_leads",
+    # The platform's own legal documents (Terms, Privacy…) and every published version of them
+    "legal_documents", "legal_document_versions",
 }
 # Module constants that name platform collections in `db[...]` access.
 PLATFORM_CONSTANTS = {"EVENTS", "optout.EVENTS", "REVIEWS", "CASES", "reviews.REVIEWS", "reviews.CASES",
-                      "DEMO_LEADS", "wd.DEMO_LEADS"}
+                      "DEMO_LEADS", "wd.DEMO_LEADS", "LEGAL_DOCS", "LEGAL_VERSIONS",
+                      "OFFERS", "OFFER_VERSIONS", "of.OFFERS", "of.OFFER_VERSIONS", "TEST_CALLS", "offers.TEST_CALLS", "META",
+                      "ACTIVITY", "TASKS", "OUTBOX", "SUPPRESSION", "followup.ACTIVITY", "followup.TASKS",
+                      "followup.OUTBOX", "followup.SUPPRESSION",
+                      "DEALS", "VIEWS", "FIELDS", "crm.DEALS", "crm.VIEWS", "crm.FIELDS", "CACHE", "STATE", "SIMULATIONS",
+                      "simulate.SIMULATIONS", "offer_ai.META", "DIGEST_META",
+                      "PLAYBOOKS", "LEARNING", "EXPERIMENTS", "pb.PLAYBOOKS", "pb.LEARNING", "learning.EXPERIMENTS",
+                      "timing.STATS", "bandit.STATS", "STATS", "LEARNING_META", "offer_ai.LEARNING_META", "meta"}
 
 OPS = (r"find|find_one|insert_one|insert_many|update_one|update_many|delete_one|delete_many|count_documents|"
        r"aggregate|distinct|find_one_and_update|replace_one|bulk_write|estimated_document_count")

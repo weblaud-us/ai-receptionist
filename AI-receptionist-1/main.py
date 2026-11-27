@@ -62,6 +62,9 @@ _ROUTERS = [
     ("routers.telephony", "telephony_router"),        # Phase 3: Twilio disaster-recovery TwiML
     ("routers.sales", "sales_router"),                # Phase 4: outbound dialer (platform admin)
     ("routers.sales", "public_sales_router"),         # Phase 4: "get a call from our AI" consent form
+    ("routers.sales_crm", "sales_crm_router"),        # the built-in CRM (SALES_SUITE_PLAN.md wave 3)
+    ("routers.sales_crm", "public_crm_router"),       # replies to sales email (inbound-parse webhook)
+    ("routers.sales_learning", "sales_learning_router"),  # the agent that learns from its calls (SALES_LEARNING_PLAN.md)
     ("routers.signup", "public_plans_router"),        # Phase 5: plan catalogue
     ("routers.signup", "signup_router"),              # Phase 5: self-serve signup + e-mail verification
     ("routers.billing", "billing_router"),            # Phase 5: plan, usage, Checkout/Portal, numbers, export
@@ -84,6 +87,12 @@ async def lifespan(app: FastAPI):
     logger.info("LaudLine starting (env=%s)", settings.APP_ENV)
 
     await connect_db()
+    # Legal documents: first texts for any that don't exist yet (Platform → Legal documents edits them).
+    try:
+        from core.compliance import legal_docs
+        await legal_docs.ensure_ready(get_db())
+    except Exception:
+        logger.exception("Legal documents not seeded; they will be on first use")
 
     from ai.llm_provider import get_llm_provider
     get_llm_provider()
@@ -91,6 +100,7 @@ async def lifespan(app: FastAPI):
     from services.tenant_jobs import get_tenant_jobs
     tenant_jobs = get_tenant_jobs()
     from core.outbound.dialer import dialer_loop
+    from core.outbound.learning import learning_loop
     if settings.redis_enabled:
         # Phase 3: reminders, digests and calendar sync run in the jobs worker (`python -m jobs`),
         # once, however many API replicas there are.
@@ -104,6 +114,7 @@ async def lifespan(app: FastAPI):
         reminder_service.start()
         tenant_jobs.start()      # appointment reminders, owner digests, calendar sync
         dialer_loop.start()      # Phase 4: only when OUTBOUND_DIALER_ENABLED=true
+        learning_loop.start()    # SALES_LEARNING_PLAN.md: call reviews and playbook tests, beside the dialer
 
     # Legacy phone path: pre-warm its TTS audio cache so the first caller hears the greeting.
     if settings.LEGACY_TWILIO_VOICE:
@@ -124,6 +135,7 @@ async def lifespan(app: FastAPI):
     except asyncio.TimeoutError:
         logger.warning("Some notifications were still sending at shutdown")
     await dialer_loop.stop()
+    await learning_loop.stop()
     await tenant_jobs.stop()
     await reminder_service.stop()
     from jobs.queue import close as close_job_queue

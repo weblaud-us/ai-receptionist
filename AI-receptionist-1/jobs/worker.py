@@ -11,6 +11,11 @@ The jobs worker (arq): everything that must not run inside an API request or a p
 | booking_reminders_tick  | every BOOKING_REMINDER_POLL_MINUTES | hotel day-before WhatsApp reminders             |
 | whatsapp_inbound        | queued by the Meta webhook        | read the message, run the agent, send the reply  |
 | sales_dialer_tick       | every 20 s                        | outbound sales dialer: gate leads, start calls   |
+| sales_research_tick     | every minute                      | read pending leads' websites; retry sales email  |
+| sales_safety_tick       | every minute                      | simulated test calls, campaign guardrails, caller |
+|                         |                                   | ID health (SALES_SUITE_PLAN.md wave 2)           |
+| sales_learning_tick     | every minute                      | coach reviews of AI calls, playbook tests and    |
+|                         |                                   | their keep / roll-back decisions (SALES_LEARNING_PLAN.md) |
 | billing_tick            | every 15 min                      | usage refresh + alerts, Stripe overage meter,    |
 |                         |                                   | past-due suspension, offboarding (core.billing.jobs) |
 | provision_number        | queued by POST /t/numbers         | buy + connect a number, 5 tries with backoff     |
@@ -152,6 +157,45 @@ async def sales_dialer_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
     return stats
 
 
+@job("sales_research_tick")
+async def sales_research_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
+    # Pre-call research on leads marked pending; the dialer never waits for it.
+    from core.outbound import research
+    from database.mongodb import get_db
+
+    from core.outbound import followup
+
+    stats = await research.tick(get_db())
+    stats.update({f"email_{k}": v for k, v in (await followup.retry_outbox(get_db())).items()})
+    if any(stats.values()):
+        logger.info("Sales research and email retries: %s", stats)
+    return stats
+
+
+@job("sales_safety_tick")
+async def sales_safety_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
+    # Simulated test calls (needs livekit-agents), auto-pause guardrails and caller ID health.
+    from core.outbound import safety
+    from database.mongodb import get_db
+
+    stats = await safety.tick(get_db())
+    if any(stats.values()):
+        logger.info("Sales safety: %s", stats)
+    return stats
+
+
+@job("sales_learning_tick")
+async def sales_learning_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
+    # The agent that learns from its calls (SALES_LEARNING_PLAN.md): coach reviews, playbook tests.
+    from core.outbound import learning
+    from database.mongodb import get_db
+
+    stats = await learning.tick(get_db())
+    if any(stats.values()):
+        logger.info("Sales learning: %s", stats)
+    return stats
+
+
 @job("billing_tick")
 async def billing_tick(ctx: Dict[str, Any]) -> Dict[str, int]:
     # Not retried: every step is idempotent and the next tick is 15 minutes away.
@@ -219,6 +263,9 @@ class WorkerSettings:
              minute=every_minutes(settings.BOOKING_REMINDER_POLL_MINUTES), run_at_startup=True, timeout=600),
         # Always scheduled: with OUTBOUND_DIALER_ENABLED=false the tick only tidies up and returns.
         cron(sales_dialer_tick, name="sales_dialer_tick", second={0, 20, 40}, timeout=18, keep_result=0),
+        cron(sales_research_tick, name="sales_research_tick", second={10}, timeout=55, keep_result=0),
+        cron(sales_safety_tick, name="sales_safety_tick", second={30}, timeout=900, keep_result=0),
+        cron(sales_learning_tick, name="sales_learning_tick", second={45}, timeout=280, keep_result=0),
         cron(billing_tick, name="billing_tick", minute={0, 15, 30, 45}, run_at_startup=True, timeout=600),
     ]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL.strip() or "redis://localhost:6379/0")

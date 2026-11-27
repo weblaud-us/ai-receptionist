@@ -26,7 +26,7 @@ MAX_ROWS = 5000
 MAX_BYTES = 3_000_000
 
 FIELDS: tuple[str, ...] = ("business_name", "contact_name", "phone", "email", "website", "vertical", "address",
-                           "city", "state", "postal", "country", "timezone", "notes", "tags")
+                           "city", "state", "postal", "country", "timezone", "notes", "agent_notes", "tags")
 _ALIASES: Mapping[str, tuple[str, ...]] = {
     "business_name": ("business name", "business", "company", "company name", "name", "organization"),
     "contact_name": ("contact name", "contact", "owner", "owner name", "first name", "full name"),
@@ -41,6 +41,7 @@ _ALIASES: Mapping[str, tuple[str, ...]] = {
     "country": ("country", "country code"),
     "timezone": ("timezone", "time zone", "tz"),
     "notes": ("notes", "note", "comments"),
+    "agent_notes": ("agent notes", "notes for the agent", "about", "about them", "brief", "call notes", "background"),
     "tags": ("tags", "labels"),
 }
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -106,7 +107,7 @@ def build_lead(row: Mapping[str, str], mapping: Mapping[str, str], *, source: st
     info = phones.parse(get("phone"), country_hint)
     if info is None:
         return None
-    state = phones.normalize_state(get("state")) or info.region_code
+    state = phones.normalize_region(info.country, get("state")) or info.region_code
     zones = phones.timezones_for(info, state=state, timezone=get("timezone"))
     email = get("email").lower()
     return {
@@ -122,7 +123,7 @@ def build_lead(row: Mapping[str, str], mapping: Mapping[str, str], *, source: st
         "dnc": {"national": False, "state": False, "internal": False, "checked_at": None},
         "consent": None, "status": "new", "campaign_id": None,
         "attempts": 0, "last_attempt_at": None, "next_eligible_at": None,
-        "notes": get("notes")[:1000],
+        "notes": get("notes")[:1000], "agent_notes": get("agent_notes")[:600],
         "tags": list(dict.fromkeys([*tags, *[t.strip()[:40] for t in get("tags").split(",") if t.strip()]]))[:20],
         "gate": None, "gate_log": [], "created_at": now, "updated_at": now,
     }
@@ -146,6 +147,12 @@ async def prescreen(db: Any, leads: List[Dict[str, Any]], campaign: Mapping[str,
     if mode == "ai_consented":
         async for r in db[m.CONSENT].find({"phone": {"$in": numbers}, "revoked_at": None}).sort("at", 1):
             consents[r["phone"]] = r
+    # Consent covers only the company it named (gate.consent_covers): check it against this offer's.
+    offer_company = ""
+    if mode == "ai_consented":
+        from core.outbound import offers
+
+        offer_company = str((await offers.offer_for_campaign(db, campaign)).get("company_name") or "")
     counts = {"blocked": 0, "ok": 0}
     for lead in leads:
         required = rules.required_registries(mode, lead["country"])
@@ -154,7 +161,7 @@ async def prescreen(db: Any, leads: List[Dict[str, Any]], campaign: Mapping[str,
             internal_dnc=lead["phone"] in internal,
             registry_hits=tuple(sorted(n for n in listed.get(lead["phone"], []) if n in wanted)),
             registry_status=await registry.registry_status(db, required, lead["phone"], now),
-            consent=consents.get(lead["phone"]))
+            consent=consents.get(lead["phone"]), offer_company=offer_company)
         decision = gate.evaluate(lead, campaign, facts, now)
         doc = decision.to_doc()
         lead["gate"], lead["gate_log"] = doc, [doc]

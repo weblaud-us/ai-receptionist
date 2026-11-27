@@ -74,7 +74,7 @@ def test_private_addresses_are_refused():
 async def test_crawl_stays_on_site_and_structured_data_beats_the_llm(public_hosts, monkeypatch):
     seen_text = {}
 
-    async def fake_extract(crawled):
+    async def fake_extract(crawled, on_progress=None):
         seen_text["text"] = " ".join(p["text"] for p in crawled["pages"])
         return {"name": "Wrong Name", "phone": "+15550000000", "vertical": "salon", "timezone": "Mars/Phobos",
                 "description": "A friendly hair salon in Austin.",
@@ -269,6 +269,72 @@ async def test_numbers_off_says_what_to_set(client, root, monkeypatch):
     assert r.status_code == 503
 
 
+async def test_the_import_reports_what_it_reads_as_it_goes(public_hosts, monkeypatch):
+    async def fake_extract(crawled, on_progress=None):
+        return {"services": [{"name": "Haircut", "price_display": "$45"}]}, []
+    monkeypatch.setattr(site_import, "extract", fake_extract)
+    events: list = []
+
+    async def listen(e):
+        events.append(e)
+    async with _site_client([]) as client:
+        draft = await site_import.import_site("bella.example", client=client, on_progress=listen)
+
+    kinds = [e["type"] for e in events]
+    assert kinds[0] == "step" and events[0]["id"] == "home" and events[0]["status"] == "running"
+    pages = [e for e in events if e["type"] == "page"]
+    assert {e["url"] for e in pages if e["ok"]} == set(draft["sources"])       # one event per page read
+    assert any(not e["ok"] for e in pages)                                     # the refused redirect is shown
+    found = {e["field"]: e for e in events if e["type"] == "found"}
+    assert found["name"]["value"] == "Bella Salon" and found["services"]["value"] == "1 found"
+    assert found["hours"]["ok"] is True and kinds.index("found") > kinds.index("page")
+
+
+async def test_a_listener_that_breaks_never_stops_the_import(public_hosts, monkeypatch):
+    async def fake_extract(crawled, on_progress=None):
+        return {}, []
+    monkeypatch.setattr(site_import, "extract", fake_extract)
+
+    async def broken(_e):
+        raise RuntimeError("tab closed")
+    async with _site_client([]) as client:
+        draft = await site_import.import_site("bella.example", client=client, on_progress=broken)
+    assert draft["profile"]["name"] == "Bella Salon"
+
+
+def test_the_llm_is_told_to_write_in_english():
+    prompt = site_import._prompt({"pages": [{"url": "https://x.example/", "text": "Hola"}], "hints": {}},
+                                 [{"key": "dental", "label": "Dental", "description": "d"}])
+    assert "in clear English, translating" in prompt and "exactly as written" in prompt
+
+
+async def test_streamed_site_import_sends_progress_then_the_draft(db, client, monkeypatch):
+    a = await create_tenant(name="Salon A", vertical="salon", tenant_id="ten_A")
+    await auth_service.create_user(email="owner@a.com", password=PASSWORD, tenant_id=a.id, role="owner")
+    owner = _h(await _login(client, "owner@a.com"))
+
+    async def fake_import(url, client=None, on_progress=None):
+        await on_progress({"type": "step", "id": "home", "status": "running", "label": "Opening a.example…"})
+        await on_progress({"type": "page", "url": "https://a.example/", "title": "A", "words": 120, "ok": True})
+        return {"profile": {"name": "Salon A"}, "hours": [], "services": [], "faqs": [], "links": {},
+                "sources": [url], "warnings": []}
+    monkeypatch.setattr(site_import, "import_site", fake_import)
+    monkeypatch.setattr(site_import, "_host_is_public", lambda host: True)
+    r = client.post("/t/onboarding/site-import/stream", headers=owner, json={"url": "a.example"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    assert r.headers["x-accel-buffering"] == "no"
+    frames = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert [f["type"] for f in frames] == ["step", "page", "result"]
+    assert frames[-1]["draft"]["profile"]["name"] == "Salon A"
+
+    async def failing(url, client=None, on_progress=None):
+        raise site_import.SiteImportError("Couldn't load that website", status=502)
+    monkeypatch.setattr(site_import, "import_site", failing)
+    r = client.post("/t/onboarding/site-import/stream", headers=owner, json={"url": "a.example"})
+    last = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")][-1]
+    assert last == {"type": "error", "status": 502, "message": "Couldn't load that website"}
+
+
 async def test_owner_site_import_and_apply_stay_in_their_business(db, client, monkeypatch):
     a = await create_tenant(name="Salon A", vertical="salon", tenant_id="ten_A")
     b = await create_tenant(name="Salon B", vertical="salon", tenant_id="ten_B")
@@ -278,7 +344,7 @@ async def test_owner_site_import_and_apply_stay_in_their_business(db, client, mo
     await auth_service.create_user(email="staff@a.com", password=PASSWORD, tenant_id=a.id, role="staff")
     owner, staff = _h(await _login(client, "owner@a.com")), _h(await _login(client, "staff@a.com"))
 
-    async def fake_import(url, client=None):
+    async def fake_import(url, client=None, on_progress=None):
         return {"profile": {"name": "Salon A"}, "hours": [], "services": [], "faqs": [], "links": {},
                 "sources": [url], "warnings": []}
     monkeypatch.setattr(site_import, "import_site", fake_import)

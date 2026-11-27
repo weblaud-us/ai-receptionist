@@ -380,8 +380,12 @@ async def test_reminders_send_once_and_respect_do_not_contact(db, salon, monkeyp
                                          "start": now + timedelta(hours=24), "end": now + timedelta(hours=25)})
     await repos.appointments.insert_one({**base, "appointment_id": "a3", "contact_id": "con_ok", "phone": "+15125550100",
                                          "start": now + timedelta(minutes=60), "end": now + timedelta(minutes=90)})
+    # a prospect's meeting booked by the sales dialer is not a customer appointment: no reminder
+    await repos.appointments.insert_one({**base, "appointment_id": "a4", "phone": "+15125550177", "source": "outbound_sales",
+                                         "start": now + timedelta(hours=24), "end": now + timedelta(hours=25)})
     assert await tenant_jobs.send_reminders(salon, now) == 2
     assert {p for p, _ in sent} == {"+15125550100"} and "Bella Salon" in sent[0][1]
+    assert (await repos.appointments.find_one({"appointment_id": "a4"}))["reminders"]["day_before"]["sent_at"] is None
     assert await tenant_jobs.send_reminders(salon, now) == 0                              # claimed: never twice
     assert (await repos.appointments.find_one({"appointment_id": "a2"}))["reminders"]["day_before"]["skipped"] == "do_not_contact"
 

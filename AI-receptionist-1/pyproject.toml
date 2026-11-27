@@ -54,6 +54,7 @@ dependencies = [
     "livekit-plugins-anthropic==1.8.6",  # fallback LLM when OpenAI is down (must match livekit-agents)
     # Phase 4: outbound dialer
     "phonenumbers==9.0.43",            # E.164 normalisation, number → timezone / region for the compliance gate
+    "markdown-it-py==4.3.0",
 ]
 
 [dependency-groups]

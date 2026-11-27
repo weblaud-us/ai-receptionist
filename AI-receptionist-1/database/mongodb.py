@@ -171,6 +171,11 @@ async def _create_billing_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("user_id", ASCENDING)]),
         IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0),
     ])
+    await db.email_changes.create_indexes([             # a signed-in user moving to a new address
+        IndexModel([("token_hash", ASCENDING)], unique=True),
+        IndexModel([("user_id", ASCENDING)]),
+        IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0),
+    ])
     await db.phone_verifications.create_indexes([IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0)])
     await db.usage_events.create_indexes([
         IndexModel([("tenant_id", ASCENDING), ("kind", ASCENDING), ("at", ASCENDING)]),
@@ -186,6 +191,11 @@ async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("owner", ASCENDING), ("phone", ASCENDING)], unique=True, name="uniq_owner_phone"),
         # the dialer's claim: one campaign's due leads, oldest first
         IndexModel([("campaign_id", ASCENDING), ("status", ASCENDING), ("next_eligible_at", ASCENDING)]),
+        # best-fit first (SALES_SUITE_PLAN.md Phase 13)
+        IndexModel([("campaign_id", ASCENDING), ("status", ASCENDING), ("fit_score", DESCENDING),
+                    ("next_eligible_at", ASCENDING)]),
+        IndexModel([("owner_id", ASCENDING), ("updated_at", DESCENDING)]),
+        IndexModel([("merged_into", ASCENDING)]),
         IndexModel([("status", ASCENDING), ("next_eligible_at", ASCENDING)]),
         IndexModel([("phone", ASCENDING)]),
         IndexModel([("created_at", DESCENDING)]),
@@ -200,6 +210,11 @@ async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)]),
         IndexModel([("from", ASCENDING), ("created_at", DESCENDING)]),
         IndexModel([("call_id", ASCENDING)], unique=True),
+        # The learning loop (SALES_LEARNING_PLAN.md): calls to review, a test's calls, an offer's calls.
+        IndexModel([("status", ASCENDING), ("ended_at", DESCENDING)]),
+        IndexModel([("review.status", ASCENDING), ("review.at", ASCENDING)]),
+        IndexModel([("experiment_id", ASCENDING), ("created_at", ASCENDING)]),
+        IndexModel([("offer_id", ASCENDING), ("created_at", DESCENDING)]),
     ])
     # The internal do-not-call list. UNIQUE on phone; rows are never deleted.
     await db.dnc_list.create_indexes([IndexModel([("phone", ASCENDING)], unique=True)])
@@ -208,6 +223,24 @@ async def _create_outbound_indexes(db: AsyncIOMotorDatabase):
         IndexModel([("list", ASCENDING)]),
     ])
     await db.consent_records.create_indexes([IndexModel([("phone", ASCENDING), ("at", DESCENDING)])])
+    # The built-in CRM (SALES_SUITE_PLAN.md wave 3).
+    await db.sales_deals.create_indexes([
+        IndexModel([("lead_id", ASCENDING), ("stage", ASCENDING)]),
+        IndexModel([("stage", ASCENDING), ("updated_at", DESCENDING)]),
+        IndexModel([("owner_id", ASCENDING), ("stage", ASCENDING)]),
+    ])
+    await db.sales_outbox.create_indexes([IndexModel([("status", ASCENDING), ("send_after", ASCENDING)])])
+    await db.sales_offer_simulations.create_indexes([IndexModel([("checksum", ASCENDING), ("created_at", DESCENDING)]),
+                                                     IndexModel([("status", ASCENDING), ("created_at", ASCENDING)]),
+                                                     IndexModel([("checksum", ASCENDING), ("playbook_checksum", ASCENDING),
+                                                                 ("created_at", DESCENDING)]),
+                                                     IndexModel([("status", ASCENDING), ("source", ASCENDING),
+                                                                 ("created_at", ASCENDING)])])
+    # Learned playbooks and their live tests (SALES_LEARNING_PLAN.md Phases 3–4).
+    await db.sales_playbooks.create_indexes([IndexModel([("offer_id", ASCENDING), ("n", DESCENDING)], unique=True),
+                                             IndexModel([("offer_id", ASCENDING), ("status", ASCENDING)])])
+    await db.sales_experiments.create_indexes([IndexModel([("offer_id", ASCENDING), ("status", ASCENDING)]),
+                                               IndexModel([("status", ASCENDING)])])
 
 
 async def _create_tenant_indexes(db: AsyncIOMotorDatabase):

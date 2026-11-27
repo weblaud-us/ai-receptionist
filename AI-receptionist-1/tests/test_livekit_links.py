@@ -74,8 +74,8 @@ def test_call_page_shows_the_business_not_a_hotel(client, monkeypatch):
     monkeypatch.setattr(lk, "resolve_by_id", fake)
     exp, sig = sign_call_room("test_abc", tenant_id="ten_dental1")
     page = client.get(f"/call/test_abc?exp={exp}&sig={sig}&t=ten_dental1").text
-    assert "Bilby Dental" in page and "Aria" in page and "🦷" in page and 'lang="en-AU"' in page
-    assert "Hotel" not in page and "🏨" not in page
+    assert "Bilby Dental" in page and "Aria" in page and 'lang="en-AU"' in page and "Powered by <b>LaudLine</b>" in page
+    assert "Hotel" not in page and "🏨" not in page and "__" + "NAME__" not in page
     assert '"problem": ""' in page
 
 
@@ -105,6 +105,18 @@ def test_call_page_sends_the_business_id_with_the_token_request():
     """Dashboard test links are signed for a business (?t=…); without it the token check always failed."""
     from routers.livekit import CALL_HTML_PATH
     assert 'qs.set("t", link.get("t"))' in CALL_HTML_PATH.read_text(encoding="utf-8")
+
+
+def test_call_page_opens_the_microphone_before_joining_and_never_leaves_a_room_behind():
+    """"Could not start audio source" (NotReadableError): the mic is opened first, with fallbacks, so a broken
+    microphone never sends the receptionist into an empty room; a failed join leaves the room."""
+    from routers.livekit import CALL_HTML_PATH
+    page = CALL_HTML_PATH.read_text(encoding="utf-8")
+    assert page.index("acquireMic(micSelect.value") < page.index("r.connect(data.url")
+    assert "publishTrack(micTrack" in page and "setMicrophoneEnabled(true)" not in page
+    assert '"NotReadableError"' in page and "voiceIsolation: false" in page and "getUserMedia({ audio: true })" in page
+    assert "abandonRoom()" in page and "removeAllListeners" in page
+    assert "audioCaptureDefaults: BASE" in page   # Room options, not connect() options (where it was ignored)
 
 
 def test_a_link_signed_for_a_business_gets_a_token_with_its_id(client, monkeypatch):

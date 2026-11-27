@@ -65,6 +65,7 @@ from core.tenancy.ids import new_id
 from core.tenancy.models import HoursEntry, TenantConfig
 from database.mongodb import get_db
 from utils.serialize import to_jsonable
+from utils.sse import progress_response
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,27 @@ async def onboarding_site_import(body: SiteImportBody, tp: TenantPrincipal = Dep
         return {"draft": await site_import.import_site(_public_http_url(body.url))}
     except site_import.SiteImportError as e:
         raise HTTPException(e.status, str(e))
+
+
+def site_import_error(exc: BaseException) -> Dict[str, Any]:
+    """The error event that ends a streamed website import."""
+    if isinstance(exc, site_import.SiteImportError):
+        return {"status": exc.status, "message": str(exc)}
+    if isinstance(exc, HTTPException):
+        return {"status": exc.status_code, "message": str(exc.detail)}
+    logger.warning("Website import failed", exc_info=exc)
+    return {"status": 500, "message": "Something went wrong reading that website. Please try again."}
+
+
+@tenant_router.post("/onboarding/site-import/stream")
+async def onboarding_site_import_stream(body: SiteImportBody, tp: TenantPrincipal = Depends(_admin)):
+    """The same import, streamed: what is being read as it happens (server-sent events), then the draft.
+    Events: see core/services/site_import.py; the last is {"type": "result", "draft"} or {"type": "error"}."""
+    if not await ratelimit.allow_fixed(f"site-import:{tp.tenant.id}", 10, 3600):
+        raise HTTPException(429, "Too many website imports. Try again in an hour.")
+    url = _public_http_url(body.url)
+    return progress_response(lambda emit: site_import.import_site(url, on_progress=emit),
+                             result=lambda draft: {"draft": draft}, on_error=site_import_error)
 
 
 class ApplyImportBody(BaseModel):

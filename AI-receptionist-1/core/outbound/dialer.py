@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional
 from pymongo import ReturnDocument
 
 from config import settings
-from core.outbound import gate, outcomes, persona
+from core.outbound import gate, offers, outcomes, persona, timing
 from core.outbound import models as m
 from core.outbound import phones
 from core.phone import mask_phone
@@ -127,13 +127,15 @@ async def reap(db: Any, now: datetime) -> int:
     return reaped
 
 
-async def claim_lead(db: Any, campaign_id: str, now: datetime) -> Optional[Dict[str, Any]]:
-    """One due lead, atomically moved to in_progress. Promised callbacks go first."""
+async def claim_lead(db: Any, campaign_id: str, now: datetime, *, order: str = "fit") -> Optional[Dict[str, Any]]:
+    """One due lead, atomically moved to in_progress. Promised callbacks go first; then, with
+    order="fit", the leads that best match the offer (SALES_SUITE_PLAN.md Phase 13)."""
+    sort = [("fit_score", -1), ("next_eligible_at", 1)] if order == "fit" else [("next_eligible_at", 1)]
     for status in m.DIALLABLE_LEAD_STATUSES:
         lead = await db[m.LEADS].find_one_and_update(
             {"campaign_id": campaign_id, "status": status, "next_eligible_at": {"$lte": now}},
             {"$set": {"status": "in_progress", "claimed_at": now, "claimed_from": status}},
-            sort=[("next_eligible_at", 1)], return_document=ReturnDocument.AFTER)
+            sort=sort, return_document=ReturnDocument.AFTER)
         if lead is not None:
             return lead
     return None
@@ -166,7 +168,12 @@ async def pick_from_number(db: Any, campaign: Mapping[str, Any], lead: Mapping[s
         info = phones.parse(number)
         return 1 if info and info.region_code and info.region_code == lead.get("region_code") else 2
 
-    for number in sorted(campaign.get("from_numbers") or [], key=rank):
+    from core.outbound import number_health
+
+    numbers = list(campaign.get("from_numbers") or [])
+    # Numbers resting because they look flagged as spam go last: used only when nothing else is left.
+    resting = await number_health.rested(db, numbers, now) if numbers else set()
+    for number in sorted(numbers, key=lambda n: (n in resting, rank(n))):
         if await dialled_since(db, {"from": number}, now - DAY) < settings.SALES_MAX_CALLS_PER_NUMBER_PER_DAY:
             return number
     return None
@@ -175,8 +182,10 @@ async def pick_from_number(db: Any, campaign: Mapping[str, Any], lead: Mapping[s
 # ── One dial ─────────────────────────────────────────────────────────────────
 
 async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], now: datetime,
-                    dispatch: Dispatch, *, operator: Optional[str] = None) -> Dict[str, Any]:
-    """Gate a claimed lead and, if it passes, start the call. Never raises for a refused lead."""
+                    dispatch: Dispatch, *, operator: Optional[str] = None,
+                    cache: Optional[Dict[Any, Any]] = None) -> Dict[str, Any]:
+    """Gate a claimed lead and, if it passes, start the call. Never raises for a refused lead.
+    `cache`: shared by the dials of one tick (the learning state and offer versions they look up)."""
     decision = await gate.run_gate(db, lead, campaign, now)
     if not decision.allowed:
         await apply_gate_failure(db, lead, decision, now)
@@ -188,14 +197,41 @@ async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], 
         return {"dialed": False, "reason": "numbers_resting", "failures": []}
 
     attempt_id = new_id("att")
-    persona_id = persona.pick(campaign.get("persona_ids") or [], lead["_id"])
+    # What this call sells and with which script: recorded on the attempt, so results compare by
+    # variant and every call can be traced to the exact text it used.
+    variant_pick: Optional[Dict[str, Any]] = None
+    if campaign.get("offer_id"):
+        offer_id, offer_version = str(campaign["offer_id"]), int(campaign.get("offer_version") or 0)
+        # "auto": calls drift toward the script doing better (SALES_LEARNING_PLAN.md Phase 7)
+        from core.outbound import bandit
+
+        choice = await bandit.choose(db, campaign, lead, now=now, cache=cache)
+        if choice:
+            persona_id, variant_pick = choice
+        else:
+            ids = [v for v in campaign.get("variant_ids") or [] if v]
+            persona_id = offers.pick_variant(ids, lead["_id"]) or ""
+            variant_pick = {"how": "hash", "p": round(1 / len(ids), 4) if ids else None}
+    else:
+        offer_id, offer_version = offers.LEGACY_OFFER_ID, 0
+        persona_id = persona.pick(campaign.get("persona_ids") or [], lead["_id"])
+    # Which playbook of learned coaching this call uses (SALES_LEARNING_PLAN.md); never blocks the dial.
+    from core.outbound import learning
+
+    assignment = await learning.assign(db, campaign, lead, offer_id=offer_id, offer_version=offer_version,
+                                       variant_id=persona_id, now=now, cache=cache)
     attempt = {
         "_id": attempt_id, "lead_id": lead["_id"], "campaign_id": campaign["_id"], "mode": campaign["mode"],
         "call_id": room_name(attempt_id), "from": from_number, "to": lead["phone"], "persona_id": persona_id,
+        "offer_id": offer_id, "offer_version": offer_version, "variant_id": persona_id,
         "status": "dispatched", "outcome": None, "amd": None, "sip_status": None, "operator": operator,
         "attempt_no": int(lead.get("attempts") or 0) + 1, "gate": decision.to_doc(),
         "created_at": now, "started_at": None, "ended_at": None, "duration_sec": None,
         "summary": None, "next_step": None, "cost_usd": 0.0, "amd_label": None,
+        # For the learning loop (SALES_LEARNING_PLAN.md): a callback or a fresh try, and when it rang
+        # where they are.
+        "dialled_as": lead.get("claimed_from") or "queued", "country": str(lead.get("country") or ""),
+        "local": timing.local_slot(lead, now), "variant_pick": variant_pick, **assignment,
     }
     await db[m.ATTEMPTS].insert_one(attempt)
     await db[m.LEADS].update_one({"_id": lead["_id"]},
@@ -218,12 +254,14 @@ async def dial_next(db: Any, campaign: Mapping[str, Any], *, operator: str, disp
                     now: Optional[datetime] = None) -> Dict[str, Any]:
     """Human-assisted power dialling: the next lead that passes the gate, for the person who asked."""
     now = now or datetime.now(timezone.utc)
+    if not m.legal_review_valid(campaign):
+        return {"dialed": False, "reason": "legal_review", "failures": []}
     if await active_count(db, campaign["_id"], now) >= int(campaign.get("max_concurrent") or 1):
         return {"dialed": False, "reason": "busy", "failures": []}
     if await dialled_since(db, {"campaign_id": campaign["_id"]}, now - DAY) >= int(campaign.get("daily_cap") or 150):
         return {"dialed": False, "reason": "daily_cap", "failures": []}
     for _ in range(25):                           # skip past leads the gate refuses
-        lead = await claim_lead(db, campaign["_id"], now)
+        lead = await claim_lead(db, campaign["_id"], now, order=str(campaign.get("order") or "fit"))
         if lead is None:
             return {"dialed": False, "reason": "no_leads", "failures": []}
         result = await dial_lead(db, campaign, lead, now, dispatch, operator=operator)
@@ -254,10 +292,14 @@ async def tick(db: Any, *, now: Optional[datetime] = None, dispatch: Dispatch = 
     if readiness():
         return stats
     budget = MAX_DIALS_PER_TICK
+    cache: Dict[Any, Any] = {}                     # learning state and offer versions, looked up once per tick
     campaigns = await db[m.CAMPAIGNS].find({"status": "running"}).to_list(100)
     for campaign in campaigns:
         stats["campaigns"] += 1
         if campaign.get("mode") == "human_assisted":
+            continue
+        if not m.legal_review_valid(campaign):        # defence in depth: never dial without a current sign-off
+            logger.warning("Campaign %s is running without a current legal review; not dialling", campaign["_id"])
             continue
         free = int(campaign.get("max_concurrent") or 1) - await active_count(db, campaign["_id"], now)
         left_today = int(campaign.get("daily_cap") or 150) - await dialled_since(
@@ -265,11 +307,11 @@ async def tick(db: Any, *, now: Optional[datetime] = None, dispatch: Dispatch = 
         slots = min(free, left_today, budget)
         tried = 0
         while slots > 0 and tried < 4 * MAX_DIALS_PER_TICK:
-            lead = await claim_lead(db, campaign["_id"], now)
+            lead = await claim_lead(db, campaign["_id"], now, order=str(campaign.get("order") or "fit"))
             if lead is None:
                 break
             tried += 1
-            result = await dial_lead(db, campaign, lead, now, dispatch)
+            result = await dial_lead(db, campaign, lead, now, dispatch, cache=cache)
             if result["dialed"]:
                 stats["dialed"] += 1
                 slots -= 1
@@ -285,23 +327,71 @@ async def tick(db: Any, *, now: Optional[datetime] = None, dispatch: Dispatch = 
     return stats
 
 
+# A lead that finished one campaign can join another (SALES_DIALER_PLAN.md Phase 3): its attempts start
+# again and the old run is kept in `history`. A do-not-call or wrong number never comes back; a lead
+# blocked for one call type only comes back for another; a lead already in the pipeline (interested,
+# meeting booked) only when picked by hand. The gate still decides: a declined offer or an active
+# cooldown keeps it out.
+REUSABLE_STATUSES: tuple[str, ...] = ("exhausted", "not_interested", "blocked")
+PIPELINE_STATUSES: tuple[str, ...] = ("interested", "demo_booked")
+
+
 async def queue_leads(db: Any, campaign: Mapping[str, Any], query: Dict[str, Any], *, limit: int = 5000,
-                      now: Optional[datetime] = None) -> Dict[str, int]:
-    """Put `new` leads matching `query` into a campaign's queue, pre-screening them for its mode."""
+                      now: Optional[datetime] = None, picked: bool = False) -> Dict[str, int]:
+    """Put leads matching `query` into a campaign's queue, pre-screening them for its mode. `picked`:
+    the leads were chosen one by one, so leads already in the pipeline may be re-used too."""
     from core.outbound.importer import prescreen
 
     now = now or datetime.now(timezone.utc)
-    leads = await db[m.LEADS].find({**query, "owner": m.OWNER_PLATFORM, "status": "new"}).limit(limit).to_list(limit)
-    counts = await prescreen(db, leads, campaign, now)
-    queued = 0
+    reusable = [*REUSABLE_STATUSES, *(PIPELINE_STATUSES if picked else ())]
+    leads = await db[m.LEADS].find({**query, "owner": m.OWNER_PLATFORM, "$or": [
+        {"status": "new"}, {"status": {"$in": reusable}, "campaign_id": {"$ne": campaign["_id"]}}]}) \
+        .limit(limit).to_list(limit)
+    # blocked for this very call type: nothing has changed, so don't try again
+    leads = [lead for lead in leads
+             if not (lead["status"] == "blocked" and (lead.get("gate") or {}).get("mode") == campaign.get("mode"))]
+    before = {lead["_id"]: {k: lead.get(k) for k in ("status", "attempts", "campaign_id", "last_outcome")} for lead in leads}
     for lead in leads:
-        blocked = lead["status"] != "new"
+        if lead["status"] != "new":                  # judged as a fresh lead for this campaign
+            lead.update(attempts=0, next_eligible_at=None)
+    await prescreen(db, leads, campaign, now)
+    old_campaigns = {c["_id"]: c for c in await db[m.CAMPAIGNS].find(
+        {"_id": {"$in": list({b["campaign_id"] for b in before.values() if b["campaign_id"]})}},
+        {"offer_id": 1, "offer_version": 1}).to_list(1000)}
+    stats = {"matched": len(leads), "queued": 0, "blocked": 0, "resting": 0, "reused": 0}
+    for lead in leads:
+        prev = before[lead["_id"]]
+        log = {"$each": [lead["gate"]], "$slice": -gate.GATE_LOG_MAX}
+        resting = set(lead["gate"]["failures"]) & {"offer_declined", "cooldown"}
+        if lead["gate"]["permanent"]:
+            stats["resting" if resting else "blocked"] += 1
+            if prev["status"] == "new":
+                sets = {"campaign_id": campaign["_id"], "gate": lead["gate"], "dnc": lead["dnc"], "updated_at": now,
+                        "status": lead["status"], "next_eligible_at": None}
+                await db[m.LEADS].update_one({"_id": lead["_id"], "status": "new"}, {"$set": sets, "$push": {"gate_log": log}})
+            else:                                    # left where it was; the check is on record
+                await db[m.LEADS].update_one({"_id": lead["_id"]}, {"$set": {"gate": lead["gate"], "updated_at": now},
+                                                                    "$push": {"gate_log": log}})
+            continue
         sets = {"campaign_id": campaign["_id"], "gate": lead["gate"], "dnc": lead["dnc"], "updated_at": now,
-                "status": lead["status"] if blocked else "queued", "next_eligible_at": None if blocked else now}
-        res = await db[m.LEADS].update_one({"_id": lead["_id"], "status": "new"},
-                                           {"$set": sets, "$push": {"gate_log": {"$each": [lead["gate"]], "$slice": -gate.GATE_LOG_MAX}}})
-        queued += int(res.modified_count == 1 and not blocked)
-    return {"matched": len(leads), "queued": queued, "blocked": counts["blocked"]}
+                "status": "queued", "next_eligible_at": now}
+        if (lead.get("fit") or {}).get("source") != "research":
+            from core.outbound import crm
+
+            fit = crm.rules_fit(lead, campaign)
+            sets.update(fit=fit, fit_score=fit["score"])
+        push: Dict[str, Any] = {"gate_log": log}
+        if prev["status"] != "new":
+            old = old_campaigns.get(prev["campaign_id"]) or {}
+            sets.update(attempts=0, last_outcome=None)
+            push["history"] = {"campaign_id": prev["campaign_id"], "offer_id": offers.offer_id_of(old),
+                               "offer_version": old.get("offer_version") or 0, "status": prev["status"],
+                               "attempts": prev["attempts"] or 0, "last_outcome": prev["last_outcome"], "until": now}
+        res = await db[m.LEADS].update_one({"_id": lead["_id"], "status": prev["status"]}, {"$set": sets, "$push": push})
+        if res.modified_count == 1:
+            stats["queued"] += 1
+            stats["reused"] += int(prev["status"] != "new")
+    return stats
 
 
 class DialerLoop:
@@ -326,13 +416,27 @@ class DialerLoop:
             self._task = None
 
     async def _loop(self) -> None:
+        from core.outbound import research
         from database.mongodb import get_db
 
+        n = 0
         while True:
             try:
                 await tick(get_db())
             except Exception:
                 logger.error("Sales dialer tick failed", exc_info=True)
+            if n % 3 == 0:                            # research about once a minute, like the jobs worker
+                try:
+                    from core.outbound import followup
+
+                    await research.tick(get_db())
+                    await followup.retry_outbox(get_db())
+                    from core.outbound import safety
+
+                    await safety.tick(get_db())
+                except Exception:
+                    logger.error("Sales research / email retry tick failed", exc_info=True)
+            n += 1
             await asyncio.sleep(TICK_SECONDS)
 
 

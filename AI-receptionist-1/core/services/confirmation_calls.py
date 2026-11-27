@@ -69,6 +69,7 @@ def _query(t: TenantConfig, now: datetime) -> Dict[str, Any]:
     q: Dict[str, Any] = {
         "status": "confirmed",
         "start": {"$gte": now + MIN_LEAD, "$lte": now + MAX_LEAD},
+        "source": {"$ne": "outbound_sales"},       # a prospect's sales meeting, not a patient appointment
         "confirmation.status": {"$nin": list(FINAL)},
         "$or": [{"confirmation.attempts": {"$exists": False}},
                 {"confirmation.attempts": {"$lt": MAX_ATTEMPTS}}],
