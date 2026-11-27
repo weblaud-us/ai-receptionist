@@ -12,11 +12,18 @@ GET   /t/privacy/requests                the business's request log (masked numb
 
 Public:
 GET   /public/legal                      document versions + links + sub-processor list (marketing site)
+GET   /public/legal/documents/{key}      one published document (title, version, date, HTML) for /legal/<key>
 GET   /public/site                       demo number, status page, support and help links (Phase 7)
 
 Platform (prefix /platform):
 GET   /platform/privacy/requests         every business's requests, with due dates
 GET   /platform/consent-events           opt-outs / opt-ins across channels (masked)
+GET   /platform/legal/documents          the legal documents: published version, unpublished changes
+GET   /platform/legal/documents/{key}    draft, published text and history
+PUT   /platform/legal/documents/{key}/draft          save the working text
+POST  /platform/legal/documents/{key}/publish        publish it (material=true → new version, re-acceptance)
+GET   /platform/legal/documents/{key}/versions/{v}   a published text, as it was
+POST  /platform/legal/preview            Markdown → the HTML the site will show
 """
 
 from __future__ import annotations
@@ -27,13 +34,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from config import settings
 from core import ratelimit
 from core.auth import Principal, TenantPrincipal, require_platform_admin, require_tenant
-from core.compliance import legal, optout, subjects
+from core.compliance import legal, legal_docs, optout, subjects
 from core.phone import mask_phone
 from core.repositories.base import utcnow
 from core.tenancy import invalidate
@@ -76,11 +83,12 @@ async def _limit(tp: TenantPrincipal, what: str, per_hour: int) -> None:
 async def legal_status(tp: TenantPrincipal = Depends(_member)):
     user = await get_db().users.find_one({"_id": tp.user.user_id}, {"legal_acceptances": 1}) or {}
     a = tp.tenant.agent
+    versions = await legal.load_versions(get_db())
     return to_jsonable({
         "entity": settings.LEGAL_ENTITY_NAME,
-        "documents": legal.public_documents(),
-        "dpa": legal.dpa_status(tp.tenant),
-        "outstanding": [] if tp.user.platform_admin else legal.outstanding(user),
+        "documents": legal.public_documents(versions, await legal_docs.published_keys(get_db())),
+        "dpa": legal.dpa_status(tp.tenant, versions),
+        "outstanding": [] if tp.user.platform_admin else legal.outstanding(user, versions=versions),
         "subprocessors": legal.SUBPROCESSORS,
         # Call audio is never recorded: only transcripts are kept.
         "retention": {"transcript_days": a.transcript_retention_days,
@@ -98,7 +106,7 @@ class DpaAccept(BaseModel):
 
 @compliance_router.post("/legal/dpa/accept")
 async def accept_dpa(body: DpaAccept, request: Request, tp: TenantPrincipal = Depends(_owner)):
-    current = legal.version_of("dpa")
+    current = legal.version_of("dpa", await legal.load_versions(get_db()))
     if body.version != current:
         raise HTTPException(409, f"The DPA has changed (current version {current}); reload and review it")
     now = utcnow()
@@ -198,8 +206,22 @@ async def privacy_requests(tp: TenantPrincipal = Depends(_owner)):
 
 @public_compliance_router.get("/legal")
 async def public_legal():
-    return {"entity": settings.LEGAL_ENTITY_NAME, "documents": legal.public_documents(),
+    db = get_db()
+    await legal_docs.ensure_seeded(db)
+    return {"entity": settings.LEGAL_ENTITY_NAME,
+            "documents": legal.public_documents(await legal.load_versions(db), await legal_docs.published_keys(db)),
             "subprocessors": legal.SUBPROCESSORS, "privacy_contact": settings.PRIVACY_CONTACT_EMAIL}
+
+
+@public_compliance_router.get("/legal/documents/{key}")
+async def public_legal_document(key: str):
+    """One published document for the marketing site's /legal/<key> page. 404 until it is published."""
+    if key not in legal.DOCUMENTS:
+        raise HTTPException(404, "No such document")
+    doc = await legal_docs.public_document(get_db(), key)
+    if doc is None:
+        raise HTTPException(404, "This document hasn't been published yet")
+    return JSONResponse(to_jsonable(doc), headers={"Cache-Control": "public, max-age=300"})
 
 
 @public_compliance_router.get("/site")
@@ -228,3 +250,72 @@ async def consent_events(limit: int = Query(default=200, ge=1, le=1000),
     rows = await get_db()[optout.EVENTS].find({}).sort("at", -1).limit(limit).to_list(limit)
     return {"events": [to_jsonable({k: v for k, v in r.items() if k != "_id"} | {"phone": mask_phone(r.get("phone"))})
                        for r in rows]}
+
+
+# ── Legal documents (Platform → Legal documents) ─────────────────────────────
+
+def _doc_error(e: legal_docs.LegalDocError) -> HTTPException:
+    return HTTPException(e.status, str(e))
+
+
+@platform_compliance_router.get("/legal/documents")
+async def legal_documents(admin: Principal = Depends(require_platform_admin)):
+    return {"documents": to_jsonable(await legal_docs.list_documents(get_db())),
+            "site_url": (settings.LEGAL_SITE_URL or "").rstrip("/")}
+
+
+@platform_compliance_router.get("/legal/documents/{key}")
+async def legal_document(key: str, admin: Principal = Depends(require_platform_admin)):
+    doc = await legal_docs.get_document(get_db(), key)
+    if doc is None:
+        raise HTTPException(404, "No such document")
+    return to_jsonable({**doc, "url": legal.url_for(key)})
+
+
+class DraftBody(BaseModel):
+    title: str = Field(default="", max_length=120)
+    markdown: str = Field(max_length=legal_docs.MAX_CHARS)
+
+
+@platform_compliance_router.put("/legal/documents/{key}/draft")
+async def save_legal_draft(key: str, body: DraftBody, admin: Principal = Depends(require_platform_admin)):
+    try:
+        doc = await legal_docs.save_draft(get_db(), key, title=body.title, md=body.markdown, by=admin.user_id)
+    except legal_docs.LegalDocError as e:
+        raise _doc_error(e)
+    logger.info("Legal document %s draft saved by platform:%s (%d chars)", key, admin.user_id, len(body.markdown))
+    return to_jsonable(doc)
+
+
+class PublishBody(BaseModel):
+    material: bool = False
+    summary: str = Field(default="", max_length=500)
+
+
+@platform_compliance_router.post("/legal/documents/{key}/publish")
+async def publish_legal_document(key: str, body: PublishBody, admin: Principal = Depends(require_platform_admin)):
+    try:
+        result = await legal_docs.publish(get_db(), key, material=body.material, summary=body.summary, by=admin.user_id)
+    except legal_docs.LegalDocError as e:
+        raise _doc_error(e)
+    # The evidence (who, when, the exact text) is the append-only legal_document_versions row.
+    logger.info("Legal document %s published as %s by platform:%s (material=%s)", key, result["version"],
+                admin.user_id, result["material"])
+    return to_jsonable(result)
+
+
+@platform_compliance_router.get("/legal/documents/{key}/versions/{version}")
+async def legal_document_version(key: str, version: str, admin: Principal = Depends(require_platform_admin)):
+    row = await legal_docs.version_text(get_db(), key, version)
+    if row is None:
+        raise HTTPException(404, "No such version")
+    return to_jsonable(row)
+
+
+class PreviewBody(BaseModel):
+    markdown: str = Field(max_length=legal_docs.MAX_CHARS)
+
+
+@platform_compliance_router.post("/legal/preview")
+async def preview_legal_document(body: PreviewBody, admin: Principal = Depends(require_platform_admin)):
+    return {"html": legal_docs.render(body.markdown), "placeholders": legal_docs.placeholders(body.markdown)}

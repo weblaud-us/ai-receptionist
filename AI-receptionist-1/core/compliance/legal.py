@@ -1,10 +1,12 @@
 """
 Published legal documents and who agreed to them (Roadmap §11.8).
 
-The texts live on the marketing site (drafts in docs/legal/). Each has a version here: the date its
-text last changed in a way customers must accept. Bump the version when you publish new wording —
-owners who accepted an older version see a "review the updated terms" notice (GET /t/legal), and
-the next acceptance is recorded with the new version.
+The texts are edited in the platform dashboard (Legal documents) and published on the marketing site
+at /legal/<key> (core/compliance/legal_docs.py). Each has a version: the date its text last changed
+in a way customers must accept. Publishing a material change there gives it a new version — owners
+who accepted an older version see a "review the updated terms" notice (GET /t/legal), and the next
+acceptance is recorded with the new version. The versions below are only the starting point, used
+until a document is published from the platform.
 
 Acceptances are evidence, so they are append-only lists on the user (terms, privacy, AUP) and
 fields on the tenant (DPA — the business is the controller, so the DPA binds the business).
@@ -26,6 +28,8 @@ DOCUMENTS: Dict[str, Dict[str, str]] = {
     "subprocessors": {"title": "Sub-processors",            "version": "2026-11-20", "url_setting": "SUBPROCESSORS_URL"},
     "sla":           {"title": "Service Level Agreement",   "version": "2026-11-19", "url_setting": "SLA_URL"},
     "security":      {"title": "Security overview",         "version": "2026-11-19", "url_setting": "SECURITY_URL"},
+    "subscription":  {"title": "Subscription and billing policy", "version": "2026-11-24", "url_setting": "SUBSCRIPTION_URL"},
+    "cookies":       {"title": "Cookie policy",             "version": "2026-11-24", "url_setting": "COOKIES_URL"},
 }
 # What a person accepts by signing up (the checkbox on /signup).
 SIGNUP_DOCUMENTS = ("terms", "privacy", "aup")
@@ -76,24 +80,43 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+Versions = Dict[str, str]
+
+
 def url_for(key: str) -> str:
+    """Where the document is published: its own *_URL setting, else the marketing site's /legal/<key>."""
     doc = DOCUMENTS.get(key)
-    return str(getattr(settings, doc["url_setting"], "") or "") if doc else ""
+    if not doc:
+        return ""
+    explicit = str(getattr(settings, doc["url_setting"], "") or "")
+    if explicit:
+        return explicit
+    site = (settings.LEGAL_SITE_URL or "").rstrip("/")
+    return f"{site}/legal/{key}" if site else ""
 
 
-def version_of(key: str) -> str:
-    return DOCUMENTS[key]["version"]
+def version_of(key: str, versions: Optional[Versions] = None) -> str:
+    """The current version: from `versions` (legal_docs.current_versions), else the built-in one."""
+    return (versions or {}).get(key) or DOCUMENTS[key]["version"]
 
 
-def public_documents() -> List[Dict[str, str]]:
-    return [{"key": k, "title": d["title"], "version": d["version"], "url": url_for(k)} for k, d in DOCUMENTS.items()]
+async def load_versions(db: Any) -> Versions:
+    from core.compliance.legal_docs import current_versions
+
+    return await current_versions(db)
+
+
+def public_documents(versions: Optional[Versions] = None, published: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """`published`: keys with a published text (None = unknown, every document is listed as published)."""
+    return [{"key": k, "title": d["title"], "version": version_of(k, versions), "url": url_for(k),
+             "published": published is None or k in published} for k, d in DOCUMENTS.items()]
 
 
 def acceptance_rows(keys: tuple[str, ...] | list[str], *, ip: str = "", user_agent: str = "",
-                    now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+                    now: Optional[datetime] = None, versions: Optional[Versions] = None) -> List[Dict[str, Any]]:
     """One evidence row per document: which version, when, from where."""
     now = now or utcnow()
-    return [{"doc": k, "version": version_of(k), "at": now, "ip": ip[:64], "user_agent": user_agent[:200]}
+    return [{"doc": k, "version": version_of(k, versions), "at": now, "ip": ip[:64], "user_agent": user_agent[:200]}
             for k in keys if k in DOCUMENTS]
 
 
@@ -102,23 +125,24 @@ def latest_accepted(rows: List[Dict[str, Any]] | None, key: str) -> Optional[str
     return max(versions) if versions else None
 
 
-def outstanding(user_doc: Dict[str, Any], keys: tuple[str, ...] = SIGNUP_DOCUMENTS) -> List[str]:
+def outstanding(user_doc: Dict[str, Any], keys: tuple[str, ...] = SIGNUP_DOCUMENTS,
+                versions: Optional[Versions] = None) -> List[str]:
     """Documents whose current version this user hasn't accepted (ISO dates compare as strings)."""
     rows = user_doc.get("legal_acceptances") or []
-    return [k for k in keys if (latest_accepted(rows, k) or "") < version_of(k)]
+    return [k for k in keys if (latest_accepted(rows, k) or "") < version_of(k, versions)]
 
 
 async def record_user_acceptance(db: Any, user_id: str, keys: tuple[str, ...] | list[str], *, ip: str = "",
                                  user_agent: str = "") -> List[Dict[str, Any]]:
-    rows = acceptance_rows(keys, ip=ip, user_agent=user_agent)
+    rows = acceptance_rows(keys, ip=ip, user_agent=user_agent, versions=await load_versions(db))
     if rows:
         await db.users.update_one({"_id": user_id}, {"$push": {"legal_acceptances": {"$each": rows}}})
     return rows
 
 
-def dpa_status(tenant: Any) -> Dict[str, Any]:
+def dpa_status(tenant: Any, versions: Optional[Versions] = None) -> Dict[str, Any]:
     legal = tenant.legal
-    current = version_of("dpa")
+    current = version_of("dpa", versions)
     return {"version": current, "accepted_version": legal.dpa_version or None,
             "accepted_at": legal.dpa_accepted_at, "accepted_by": legal.dpa_accepted_by or None,
             "current": legal.dpa_version == current, "url": url_for("dpa")}
