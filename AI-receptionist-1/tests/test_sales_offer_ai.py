@@ -213,6 +213,71 @@ async def test_fix_opener_passes_the_checks_or_says_why_not(db):
     assert e.value.status == 422 and e.value.problems and len(hopeless.calls) == 2
 
 
+async def test_a_suggested_roi_fits_the_rules_and_its_figures_need_confirming(db):
+    kept = {"label": "share of calls we answer", "value": 80, "percent": True}
+    offer = _offer(roi={"enabled": False, "inputs": [], "factors": [kept], "result_label": "x", "monthly_cost": 199})
+    llm = FakeLlm({"inputs": [
+        {"question": "Roughly how many calls go unanswered in a week?", "label": "missed calls a week", "per": "week", "max": 500},
+        {"question": "And in a month, how many new patients?", "label": "new patients a month", "per": "month"},
+        {"question": "?", "label": "too short"},
+        "junk"],
+        "factors": [kept, {"label": "value of a new patient", "value": 1200, "percent": False},
+                    {"label": "share that book", "value": 150, "percent": True},
+                    {"label": "free money", "value": -5}],
+        "result_label": "extra revenue a month", "notes": "Check the patient value."})
+    out = await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="roi"), llm=llm)
+    roi = out["patch"]["roi"]
+    assert set(out["patch"]) == {"roi"}
+    assert [x["per"] for x in roi["inputs"]] == ["week", "once"]           # only one rate question
+    assert [f["label"] for f in roi["factors"]] == ["share of calls we answer", "value of a new patient"]
+    assert out["ai_unconfirmed"] == ["roi.factors.1"]                      # the unchanged figure stays confirmed
+    assert roi["enabled"] is True and roi["monthly_cost"] == 199 and roi["result_label"] == "extra revenue a month"
+    assert of.Roi.model_validate(roi)
+
+    reword = FakeLlm({"questions": ["How many calls do you reckon you miss in a week?", ""]})
+    out = await offer_ai.assist(db, offer_ai.AssistRequest(offer={**offer, "roi": roi}, section="roi", action="rewrite"),
+                                llm=reword)
+    after = out["patch"]["roi"]
+    assert [x["question"] for x in after["inputs"]] == ["How many calls do you reckon you miss in a week?",
+                                                        roi["inputs"][1]["question"]]
+    assert after["factors"] == roi["factors"] and out["ai_unconfirmed"] == []   # rewording never touches a figure
+    with pytest.raises(offer_ai.AiError):
+        await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="roi", action="rewrite"), llm=reword)
+
+
+async def test_opener_options_only_offer_openers_that_pass_and_are_new(db):
+    offer = _offer()
+    current = offer["variants"][0]["cold_opener"]
+    other = offer["variants"][1]["cold_opener"]
+    good = "Hi, this is {persona}, an AI assistant calling from {company} about missed calls at {business}. " + OPT_OUT
+    llm = FakeLlm({"options": [
+        {"angle": "Missed calls", "opener": good},
+        {"angle": "Repeat", "opener": good.upper()},                     # same words as the first
+        {"angle": "No opt-out", "opener": "Hi, this is {persona} from {company}."},
+        {"angle": "The current one", "opener": current},
+        {"angle": "The other script's", "opener": other},
+        {"angle": "", "opener": "Hi, this is {persona}, an AI assistant calling from {company} about after-hours "
+                                "bookings. Is the owner of {business_name} around? " + OPT_OUT},
+        "not an option"]})
+    out = await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="openers",
+                                                           target=offer["variants"][0]["id"]), llm=llm)
+    assert out["patch"] == {}
+    assert [o["angle"] for o in out["options"]] == ["Missed calls", "Option 2"]
+    assert "{business}" in out["options"][1]["opener"] and "{business_name}" not in out["options"][1]["opener"]
+    assert "Another script's opener" in llm.calls[0][1]["content"]       # it is told what to differ from
+
+    consented = await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="openers", target="consented_opener"),
+                                      llm=FakeLlm({"options": [{"angle": "You asked", "opener": good}]}))
+    assert consented["options"][0]["opener"] == good
+
+    with pytest.raises(offer_ai.AiError) as e:
+        await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="openers", target="nope"), llm=llm)
+    assert e.value.status == 422
+    with pytest.raises(offer_ai.AiError):
+        await offer_ai.assist(db, offer_ai.AssistRequest(offer=offer, section="openers", target=offer["variants"][0]["id"]),
+                              llm=FakeLlm({"options": [{"angle": "Bad", "opener": "Hello!"}]}))
+
+
 # ── Review ───────────────────────────────────────────────────────────────────
 
 async def test_a_review_keeps_to_known_fields_and_safe_fixes_and_is_stored(admin, db, ai_on, monkeypatch):

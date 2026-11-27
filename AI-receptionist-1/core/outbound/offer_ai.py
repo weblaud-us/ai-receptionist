@@ -266,6 +266,8 @@ TEXT_FIELDS: Dict[str, Tuple[int, Optional[str], bool]] = {
     "variant.human_opener": (360, "opener", False),
     "objection.objection": (120, "prompt", False), "objection.response": (400, "prompt", False),
     "list": (240, "prompt", False),
+    "roi.question": (160, "prompt", False), "roi.label": (40, None, False), "roi.factor": (60, None, False),
+    "roi.result_label": (60, None, False),
 }
 LIST_FIELDS = ("value_props", "proof_points", "discovery_questions", "qualification_questions", "pain_hypotheses")
 LIST_MAX = 6
@@ -736,6 +738,8 @@ SECTIONS: Mapping[str, Tuple[str, ...]] = {
     "discovery_questions": ("discovery_questions",), "qualification_questions": ("qualification_questions",),
     "pain_hypotheses": ("pain_hypotheses",), "objections": ("objections",),
     "variant": ("variants",), "fix_opener": ("variants", "consented_opener"),
+    "openers": (),                      # options to pick from: the editor applies the one chosen
+    "roi": ("roi",),
     "emails": ("info_email", "confirmation_email"),
     "consent_voicemail": ("consented_opener", "voicemail", "consent_text"),
     "follow_ups": ("follow_ups",),
@@ -752,12 +756,60 @@ _LIST_TASK = {
 class AssistRequest(BaseModel):
     offer: Dict[str, Any]                                         # the editor's current form
     section: Literal["basics", "value_props", "proof_points", "discovery_questions", "qualification_questions",
-                     "pain_hypotheses", "objections", "variant", "fix_opener", "emails", "consent_voicemail",
-                     "follow_ups"]
+                     "pain_hypotheses", "objections", "variant", "fix_opener", "openers", "roi", "emails",
+                     "consent_voicemail", "follow_ups"]
     action: Literal["add", "rewrite"] = "add"
     target: str = Field(default="", max_length=40)              # variant id, or "consented_opener"
     instruction: str = Field(default="", max_length=300)        # "more about saving front-desk time"
     market: Literal["AU", "GB", "US", "CA"] = "AU"
+
+
+OPENER_OPTIONS = 3
+
+
+def clean_roi(raw: Any, current: Mapping[str, Any]) -> Dict[str, Any]:
+    """An ROI setup the model wrote, made to fit the offer's rules: at most four questions and four
+    figures, only the first rate question stays per week/month, and figures are positive (percentages at
+    most 100). Whether it is used on calls and what it costs them stay the person's."""
+    data = raw if isinstance(raw, Mapping) else {}
+    inputs: List[Dict[str, Any]] = []
+    rate_seen = False
+    for item in data.get("inputs") if isinstance(data.get("inputs"), list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        question, label = clean_text(item.get("question"), "roi.question"), clean_text(item.get("label"), "roi.label")
+        if len(question) < 5 or len(label) < 2:
+            continue
+        per = str(item.get("per") or "once")
+        per = per if per in ("week", "month") and not rate_seen else "once"
+        rate_seen = rate_seen or per != "once"
+        try:
+            biggest = min(1_000_000_000.0, max(1.0, float(item.get("max") or 1_000_000)))
+        except (TypeError, ValueError):
+            biggest = 1_000_000.0
+        inputs.append({"question": question, "label": label, "per": per, "max": biggest})
+    factors: List[Dict[str, Any]] = []
+    for item in data.get("factors") if isinstance(data.get("factors"), list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        label = clean_text(item.get("label"), "roi.factor")
+        percent = bool(item.get("percent"))
+        try:
+            value = float(item.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if len(label) < 2 or not (0 < value <= (100 if percent else 1_000_000_000)):
+            continue
+        factors.append({"label": label, "value": value, "percent": percent})
+    return {"enabled": bool(current.get("enabled", True)), "inputs": inputs[:4], "factors": factors[:4],
+            "result_label": clean_text(data.get("result_label"), "roi.result_label")
+            or str(current.get("result_label") or "extra revenue a month"),
+            "monthly_cost": current.get("monthly_cost")}
+
+
+def _same_words(text: str) -> str:
+    """For spotting a repeat: case, punctuation and spacing don't count."""
+    return re.sub(r"\W+", " ", text.lower()).strip()
 
 
 def _offer_for_prompt(offer: Mapping[str, Any], *, emails: bool = False) -> str:
@@ -780,6 +832,7 @@ async def assist(db: Any, req: AssistRequest, *, llm: Optional[Llm] = None, now:
     unconfirmed: List[str] = []
     notes = ""
     raw: Dict[str, Any] = {}
+    options: List[Dict[str, str]] = []
 
     def messages(task: str, shape: str, *, emails: bool = False) -> List[Dict[str, str]]:
         return [{"role": "system", "content": rules(req.market)},
@@ -846,6 +899,87 @@ async def assist(db: Any, req: AssistRequest, *, llm: Optional[Llm] = None, now:
                                              topic, market=req.market, llm=llm, now=now)
             usd += spent2
         patch = {"variants": variants}
+    elif section == "roi":
+        current_roi: Dict[str, Any] = {**of.Roi().model_dump(), **(offer.get("roi") or {})}
+        old_inputs = list(current_roi.get("inputs") or [])
+        if action == "rewrite":
+            if not old_inputs:
+                raise AiError("There are no questions to reword yet. Ask for a suggestion first.", 422)
+            task = ("Reword these ROI questions so they sound natural when asked out loud on a call, one for one, "
+                    "same count and same order. Each still asks for one number. Change only the wording.\n"
+                    + "\n".join(f"{i + 1}. {_fence(str(x.get('question') or ''))}" for i, x in enumerate(old_inputs)))
+            raw, usd = await _ask(db, "assist", messages(task, 'Reply with JSON {"questions": [str], "notes": str}.'),
+                                  max_tokens=500, llm=llm, now=now)
+            listed = raw.get("questions") if isinstance(raw.get("questions"), list) else []
+            reworded = []
+            for i, x in enumerate(old_inputs):
+                q = clean_text(listed[i], "roi.question") if i < len(listed) else ""
+                reworded.append({**x, "question": q if len(q) >= 5 else x.get("question")})
+            patch = {"roi": {**current_roi, "inputs": reworded}}
+        else:
+            currency = str(offer.get("deal_currency") or "USD")
+            task = (
+                "Set up the 'what it's worth to them' estimate for this offer. The agent asks the prospect 2 or 3 "
+                "questions, each for one number about their business today; a calculator multiplies the answers by "
+                "the seller's own figures. Example for an AI receptionist: missed calls a week (asked) x value of a "
+                "new patient (figure) x share of those calls we'd answer (figure, percent) x share that book "
+                "(figure, percent).\n"
+                "- Questions: short, spoken, one number each, easy to guess roughly. At most one is per week or per "
+                "month; the rest are plain amounts. \"max\" is a sensible upper limit for the answer.\n"
+                "- Figures: 1 to 3, cautious. Use a figure stated in the offer or the brief when there is one; "
+                "otherwise a cautious typical figure the person will check. Percent figures are 1 to 100. Money "
+                f"is in {currency}.\n"
+                "- The questions times the figures must give the result, e.g. \"extra revenue a month\".")
+            raw, usd = await _ask(db, "assist", messages(task, (
+                'Reply with JSON {"inputs": [{"question": str, "label": str (2-5 words, e.g. "missed calls a week"), '
+                '"per": "week"|"month"|"once", "max": number}], "factors": [{"label": str, "value": number, '
+                '"percent": bool}], "result_label": str, "notes": str (which figures to check)}.')),
+                max_tokens=700, llm=llm, now=now)
+            new_roi = clean_roi(raw, {**current_roi, "enabled": True})
+            if not new_roi["inputs"]:
+                raise AiError("The AI didn't suggest any usable questions this time. Try again, or tell it what to "
+                              "focus on.", 422)
+            old_factors = list(current_roi.get("factors") or [])
+            # every figure the AI wrote or changed is a claim the person must confirm
+            unconfirmed = [f"roi.factors.{i}" for i, f in enumerate(new_roi["factors"])
+                           if i >= len(old_factors) or dict(old_factors[i]) != f]
+            patch = {"roi": new_roi}
+    elif section == "openers":
+        variants = [dict(v) for v in offer.get("variants") or []]
+        is_consented = req.target == "consented_opener"
+        target = None if is_consented else next((v for v in variants if v.get("id") == req.target), None)
+        if not is_consented and target is None:
+            raise AiError("Pick the script to suggest openers for.", 422)
+        field = "consented_opener" if is_consented else "variant.cold_opener"
+        current = str(offer.get("consented_opener") or "") if is_consented else str(target["cold_opener"] if target else "")
+        others = [] if is_consented else [str(v.get("cold_opener") or "") for v in variants if v is not target]
+        who = ("people who asked us to call them: say they asked for the call" if is_consented
+               else f"a cold call, for the script \"{_fence(str(target['label'] if target else ''))}\"")
+        task = (f"Suggest {OPENER_OPTIONS} openers for {who}. Each starts \"Hi, this is {{persona}}, an AI assistant\", "
+                "takes a clearly different angle (a problem they probably have, a moment in their day, or what they "
+                "get), and follows the opener rules exactly. None may repeat the current opener"
+                + (" or another script's opener" if any(others) else "") + ".\n"
+                f"Current opener: \"{_fence(current)}\""
+                + "".join(f"\nAnother script's opener: \"{_fence(o)}\"" for o in others if o))
+        raw, usd = await _ask(db, "assist", messages(task, 'Reply with JSON {"options": [{"angle": str (two to four '
+                                                           'words), "opener": str}], "notes": str}.'),
+                              max_tokens=900, temperature=0.7, llm=llm, now=now)
+        taken = {_same_words(current), *(_same_words(o) for o in others)}
+        listed = raw.get("options")
+        for item in listed if isinstance(listed, list) else []:
+            if not isinstance(item, Mapping):
+                continue
+            text = clean_text(item.get("opener"), field)
+            if not text or _same_words(text) in taken or _opener_problems(text, company):
+                continue                       # every option is one that could go live as it is
+            taken.add(_same_words(text))
+            options.append({"angle": clean_text(item.get("angle"), "variant.label") or f"Option {len(options) + 1}",
+                            "opener": text})
+            if len(options) == OPENER_OPTIONS:
+                break
+        if not options:
+            raise AiError("None of the AI's openers passed the checks this time. Try again.", 422)
+        patch = {}
     elif section == "fix_opener":
         variants = [dict(v) for v in offer.get("variants") or []]
         is_consented = req.target == "consented_opener"
@@ -916,7 +1050,10 @@ async def assist(db: Any, req: AssistRequest, *, llm: Optional[Llm] = None, now:
         patch = {k: clean_text(raw.get(k), k) or offer[k] for k in ("what_we_sell", "ideal_customer")}
     notes = clean_text(raw.get("notes"), "what_we_sell") if raw.get("notes") else notes
     assert set(patch) <= set(SECTIONS[section]), "an assist patch may only touch its own section"
-    return {"patch": patch, "ai_unconfirmed": unconfirmed, "notes": notes, "cost_usd": round(usd, 6)}
+    out: Dict[str, Any] = {"patch": patch, "ai_unconfirmed": unconfirmed, "notes": notes, "cost_usd": round(usd, 6)}
+    if section == "openers":
+        out["options"] = options
+    return out
 
 
 # ── Phase 6: review a draft ──────────────────────────────────────────────────
