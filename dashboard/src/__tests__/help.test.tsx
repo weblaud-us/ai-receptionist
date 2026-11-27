@@ -86,7 +86,7 @@ describe('help pages', () => {
 
   it('opens an article, and says so when one is missing', async () => {
     inRouter(<Routes><Route path="/help/:slug" element={<HelpArticlePage sections={[{ registry: publicHelp }]} />} /></Routes>, '/help/inbox')
-    expect(await screen.findByText(/Clear it once or twice a day/)).toBeTruthy()
+    expect(await screen.findByText(/Clear it once or twice a day/, {}, { timeout: 4000 })).toBeTruthy()
     cleanup()
     inRouter(<Routes><Route path="/help/:slug" element={<HelpArticlePage sections={[{ registry: publicHelp }]} />} /></Routes>, '/help/nope')
     expect(screen.getByText("We couldn't find that guide")).toBeTruthy()

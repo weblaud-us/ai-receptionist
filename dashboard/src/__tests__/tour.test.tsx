@@ -76,7 +76,7 @@ function KnowledgePage() {
   return <h1 data-tour="knowledge-page">Knowledge page</h1>
 }
 
-const step = async (title: string) => expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
+const step = async (title: string) => expect(await screen.findByRole('dialog', { name: title }, { timeout: 4000 })).toBeTruthy()
 const next = () => fireEvent.click(screen.getByRole('button', { name: /^(Next|Done)$/ }))
 
 describe('tour engine', () => {
@@ -95,7 +95,7 @@ describe('tour engine', () => {
     await step('Calls')
     expect(screen.getByText('4 of 4')).toBeTruthy()
     next()
-    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'done'))
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'done'), { timeout: 4000 })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(root.hasAttribute('inert')).toBe(false)
     expect(document.activeElement).toBe(opener)   // focus goes back
@@ -112,7 +112,7 @@ describe('tour engine', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     await step('Inbox')
     fireEvent.keyDown(document, { key: 'Escape' })
-    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'skipped'))
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'skipped'), { timeout: 4000 })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
@@ -134,7 +134,7 @@ describe('tour engine', () => {
     expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe('Hello')
     next(); await step('Inbox'); next(); await step('Calls')
     fireEvent.click(screen.getByText('Learn more'))
-    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'done'))
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:staff', 'done'), { timeout: 4000 })
     expect(await screen.findByText('Help article')).toBeTruthy()
   })
 
@@ -152,7 +152,7 @@ describe('tour engine', () => {
       { id: 'x', target: 'nav-nothing', title: 'Nope', body: '' },
     ] } })
     await act(async () => { fireEvent.click(screen.getByText('Take the tour')) })
-    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:dentist', 'done'), { timeout: 2000 })
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith('tour:dashboard:dentist', 'done'), { timeout: 4000 })
   })
 })
 

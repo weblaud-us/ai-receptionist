@@ -70,7 +70,7 @@ export const PUBLIC_HELP_ROWS: Row[] = [
 
 export const publicHelp: HelpRegistry = helpRegistry(
   PUBLIC_HELP_ROWS,
-  import.meta.glob<string>('../help/*.md', { query: '?raw', import: 'default' }),
+  import.meta.glob<string>(['../help/*.md', '!../help/README.md'], { query: '?raw', import: 'default' }),
 )
 
 /** The articles for one person first, then the rest, both in manifest order. */

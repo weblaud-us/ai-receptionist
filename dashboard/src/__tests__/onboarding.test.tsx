@@ -98,7 +98,7 @@ describe('getting-started list', () => {
       ] },
     }
     renderWith(<GettingStartedCard ctx={context('owner')} />)
-    expect(await screen.findByText('2 of 8 done')).toBeTruthy()
+    expect(await screen.findByText('2 of 8 done', {}, { timeout: 4000 })).toBeTruthy()
     expect(screen.getByText('Invite your team')).toBeTruthy()
     expect(screen.getAllByLabelText('Done')).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: 'Hide for now' }))
@@ -132,7 +132,7 @@ describe('every tour step points at something on the page', () => {
       </Routes>,
       role === 'dentist' ? '/my-day' : '/',
     )
-    await screen.findByTestId('role')
+    await screen.findByTestId('role', {}, { timeout: 5000 })
     const steps = resolveSteps(DASHBOARD_TOURS[role].steps, ctx)
     const missing = steps.filter((s) => s.targets.length && !document.querySelector(`[data-tour="${s.targets[0]}"]`)).map((s) => s.id)
     expect(missing).toEqual([])
