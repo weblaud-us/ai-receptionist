@@ -405,6 +405,30 @@ async def test_tick_parks_leads_outside_hours_and_skips_paused_campaigns(seeded)
     assert (await dialer.tick(seeded, now=NOW, dispatch=sent))["dialed"] == 0 and not sent
 
 
+async def test_two_dialers_racing_for_the_last_slot_never_exceed_the_cap(seeded):
+    # max_concurrent is 2 and another dialler (a second replica, an operator) already holds one slot.
+    await seeded[m.ATTEMPTS].insert_one({"_id": "att_other", "campaign_id": "cmp_1", "lead_id": "lead_other",
+                                         "status": "dispatched", "call_id": "out-att_other", "created_at": NOW})
+    # Both racers passed the "is there a free slot?" check and wrote their attempt; a third wrote one
+    # just before ours, so ours is the one over the limit.
+    await seeded[m.ATTEMPTS].insert_one({"_id": "att_early", "campaign_id": "cmp_1", "lead_id": "lead_early",
+                                         "status": "dispatched", "call_id": "out-att_early",
+                                         "created_at": NOW - timedelta(seconds=1)})
+    campaign = await seeded[m.CAMPAIGNS].find_one({})
+    lead = await dialer.claim_lead(seeded, campaign["_id"], NOW)
+    sent = Dispatched()
+    result = await dialer.dial_lead(seeded, campaign, lead, NOW + timedelta(seconds=1), sent)
+    assert result == {"dialed": False, "reason": "busy", "failures": []} and not sent
+    attempt = await seeded[m.ATTEMPTS].find_one({"lead_id": lead["_id"]})
+    assert (attempt["status"], attempt["outcome"]) == ("done", "dispatch_failed")
+    back = await seeded[m.LEADS].find_one({"_id": lead["_id"]})
+    assert back["status"] == "queued" and back["attempts"] == 0            # handed back, not used up
+    # Once a slot frees up, the same lead dials.
+    await seeded[m.ATTEMPTS].update_one({"_id": "att_early"}, {"$set": {"status": "done", "outcome": "no_answer"}})
+    lead = await dialer.claim_lead(seeded, campaign["_id"], NOW + timedelta(seconds=2))
+    assert (await dialer.dial_lead(seeded, campaign, lead, NOW + timedelta(seconds=2), sent))["dialed"]
+
+
 async def test_concurrency_daily_cap_and_number_volume_limits(seeded, monkeypatch):
     for i in range(4):
         await seeded[m.LEADS].insert_one(lead_doc(f"+1512555012{i}"))
@@ -596,6 +620,15 @@ def test_sip_and_amd_results_map_to_outcomes():
     assert outcomes.amd_outcome("human") is None
     assert [outcomes.amd_outcome(c) for c in ("machine-vm", "machine-unavailable", "machine-ivr", "uncertain")] == \
         ["voicemail", "voicemail", "machine", "uncertain"]
+
+
+def test_an_uncertain_pickup_is_answered_when_they_asked_for_the_call_but_a_cold_call_hangs_up():
+    hang = outcomes.hang_up_on_amd
+    assert hang("uncertain", human_assisted=False, consented=False) == "uncertain"      # cold: try again later
+    assert hang("uncertain", human_assisted=False, consented=True) is None              # they asked: greet them
+    assert hang("uncertain", human_assisted=True, consented=False) is None              # a person is on our side
+    assert hang("machine-vm", human_assisted=False, consented=True) == "voicemail"      # a real machine still ends it
+    assert hang("human", human_assisted=False, consented=False) is None
 
 
 # ── Opt-out listener, persona ────────────────────────────────────────────────

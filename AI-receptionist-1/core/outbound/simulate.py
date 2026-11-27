@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 SIMULATIONS = "sales_offer_simulations"
 STATUSES = ("queued", "running", "done", "failed")
 USD_PER_SCENARIO = 0.004             # estimate: a few short turns on a small model plus a judge
-STUCK = timedelta(minutes=15)
+STUCK = timedelta(minutes=20)        # longer than the safety cron's 15-minute limit, so a slow run isn't started twice
 SIM_LEAD: Mapping[str, Any] = {
     "_id": "lead_sim", "phone": "+61290000000", "business_name": "Harbour Dental Studio", "contact_name": "Alex",
     "email": "", "status": "in_progress", "timezones": ["Australia/Sydney"], "timezone": "Australia/Sydney",

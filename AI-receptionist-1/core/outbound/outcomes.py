@@ -62,6 +62,17 @@ def amd_outcome(category: str) -> Optional[str]:
     return "uncertain"
 
 
+def hang_up_on_amd(category: str, *, human_assisted: bool, consented: bool) -> Optional[str]:
+    """The outcome to hang up with after the answering-machine check, or None to go ahead with the call.
+    An "uncertain" verdict (a quiet "hello?", a noisy line) is still answered when a person is on our side
+    or when they asked for the call: hanging up on someone who requested it is worse than greeting a
+    machine. A cold call hangs up and tries again later."""
+    machine = amd_outcome(category)
+    if machine == "uncertain" and (human_assisted or consented):
+        return None
+    return machine
+
+
 def retry_delay(campaign: Dict[str, Any], attempts_made: int) -> timedelta:
     hours = list(campaign.get("retry_after_hours") or [48])
     return timedelta(hours=hours[min(max(attempts_made, 1), len(hours)) - 1])

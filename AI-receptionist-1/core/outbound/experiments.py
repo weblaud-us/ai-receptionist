@@ -109,7 +109,8 @@ def guards(ch: ArmStats, cp: ArmStats, *, latency_gap_s: Optional[float] = None,
 def snapshot(ch: ArmStats, cp: ArmStats) -> Dict[str, Any]:
     return {"champion": cp.to_doc(), "challenger": ch.to_doc(),
             "p_better": round(prob_better(cp.progress, cp.decided, ch.progress, ch.decided), 4),
-            "p_meetings_worse": round(prob_better(ch.meetings, ch.leads, cp.meetings, cp.leads), 4)}
+            # Same population as next steps: businesses whose outcome is known (no callback pending).
+            "p_meetings_worse": round(prob_better(ch.meetings, ch.decided, cp.meetings, cp.decided), 4)}
 
 
 def next_look(looks_done: Sequence[int]) -> Optional[int]:

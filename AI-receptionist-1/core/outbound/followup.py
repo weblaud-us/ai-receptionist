@@ -18,6 +18,7 @@ good practice under PECR and CAN-SPAM.
 from __future__ import annotations
 
 import base64
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -169,7 +170,7 @@ def lead_from_reply_address(address: str) -> Optional[str]:
     if not match:
         return None
     lead_id, sig = match.group(1), match.group(2)
-    return lead_id if sign_ref(REPLY_KIND, lead_id)[:16] == sig else None
+    return lead_id if hmac.compare_digest(sign_ref(REPLY_KIND, lead_id)[:16], sig) else None
 
 
 async def send_sales_email(db: Any, *, to: str, subject: str, text: str, kind: str, lead_id: Optional[str] = None,

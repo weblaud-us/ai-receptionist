@@ -101,6 +101,17 @@ async def active_count(db: Any, campaign_id: str, now: datetime) -> int:
          "created_at": {"$gte": _stale_before(now)}})
 
 
+async def within_concurrency(db: Any, campaign: Mapping[str, Any], attempt_id: str, now: datetime) -> bool:
+    """After this attempt was written: is it one of the campaign's first `max_concurrent` live calls?
+    Every dialler (ticks, replicas, operators clicking at once) orders them the same way, so exactly
+    the allowed number go ahead and the rest step back. Check-then-dial could overshoot the cap."""
+    limit = int(campaign.get("max_concurrent") or 1)
+    first = await db[m.ATTEMPTS].find(
+        {"campaign_id": campaign["_id"], "status": {"$in": list(m.ACTIVE_ATTEMPT_STATUSES)},
+         "created_at": {"$gte": _stale_before(now)}}, {"_id": 1}).sort([("created_at", 1), ("_id", 1)]).limit(limit).to_list(limit)
+    return any(a["_id"] == attempt_id for a in first)
+
+
 async def dialled_since(db: Any, query: Dict[str, Any], since: datetime) -> int:
     return await db[m.ATTEMPTS].count_documents({**query, "created_at": {"$gte": since},
                                                  "outcome": {"$nin": list(m.UNCOUNTED_OUTCOMES)}})
@@ -243,9 +254,19 @@ async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], 
     await db[m.ATTEMPTS].insert_one(attempt)
     await db[m.LEADS].update_one({"_id": lead["_id"]},
                                  {"$inc": {"attempts": 1}, "$set": {"last_attempt_at": now, "updated_at": now}})
+    if not await within_concurrency(db, campaign, attempt_id, now):
+        await outcomes.finish_attempt(db, attempt_id, "dispatch_failed", now=now,
+                                      detail="the campaign already has its maximum calls in progress")
+        return {"dialed": False, "reason": "busy", "failures": []}
     try:
         await dispatch(attempt["call_id"], {"attempt_id": attempt_id, "lead_id": lead["_id"],
                                             "campaign_id": campaign["_id"]})
+    except asyncio.CancelledError:
+        # The tick was cut short (its time limit): hand the attempt back rather than leave it holding a
+        # slot. If the dispatch did reach LiveKit, the agent finds the attempt closed and never rings.
+        await asyncio.shield(outcomes.finish_attempt(db, attempt_id, "dispatch_failed", now=now,
+                                                     detail="the dial was interrupted"))
+        raise
     except Exception:
         logger.error("Could not dispatch the sales agent for attempt %s", attempt_id, exc_info=True)
         await outcomes.finish_attempt(db, attempt_id, "dispatch_failed", now=now)   # hands the attempt back
@@ -325,7 +346,7 @@ async def tick(db: Any, *, now: Optional[datetime] = None, dispatch: Dispatch = 
                 budget -= 1
             else:
                 stats["refused"] += 1
-                if result["reason"] in ("numbers_resting", "dispatch_failed"):
+                if result["reason"] in ("numbers_resting", "dispatch_failed", "busy"):
                     break
         if slots > 0 and await _maybe_complete(db, campaign, now):
             stats["completed"] += 1
@@ -426,23 +447,26 @@ class DialerLoop:
         from core.outbound import research
         from database.mongodb import get_db
 
+        async def minute_jobs() -> None:
+            try:
+                from core.outbound import followup, safety
+
+                await research.tick(get_db())
+                await followup.retry_outbox(get_db())
+                await safety.tick(get_db())               # test calls can take minutes
+            except Exception:
+                logger.error("Sales research / email retry tick failed", exc_info=True)
+
         n = 0
+        jobs: Optional[asyncio.Task[None]] = None
         while True:
             try:
                 await tick(get_db())
             except Exception:
                 logger.error("Sales dialer tick failed", exc_info=True)
-            if n % 3 == 0:                            # research about once a minute, like the jobs worker
-                try:
-                    from core.outbound import followup
-
-                    await research.tick(get_db())
-                    await followup.retry_outbox(get_db())
-                    from core.outbound import safety
-
-                    await safety.tick(get_db())
-                except Exception:
-                    logger.error("Sales research / email retry tick failed", exc_info=True)
+            # About once a minute, like the jobs worker, beside the dialling rather than in its way.
+            if n % 3 == 0 and (jobs is None or jobs.done()):
+                jobs = asyncio.create_task(minute_jobs(), name="sales-minute-jobs")
             n += 1
             await asyncio.sleep(TICK_SECONDS)
 

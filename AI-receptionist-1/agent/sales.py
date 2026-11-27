@@ -476,19 +476,23 @@ async def sales_caller(ctx: JobContext) -> None:
         extra: Dict[str, Any] = {"research_used": (sales.research or {}).get("fetched_at"),
                                  "email_consent_at": sales.email_consent_at, "roi_estimate": sales.roi_estimate,
                                  "memory_lines": list(sales.memory), "playbook_applied": playbook_applied}
-        extra.update(learning_stats.shutdown_fields(
-            transcript=state.transcript, ended_by=state.ended_by, events=sales.events, info_status=sales.info_status,
-            callback_at=sales.callback_at, whatsapp_consent_at=sales.whatsapp_consent_at,
-            transferred=state.transfer == "ok", taken_over=state.human_in_control and not human_assisted))
-        if state.answered_at and not human_assisted:
-            # Fixed-rule checks on what the agent said (no model, no cost); a severe one ends a playbook test.
-            extra["checks"] = coach.scan(state.transcript, sales.offer)
-        if state.answered_at:                    # a call record only when somebody (or something) answered
-            await recorder.finish(reason)
-            notes = await qualify.extract_qualification(state.transcript, sales.offer)
-            if notes:
-                extra["qualification"] = notes
-                await db[m.LEADS].update_one({"_id": lead["_id"]}, {"$set": {"qualification": notes}})
+        try:
+            extra.update(learning_stats.shutdown_fields(
+                transcript=state.transcript, ended_by=state.ended_by, events=sales.events, info_status=sales.info_status,
+                callback_at=sales.callback_at, whatsapp_consent_at=sales.whatsapp_consent_at,
+                transferred=state.transfer == "ok", taken_over=state.human_in_control and not human_assisted))
+            if state.answered_at and not human_assisted:
+                # Fixed-rule checks on what the agent said (no model, no cost); a severe one ends a playbook test.
+                extra["checks"] = coach.scan(state.transcript, sales.offer)
+            if state.answered_at:                # a call record only when somebody (or something) answered
+                await recorder.finish(reason)
+                notes = await qualify.extract_qualification(state.transcript, sales.offer)
+                if notes:
+                    extra["qualification"] = notes
+                    await db[m.LEADS].update_one({"_id": lead["_id"]}, {"$set": {"qualification": notes}})
+        except Exception:
+            # The outcome matters more than the extras: without it the reaper would mark the call "failed".
+            logger.error("Wrapping up attempt %s failed; recording its outcome anyway", attempt_id, exc_info=True)
         await outcomes.finish_attempt(
             db, attempt_id, outcome, amd=state.amd, sip_status=state.sip_status,
             duration_s=duration, summary=recorder.summary, next_step=sales.next_step,
@@ -569,8 +573,8 @@ async def sales_caller(ctx: JobContext) -> None:
 
     state.amd = result.category.value
     await db[m.ATTEMPTS].update_one({"_id": attempt_id}, {"$set": {"amd": state.amd}})
-    machine = outcomes.amd_outcome(state.amd)
-    if machine is not None and not (human_assisted and state.amd == "uncertain"):
+    machine = outcomes.hang_up_on_amd(state.amd, human_assisted=human_assisted, consented=mode == "ai_consented")
+    if machine is not None:
         state.final_outcome = machine
         if (state.amd == "machine-vm" and mode == "ai_consented"
                 and campaign.get("voicemail_policy") == "leave_message"):

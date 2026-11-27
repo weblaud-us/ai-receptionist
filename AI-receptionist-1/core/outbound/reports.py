@@ -89,9 +89,6 @@ async def send_digests(db: Any, *, now: Optional[datetime] = None) -> Dict[str, 
     if now.hour != settings.SALES_DIGEST_HOUR_UTC:
         return stats
     day = now.strftime("%Y-%m-%d")
-    claimed = await db[DIGEST_META].find_one_and_update({"_id": day}, {"$setOnInsert": {"at": now}}, upsert=True)
-    if claimed is not None:
-        return stats                                         # already sent today
     people = await db.users.find({"sales_role": {"$in": ["caller", "manager"]}, "disabled": {"$ne": True}},
                                  {"email": 1, "name": 1}).to_list(500)
     for p in people:
@@ -103,8 +100,18 @@ async def send_digests(db: Any, *, now: Optional[datetime] = None) -> Dict[str, 
         lines += [f"- {t.get('title')}" for t in work["tasks"][:20]]
         lines += ["", f"{len(work['deals'])} open deal{'s' if len(work['deals']) != 1 else ''}, ${work['pipeline_value']:,.0f} weighted:"]
         lines += [f"- {d.get('title')} ({d.get('stage', '').replace('_', ' ')})" for d in work["deals"][:20]]
+        # Claimed per person: one failed send is tried again on the next tick (within the hour), and
+        # nobody gets it twice.
+        key = f"{day}:{p['_id']}"
+        if await db[DIGEST_META].find_one_and_update({"_id": key}, {"$setOnInsert": {"at": now}}, upsert=True):
+            continue
         try:
-            stats["sent"] += int(bool(await send_email(p["email"], "Your sales day", "\n".join(lines))))
+            sent = bool(await send_email(p["email"], "Your sales day", "\n".join(lines)))
         except Exception:
             logger.warning("Digest email failed", exc_info=True)
+            sent = False
+        if sent:
+            stats["sent"] += 1
+        else:
+            await db[DIGEST_META].delete_one({"_id": key})
     return stats

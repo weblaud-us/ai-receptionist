@@ -244,3 +244,24 @@ async def test_migration_opens_deals_for_leads_past_interested_once_and_scores_f
     assert (await db[crm.DEALS].find_one({}))["stage"] == "meeting_booked"
     again = await m0007_sales_crm.run(db, apply=True, now=NOW)
     assert again == {"deals_opened": 0, "leads_with_deals": 1, "fit_scored": 0}
+
+
+async def test_the_daily_digest_retries_a_failed_send_and_never_sends_twice(db, monkeypatch):
+    import core.integrations.email as email_mod
+
+    await db.users.insert_one({"_id": "usr_d", "email": "d@example.com", "name": "Dee", "sales_role": "caller"})
+    await db[followup.TASKS].insert_one({"_id": "tsk_d", "owner": "usr_d", "title": "Call Joe", "done_at": None,
+                                         "cancelled": False, "due_at": None})
+    sent: list = []
+    ok = {"value": False}
+
+    async def fake_send(to, subject, text, **kw):
+        sent.append(to)
+        return ok["value"]
+    monkeypatch.setattr(email_mod, "send_email", fake_send)
+    monkeypatch.setattr(settings, "SALES_DIGEST_HOUR_UTC", NOW.hour)
+    assert (await reports.send_digests(db, now=NOW))["sent"] == 0           # the provider failed
+    ok["value"] = True
+    assert (await reports.send_digests(db, now=NOW + timedelta(minutes=1)))["sent"] == 1     # tried again
+    assert (await reports.send_digests(db, now=NOW + timedelta(minutes=2)))["sent"] == 0     # and only once
+    assert sent == ["d@example.com", "d@example.com"]

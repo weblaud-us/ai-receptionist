@@ -8,8 +8,9 @@ opt-outs. A number is `suspect` when, with at least MIN_DIALS dials, its answer 
 the median of the other numbers in its country, or it fell by more than half against the week before.
 
 A suspect number is rested for REST_HOURS, but only while another healthy number for the same
-country exists: the dialer is never left without a caller ID. `dialer.pick_from_number` skips
-rested numbers. A person can rest or reactivate a number by hand (audited).
+country exists: the dialer is never left without a caller ID. `dialer.pick_from_number` tries
+rested numbers last, so one is used only when every healthy number has reached its daily volume. A
+person can rest or reactivate a number by hand (audited).
 """
 
 from __future__ import annotations
