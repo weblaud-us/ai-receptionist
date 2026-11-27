@@ -15,7 +15,7 @@ import { NumbersCard } from '@/components/sales/numbers'
 import { Reports } from '@/components/sales/reports'
 import { ActivityLog } from '@/components/sales/activity'
 import { SalesSearch } from '@/components/sales/search'
-import { can as canDo } from '@/lib/roles'
+import { can as canDo, useCan } from '@/lib/roles'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Input } from '@receptionist/shared/components/ui/input'
@@ -86,13 +86,16 @@ export default function Dialer() {
 }
 
 function Compliance() {
-  const status = useSalesStatus().data
+  const statusQ = useSalesStatus()
+  const status = statusQ.data
   const m = useSalesMutations()
+  const can = useCan()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [phone, setPhone] = useState('')
   const dnc = useDnc({ page, q: search })
-  if (!status) return null
+  if (statusQ.error) return <ErrorBanner error={statusQ.error} onRetry={() => void statusQ.refetch()} />
+  if (!status) return <p className="text-sm text-muted-foreground">Loading…</p>
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
@@ -126,18 +129,22 @@ function Compliance() {
           {status.au_dncr_needs_wash > 0
             ? <span className="flex items-center gap-1.5"><AlertTriangle className="size-4 text-amber-600" /> {status.au_dncr_needs_wash} Australian number{status.au_dncr_needs_wash === 1 ? '' : 's'} need a wash</span>
             : <span className="flex items-center gap-1.5"><CheckCircle2 className="size-4 text-emerald-600" /> Every Australian lead has a fresh result</span>}
-          <Button size="sm" variant="outline" disabled={!status.au_dncr_needs_wash}
-            onClick={() => void downloadSalesCsv('dncr-wash').catch((e: Error) => toast.error(e.message))}>Download numbers to wash</Button>
-          <span className="text-xs text-muted-foreground">Then load the result: <code>python -m scripts.import_dnc_registry au_dncr --wash-result wash.csv --country AU</code></span>
+          {can('admin') ? <>
+            <Button size="sm" variant="outline" disabled={!status.au_dncr_needs_wash}
+              onClick={() => void downloadSalesCsv('dncr-wash').catch((e: Error) => toast.error(e.message))}>Download numbers to wash</Button>
+            <span className="text-xs text-muted-foreground">Then load the result: <code>python -m scripts.import_dnc_registry au_dncr --wash-result wash.csv --country AU</code></span>
+          </> : <span className="text-xs text-muted-foreground">A platform admin downloads the numbers and loads the wash result.</span>}
         </CardContent>
       </Card>
       <Card className="lg:col-span-2">
         <CardHeader><CardTitle>Your do-not-call list ({status.counts.dnc})</CardTitle><CardDescription>Permanent. Numbers are added when someone asks on a call, or by you. They can't be removed here.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Add a number"><Input value={phone} placeholder="+61290000000" onChange={(e) => setPhone(e.target.value)} /></Field>
-            <Button disabled={phone.replace(/\D/g, '').length < 8 || m.addDnc.isPending}
-              onClick={() => m.addDnc.mutate(phone, { onSuccess: (r) => { toast.success(r.added ? `${r.phone} will never be called` : 'Already on the list'); setPhone('') } })}>Add</Button>
+            {can('caller') && <>
+              <Field label="Add a number"><Input value={phone} placeholder="+61290000000" onChange={(e) => setPhone(e.target.value)} /></Field>
+              <Button disabled={phone.replace(/\D/g, '').length < 8 || m.addDnc.isPending}
+                onClick={() => m.addDnc.mutate(phone, { onSuccess: (r) => { toast.success(r.added ? `${r.phone} will never be called` : 'Already on the list'); setPhone('') } })}>Add</Button>
+            </>}
             <div className="flex-1" />
             <Input className="max-w-xs" placeholder="Find a number" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
           </div>

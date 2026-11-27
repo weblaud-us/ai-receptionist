@@ -50,7 +50,16 @@ export function PowerDialer() {
   const [done, setDone] = useState(0)
   const chosen = campaignId || campaigns[0]?.id || ''
 
-  if (campaigns.length === 0) return null
+  if (campaigns.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><PhoneOutgoing className="size-4" /> Power dialer</CardTitle>
+          <CardDescription>Start a human-assisted campaign (Campaigns tab) to call its leads yourself from here.</CardDescription>
+        </CardHeader>
+      </Card>
+    )
+  }
 
   const dial = () =>
     m.dialNext.mutate(chosen, {

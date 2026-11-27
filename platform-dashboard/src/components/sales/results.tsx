@@ -11,6 +11,7 @@ import { dateTime, duration, titleCase } from '@receptionist/shared/lib/format'
 import { pct, useAttempt, useAttempts, useCampaigns, useFunnel, useSalesMutations } from '@/lib/sales'
 import { CoachCard } from '@/components/sales/coach-card'
 import { callFlags, scoreTone } from '@/lib/learning'
+import { useCan } from '@/lib/roles'
 import { cn } from '@receptionist/shared/lib/utils'
 
 type Labels = Record<string, string>
@@ -102,7 +103,8 @@ export function Results() {
         </Card>
       )}
       <Card className="gap-0 py-0">
-        {q.isLoading ? <TableSkeleton rows={6} cols={6} /> : (q.data?.attempts.length ?? 0) === 0 ? (
+        {q.error ? <div className="p-4"><ErrorBanner error={q.error} onRetry={() => void q.refetch()} /></div>
+          : q.isLoading ? <TableSkeleton rows={6} cols={6} /> : (q.data?.attempts.length ?? 0) === 0 ? (
           <EmptyState title="No finished calls yet" />
         ) : (
           <>
@@ -110,7 +112,8 @@ export function Results() {
               <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Business</TableHead><TableHead>Answered by</TableHead><TableHead>Outcome</TableHead><TableHead>Length</TableHead><TableHead title="The AI coach's score out of 100; a red dot means a check found a problem">Coach</TableHead><TableHead>Summary</TableHead></TableRow></TableHeader>
               <TableBody>
                 {q.data?.attempts.map((a) => (
-                  <TableRow key={a.id} className="cursor-pointer" onClick={() => setOpen(a.id)}>
+                  <TableRow key={a.id} className="cursor-pointer" tabIndex={0} aria-label={`Open the call with ${a.business_name || a.to}`}
+                    onClick={() => setOpen(a.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(a.id) } }}>
                     <TableCell className="whitespace-nowrap text-muted-foreground">{dateTime(a.created_at)}</TableCell>
                     <TableCell className="font-medium">{a.business_name || a.to}</TableCell>
                     <TableCell>{amdText(a.amd)}{a.amd_label ? ' ✓' : ''}</TableCell>
@@ -118,7 +121,7 @@ export function Results() {
                     <TableCell className="tabular-nums">{a.duration_sec ? duration(a.duration_sec) : '—'}</TableCell>
                     <TableCell className="whitespace-nowrap">
                       {a.review?.status === 'done' ? <span className={cn('rounded-full px-1.5 py-0.5 text-xs font-medium tabular-nums', scoreTone(a.review.overall))}>{a.review.overall ?? '—'}</span> : <span className="text-muted-foreground">—</span>}
-                      {callFlags(a).length > 0 && <span className="ml-1.5 inline-block size-2 rounded-full bg-rose-500 align-middle" title="Flagged" />}
+                      {callFlags(a).length > 0 && <span className="ml-1.5 inline-block size-2 rounded-full bg-rose-500 align-middle" title="Flagged" role="img" aria-label="Flagged" />}
                     </TableCell>
                     <TableCell className="max-w-md truncate text-xs text-muted-foreground">{a.summary || a.next_step || a.detail}</TableCell>
                   </TableRow>
@@ -139,6 +142,7 @@ function AttemptSheet({ id, manual, labels, onClose }: { id: string | null; manu
   const m = useSalesMutations()
   const a = q.data?.attempt
   const [confirmDnc, setConfirmDnc] = useState(false)
+  const canFix = useCan()('manager')
   const patch = (body: { outcome?: string; amd_label?: 'human' | 'machine'; confirm_dnc?: boolean }, after?: () => void) =>
     a && m.patchAttempt.mutate({ id: a.id, ...body }, { onSuccess: () => { toast.success('Saved'); after?.() } })
   // System outcomes (blocked by the check, nobody joined…) and "do not call" are shown, never picked here.
@@ -155,13 +159,13 @@ function AttemptSheet({ id, manual, labels, onClose }: { id: string | null; manu
           <div className="space-y-5 px-4 pb-6 text-sm">
             <div>
               <KeyValue label="Outcome">
-                {a.outcome === 'dnc' ? <span className="font-medium text-destructive">{outcomeText(labels, 'dnc')}</span> : (
+                {a.outcome === 'dnc' ? <span className="font-medium text-destructive">{outcomeText(labels, 'dnc')}</span> : !canFix ? outcomeText(labels, a.outcome) : (
                   <SimpleSelect size="sm" value={settable ? a.outcome ?? '' : ''} placeholder={outcomeText(labels, a.outcome)}
                     onChange={(v) => patch({ outcome: v })} options={manual.map((o) => ({ value: o, label: outcomeText(labels, o) }))} />
                 )}
               </KeyValue>
               <KeyValue label="Detector said">{amdText(a.amd)}</KeyValue>
-              {a.amd && (
+              {a.amd && canFix && (
                 <KeyValue label="Who really answered?">
                   <span className="space-x-1">
                     <Button size="xs" variant={a.amd_label === 'human' ? 'default' : 'outline'} onClick={() => patch({ amd_label: 'human' })}>A person</Button>
@@ -181,7 +185,7 @@ function AttemptSheet({ id, manual, labels, onClose }: { id: string | null; manu
                 </KeyValue>
               )}
               {a.next_step && <KeyValue label="Next step">{a.next_step}</KeyValue>}
-              {a.outcome !== 'dnc' && (
+              {a.outcome !== 'dnc' && canFix && (
                 <div className="pt-2">
                   <Button size="sm" variant="destructive" onClick={() => setConfirmDnc(true)}>They asked not to be called</Button>
                 </div>

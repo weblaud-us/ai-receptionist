@@ -20,6 +20,7 @@ import {
   type Activity, type Person, type CampaignMode, type GateDecision, type ImportResult, type LeadPatch, type SalesLead, type SalesTask, type Stage,
 } from '@/lib/sales'
 import { useCan } from '@/lib/roles'
+import { useConfirm } from '@/lib/use-confirm'
 import { LeadCrm } from '@/components/sales/crm-lead'
 import { useDebounced } from '@receptionist/shared/hooks/use-debounced'
 import { cn } from '@receptionist/shared/lib/utils'
@@ -49,6 +50,7 @@ function GateSummary({ gate }: { gate: GateDecision | null }) {
 
 export function Leads() {
   const can = useCan()
+  const confirm = useConfirm()
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -84,11 +86,20 @@ export function Leads() {
       filters: Object.fromEntries(Object.entries({ status: status === 'all' ? '' : status, owner_id: owner, min_fit: minFit, q: search }).filter(([, v]) => v !== '')) },
       { onSuccess: () => toast.success('View saved') })
   }
-  const bulk = (action: 'assign' | 'stage' | 'tag' | 'queue', value: unknown) =>
+  const runBulk = (action: 'assign' | 'stage' | 'tag' | 'queue', value: unknown) =>
     crm.bulk.mutate({ lead_ids: [...picked], action, value }, {
       onSuccess: (r) => { toast.success(`Done: ${Object.entries(r).map(([k, v]) => `${v} ${k}`).join(', ')}`); setPicked(new Set()) },
       onError: (e) => toast.error(e.message),
     })
+  // Queueing starts real calls (once each lead passes the checks): ask first.
+  const bulk = (action: 'assign' | 'stage' | 'tag' | 'queue', value: unknown) =>
+    action === 'queue'
+      ? confirm.ask({
+        title: `Add ${picked.size} lead${picked.size === 1 ? '' : 's'} to this campaign?`,
+        description: 'Each one is called once it passes the compliance checks, if the campaign is running.',
+        confirmLabel: 'Add to campaign', run: () => runBulk(action, value),
+      })
+      : runBulk(action, value)
 
   return (
     <>
@@ -154,6 +165,7 @@ export function Leads() {
       {queueing && <QueueDialog sources={q.data?.sources ?? []} onClose={() => setQueueing(false)} />}
       {dupes && <DuplicatesDialog onClose={() => setDupes(false)} onOpen={(id) => { setDupes(false); setOpen(id) }} />}
       <LeadSheet id={open} onClose={() => setOpen(null)} />
+      {confirm.dialog}
     </>
   )
 }
@@ -186,6 +198,7 @@ function DuplicatesDialog({ onClose, onOpen }: { onClose: () => void; onOpen: (i
   const q = useDuplicates(true)
   const m = useCrmMutations()
   const can = useCan()
+  const confirm = useConfirm()
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-xl">
@@ -204,7 +217,12 @@ function DuplicatesDialog({ onClose, onOpen }: { onClose: () => void; onOpen: (i
                   <button type="button" className="flex-1 text-left hover:underline" onClick={() => onOpen(l.id)}>{l.business_name} <span className="text-xs text-muted-foreground">{l.phone} · {l.status}</span></button>
                   {can('manager') && j > 0 && (
                     <Button size="xs" variant="outline" disabled={m.merge.isPending}
-                      onClick={() => m.merge.mutate({ keep: g.leads[0].id, merge: l.id }, { onSuccess: () => toast.success('Merged'), onError: (e) => toast.error(e.message) })}>
+                      onClick={() => confirm.ask({
+                        title: `Merge ${l.business_name || l.phone} into ${g.leads[0].business_name || g.leads[0].phone}?`,
+                        description: 'Their calls, notes, tasks and deals move to the first lead, which keeps the stricter compliance state. This can’t be undone.',
+                        confirmLabel: 'Merge', destructive: true,
+                        run: () => m.merge.mutate({ keep: g.leads[0].id, merge: l.id }, { onSuccess: () => toast.success('Merged'), onError: (e) => toast.error(e.message) }),
+                      })}>
                       Merge into first
                     </Button>
                   )}
@@ -213,6 +231,7 @@ function DuplicatesDialog({ onClose, onOpen }: { onClose: () => void; onOpen: (i
             </div>
           ))}
         </div>
+        {confirm.dialog}
       </DialogContent>
     </Dialog>
   )
@@ -405,6 +424,7 @@ export function LeadSheet({ id, onClose }: { id: string | null; onClose: () => v
   const f = useFollowUpMutations()
   const [confirmDnc, setConfirmDnc] = useState(false)
   const [requeue, setRequeue] = useState(false)
+  const can = useCan()
   const lead = q.data?.lead
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
@@ -426,14 +446,17 @@ export function LeadSheet({ id, onClose }: { id: string | null; onClose: () => v
               )}
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" disabled={m.checkLead.isPending}
-                onClick={() => m.checkLead.mutate(lead.id, { onSuccess: (r) => toast[r.decision.allowed ? 'success' : 'message'](r.decision.allowed ? 'Passes every check right now' : failureText(r.decision.failures[0])) })}>
-                {m.checkLead.isPending ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Check now
-              </Button>
-              {!['dnc', 'bad_number', 'queued', 'in_progress', 'callback'].includes(lead.status) && (
+              {can('manager') && (
+                <Button size="sm" variant="outline" disabled={m.checkLead.isPending}
+                  title="Runs every compliance check now. A US number may need a paid line-type lookup."
+                  onClick={() => m.checkLead.mutate(lead.id, { onSuccess: (r) => toast[r.decision.allowed ? 'success' : 'message'](r.decision.allowed ? 'Passes every check right now' : failureText(r.decision.failures[0])) })}>
+                  {m.checkLead.isPending ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Check now
+                </Button>
+              )}
+              {can('manager') && !['dnc', 'bad_number', 'queued', 'in_progress', 'callback'].includes(lead.status) && (
                 <Button size="sm" variant="outline" onClick={() => setRequeue(true)}><RotateCcw /> Call again</Button>
               )}
-              {lead.status !== 'dnc' && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmDnc(true)}><Ban /> Do not call</Button>}
+              {can('caller') && lead.status !== 'dnc' && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmDnc(true)}><Ban /> Do not call</Button>}
             </div>
             <LeadDetails key={lead.id + (lead.stage ?? '')} lead={lead} pending={f.patchLead.isPending}
               onSave={(patch) => f.patchLead.mutate({ id: lead.id, ...patch }, { onSuccess: () => toast.success('Saved') })} />

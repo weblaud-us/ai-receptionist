@@ -9,12 +9,15 @@ import { Card } from '@receptionist/shared/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { MODE_LABEL, useLiveSalesCalls, useSalesMutations, type JoinInfo } from '@/lib/sales'
+import { useCan } from '@/lib/roles'
 
 const STAGE: Record<string, string> = { dispatched: 'Starting', dialing: 'Ringing', in_progress: 'On the call' }
 
 export function Live() {
   const q = useLiveSalesCalls()
   const m = useSalesMutations()
+  const can = useCan()
+  const caller = can('caller')
   const [joined, setJoined] = useState<{ join: JoinInfo; title: string; attemptId: string } | null>(null)
   // Taking over and ending reach a real person on the phone: both are confirmed first.
   const [ask, setAsk] = useState<{ kind: 'takeover' | 'end'; id: string; title: string } | null>(null)
@@ -27,7 +30,7 @@ export function Live() {
     <div className="space-y-4">
       {joined && <CallAudio key={joined.join.token} join={joined.join} title={joined.title} onLeave={() => setJoined(null)}
         onHangUp={joined.join.mode === 'takeover' ? () => hangUp(joined.attemptId) : undefined} />}
-      <PowerDialer />
+      {caller && <PowerDialer />}
       {q.error && <ErrorBanner error={q.error} />}
       <Card className="gap-0 py-0">
         {(q.data?.total ?? 0) === 0 ? (
@@ -45,9 +48,11 @@ export function Live() {
                     <TableCell className="text-xs text-muted-foreground">{MODE_LABEL[c.mode]}</TableCell>
                     <TableCell className="text-muted-foreground">{timeAgo(c.created_at)}</TableCell>
                     <TableCell className="space-x-1 text-right">
+                      {caller && <>
                       <Button size="sm" variant="outline" disabled={!!joined || m.join.isPending} onClick={() => join(c.id, title, 'listen')}><Ear /> Listen</Button>
                       <Button size="sm" variant="outline" disabled={!!joined || m.join.isPending} onClick={() => setAsk({ kind: 'takeover', id: c.id, title })}><Mic /> Take over</Button>
                       <Button size="sm" variant="ghost" className="text-destructive" disabled={m.hangUp.isPending} onClick={() => setAsk({ kind: 'end', id: c.id, title })}><PhoneOff /> End</Button>
+                      </>}
                     </TableCell>
                   </TableRow>
                 )

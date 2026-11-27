@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ErrorBanner } from '@receptionist/shared/components/blocks'
 import { AlertTriangle, CheckCircle2, Loader2, Rocket, Sparkles, XCircle } from 'lucide-react'
 import { Field } from '@receptionist/shared/components/blocks'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -35,7 +36,7 @@ export function LaunchDialog({ campaign, onClose, onContinue, starting }: {
           <DialogTitle>Launch checklist: {campaign?.name}</DialogTitle>
           <DialogDescription>{campaign && MODE_LABEL[campaign.mode]}. Red items must be fixed first; amber ones are worth a look.</DialogDescription>
         </DialogHeader>
-        {q.isLoading ? <Loader2 className="animate-spin" /> : (
+        {q.error ? <ErrorBanner error={q.error} onRetry={() => void q.refetch()} /> : q.isLoading ? <Loader2 className="animate-spin" /> : (
           <ul className="max-h-[55vh] space-y-2 overflow-y-auto">
             {checks.map((c) => {
               const Icon = ICON[c.status]

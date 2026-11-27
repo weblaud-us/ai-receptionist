@@ -12,6 +12,7 @@ import { ApiError } from '@receptionist/shared/lib/api'
 import { dateTime } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
 import { useCan } from '@/lib/roles'
+import { useConfirm } from '@/lib/use-confirm'
 import { pct, type OfferSettings } from '@/lib/sales'
 import {
   chanceText, EXPERIMENT_LABEL, playbookDiff, STATUS_LABEL, testProgress, useLearning, useLearningMutations,
@@ -37,15 +38,26 @@ export function LearningTab({ id, form, canEdit, onAdd }: {
   const manager = can('manager') && canEdit
   const [editing, setEditing] = useState(false)
   const [confirmBaseline, setConfirmBaseline] = useState(false)
+  const confirm = useConfirm()
   const page = q.data
   if (q.isLoading) return <p className="text-sm text-muted-foreground"><Loader2 className="mr-1 inline animate-spin" /> Loading…</p>
   if (!page) return <p className="text-sm text-destructive">The learning page couldn't load.</p>
   const exp = page.experiment
   return (
     <div className="space-y-5 text-sm">
-      <StatusBar page={page} manager={manager} onMode={(mode) => mu.setMode.mutate(mode, { onSuccess: () => toast.success('Saved') })} />
-      <CampaignConsent page={page} manager={manager} onAllow={(campaignId, allowed) => mu.consent.mutate({ campaignId, allowed }, {
-        onSuccess: () => toast.success(allowed ? 'This campaign may use lessons now' : 'This campaign uses the baseline now') })} />
+      <StatusBar page={page} manager={manager} onMode={(mode) => {
+        const save = () => mu.setMode.mutate(mode, { onSuccess: () => toast.success('Saved') })
+        if (mode !== 'autopilot') return save()
+        confirm.ask({ title: 'Turn on autopilot?', confirmLabel: 'Turn on autopilot', run: save,
+          description: 'The AI writes new coaching from your calls. Each change must pass the test calls, then runs on some live calls and is kept only if it does better. Openers, prices, claims and consent never change on their own.' })
+      }} />
+      <CampaignConsent page={page} manager={manager} onAllow={(campaignId, allowed) => {
+        const save = () => mu.consent.mutate({ campaignId, allowed }, {
+          onSuccess: () => toast.success(allowed ? 'This campaign may use lessons now' : 'This campaign uses the baseline now') })
+        if (!allowed) return save()
+        confirm.ask({ title: 'Let this campaign use learned lessons?', confirmLabel: 'Allow learning', run: save,
+          description: 'From its next call, it may use the live playbook and take part in its tests, on top of what its legal review covered.' })
+      }} />
       {exp && <TestCard exp={exp} page={page} manager={manager} stopping={mu.stopTest.isPending}
         onStop={() => mu.stopTest.mutate(undefined, { onSuccess: () => toast.success('Test stopped: the current playbook stays') })} />}
       <section className="space-y-2">
@@ -69,13 +81,18 @@ export function LearningTab({ id, form, canEdit, onAdd }: {
           ))}
         </section>
       )}
-      <History page={page} manager={manager} onMakeLive={(pid) => mu.makeLive.mutate(pid, {
-        onSuccess: (r) => toast.success(r.result === 'live' ? 'Calls use this playbook now' : 'Its test calls are running; it goes live when they pass') })} />
+      <History page={page} manager={manager} onMakeLive={(pid) => confirm.ask({
+        title: 'Make this playbook live?', confirmLabel: 'Make live',
+        description: 'Its test calls run first if it has not passed them; then every campaign that allows learning uses it from the next call.',
+        run: () => mu.makeLive.mutate(pid, {
+          onSuccess: (r) => toast.success(r.result === 'live' ? 'Calls use this playbook now' : 'Its test calls are running; it goes live when they pass') }),
+      })} />
       <section className="space-y-2 border-t pt-4">
         <h3 className="font-medium">What prospects said</h3>
         <InsightsTab id={id} form={form} canEdit={canEdit} onAdd={onAdd} />
       </section>
       {editing && <PlaybookEditor page={page} onClose={() => setEditing(false)} save={mu.createPlaybook} />}
+      {confirm.dialog}
       <ConfirmDialog open={confirmBaseline} onOpenChange={setConfirmBaseline} title="Stop using a playbook?" confirmLabel="Use the baseline"
         description="Calls go back to exactly what the legal review covered, with no lessons, from the next dial. Any running test stops."
         loading={mu.baseline.isPending}

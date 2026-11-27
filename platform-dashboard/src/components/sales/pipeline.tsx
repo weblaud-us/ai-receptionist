@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { CalendarClock, Check, Download, Mail, RotateCcw } from 'lucide-react'
-import { EmptyState } from '@receptionist/shared/components/blocks'
+import { EmptyState, ErrorBanner } from '@receptionist/shared/components/blocks'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { dateTime, timeAgo } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
 import { LeadSheet } from '@/components/sales/leads'
+import { useCan } from '@/lib/roles'
 import { DealBoard, MyWorkCard } from '@/components/sales/crm-board'
 import {
   downloadSalesCsv, useFollowUpMutations, useMeetings, useOutbox, useTasks
@@ -14,6 +15,7 @@ import {
 
 /** Everyone past the first call, the follow-ups that are due, the meetings booked, and email that didn't go out. */
 export function Pipeline() {
+  const can = useCan()
   const [open, setOpen] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const exportCsv = async () => {
@@ -26,7 +28,7 @@ export function Pipeline() {
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm text-muted-foreground">Deals move from qualified to won or lost. Leads still being called are on the Leads tab.</p>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={() => void exportCsv()}><Download /> Export leads</Button>
+        {can('manager') && <Button size="sm" variant="outline" disabled={exporting} onClick={() => void exportCsv()}><Download /> Export leads</Button>}
       </div>
       <DealBoard onOpenLead={setOpen} />
       <div className="grid gap-4 lg:grid-cols-2">
@@ -48,7 +50,9 @@ function TasksCard({ onOpen }: { onOpen: (id: string) => void }) {
     <Card>
       <CardHeader><CardTitle>Follow-ups to do</CardTitle><CardDescription>The agent adds one when someone is interested; add your own from a lead.</CardDescription></CardHeader>
       <CardContent className="space-y-1">
-        {(q.data?.tasks.length ?? 0) === 0 ? <EmptyState title="Nothing to do" /> : q.data?.tasks.map((t) => {
+        {q.error ? <ErrorBanner error={q.error} onRetry={() => void q.refetch()} />
+          : q.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
+          : (q.data?.tasks.length ?? 0) === 0 ? <EmptyState title="Nothing to do" /> : q.data?.tasks.map((t) => {
           const overdue = !!t.due_at && new Date(t.due_at).getTime() < now
           return (
             <div key={t.id} className="flex items-center gap-2 border-b py-1.5 text-sm last:border-0">
@@ -74,7 +78,9 @@ function MeetingsCard({ onOpen }: { onOpen: (id: string) => void }) {
     <Card>
       <CardHeader><CardTitle>Meetings</CardTitle><CardDescription>Booked by the agent on your sales calendar, from a week ago to a month ahead.</CardDescription></CardHeader>
       <CardContent className="space-y-1">
-        {(q.data?.meetings.length ?? 0) === 0 ? <EmptyState title="No meetings booked" /> : q.data?.meetings.map((mt) => (
+        {q.error ? <ErrorBanner error={q.error} onRetry={() => void q.refetch()} />
+          : q.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
+          : (q.data?.meetings.length ?? 0) === 0 ? <EmptyState title="No meetings booked" /> : q.data?.meetings.map((mt) => (
           <button key={mt.appointment_id} type="button" disabled={!mt.lead} onClick={() => mt.lead && onOpen(mt.lead.id)}
             className={cn('flex w-full items-center gap-2 border-b py-1.5 text-left text-sm last:border-0', new Date(mt.start).getTime() < now && 'opacity-60')}>
             <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
@@ -93,7 +99,8 @@ function MeetingsCard({ onOpen }: { onOpen: (id: string) => void }) {
 function OutboxCard() {
   const q = useOutbox()
   const m = useFollowUpMutations()
-  if ((q.data?.emails.length ?? 0) === 0) return null
+  const can = useCan()
+  if ((q.data?.emails.length ?? 0) === 0 || !can('manager')) return null
   return (
     <Card className="border-amber-500/40">
       <CardHeader><CardTitle className="flex items-center gap-2"><Mail className="size-4" /> Emails that didn't go out</CardTitle><CardDescription>Tried three times. Retry, or send it yourself and mark it sent.</CardDescription></CardHeader>

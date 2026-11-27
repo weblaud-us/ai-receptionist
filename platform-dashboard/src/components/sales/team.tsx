@@ -8,6 +8,7 @@ import { Button } from '@receptionist/shared/components/ui/button'
 import { Card } from '@receptionist/shared/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@receptionist/shared/components/ui/dialog'
 import { Input } from '@receptionist/shared/components/ui/input'
+import { useConfirm } from '@/lib/use-confirm'
 import { Switch } from '@receptionist/shared/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { dateTime } from '@receptionist/shared/lib/format'
@@ -25,6 +26,7 @@ const ROLES: SalesRole[] = ['viewer', 'caller', 'manager']
 export function Team() {
   const q = useSalesTeam()
   const m = useTeamMutations()
+  const confirm = useConfirm()
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ email: '', name: '', role: 'caller' as SalesRole, takes_leads: true })
   const [link, setLink] = useState<string | null>(null)
@@ -66,7 +68,10 @@ export function Team() {
                   <TableCell><div className="font-medium">{p.name || p.email}</div><div className="text-xs text-muted-foreground">{p.email}</div></TableCell>
                   <TableCell>
                     {p.role === 'admin' ? <Badge variant="secondary">Platform admin</Badge> : (
-                      <SimpleSelect size="sm" value={p.role} onChange={(v) => m.update.mutate({ id: p.id, role: v as SalesRole }, { onSuccess: () => toast.success('Role changed') })}
+                      <SimpleSelect size="sm" value={p.role} onChange={(v) => v !== p.role && confirm.ask({
+                        title: `Make ${p.name || p.email} a ${v}?`, description: ROLE_HELP[v as SalesRole], confirmLabel: 'Change role',
+                        run: () => m.update.mutate({ id: p.id, role: v as SalesRole }, { onSuccess: () => toast.success('Role changed') }),
+                      })}
                         options={ROLES.map((r) => ({ value: r, label: r[0].toUpperCase() + r.slice(1) }))} />
                     )}
                     <div className="mt-0.5 text-xs text-muted-foreground">{ROLE_HELP[p.role]}</div>
@@ -77,7 +82,11 @@ export function Team() {
                   <TableCell className="text-sm">{p.mfa_enabled ? 'On' : <span className="text-amber-700 dark:text-amber-400">Not set up</span>}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{p.last_login_at ? dateTime(p.last_login_at) : 'Never'}</TableCell>
                   <TableCell className="text-right">
-                    {p.role !== 'admin' && <Button size="sm" variant="ghost" onClick={() => m.update.mutate({ id: p.id, role: 'none' }, { onSuccess: () => toast.success('Access removed') })}>Remove</Button>}
+                    {p.role !== 'admin' && <Button size="sm" variant="ghost" onClick={() => confirm.ask({
+                      title: `Remove ${p.name || p.email} from the sales team?`, destructive: true, confirmLabel: 'Remove access',
+                      description: 'They lose access to the dialer at once. Their leads, tasks and deals stay where they are.',
+                      run: () => m.update.mutate({ id: p.id, role: 'none' }, { onSuccess: () => toast.success('Access removed') }),
+                    })}>Remove</Button>}
                   </TableCell>
                 </TableRow>
               ))}
@@ -85,6 +94,7 @@ export function Team() {
           </Table>
         )}
       </Card>
+      {confirm.dialog}
       <Dialog open={adding} onOpenChange={setAdding}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

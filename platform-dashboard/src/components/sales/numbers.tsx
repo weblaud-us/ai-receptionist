@@ -24,7 +24,8 @@ export function NumbersCard() {
       </CardHeader>
       <CardContent>
         {q.error && <ErrorBanner error={q.error} />}
-        {rows.length === 0 ? <p className="text-sm text-muted-foreground">No caller IDs yet.</p> : (
+        {q.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
+          : rows.length === 0 ? (!q.error && <p className="text-sm text-muted-foreground">No caller IDs yet.</p>) : (
           <Table>
             <TableHeader><TableRow><TableHead>Number</TableHead><TableHead>Calls</TableHead><TableHead>Answered</TableHead><TableHead>A person</TableHead><TableHead>Hung up in 5 s</TableHead><TableHead>Opt-outs</TableHead><TableHead /></TableRow></TableHeader>
             <TableBody>

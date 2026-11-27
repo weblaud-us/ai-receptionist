@@ -13,6 +13,7 @@ export function SalesSearch() {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [results, setResults] = useState<{ leads: SalesLead[]; deals: Deal[] } | null>(null)
+  const [failed, setFailed] = useState(false)
   const [lead, setLead] = useState<string | null>(null)
   const term = useDebounced(q, 250)
 
@@ -30,7 +31,9 @@ export function SalesSearch() {
   useEffect(() => {
     if (term.trim().length < 2) return
     let live = true
-    searchSales(term.trim()).then((r) => live && setResults(r)).catch(() => live && setResults({ leads: [], deals: [] }))
+    searchSales(term.trim())
+      .then((r) => { if (live) { setFailed(false); setResults(r) } })
+      .catch(() => { if (live) { setFailed(true); setResults({ leads: [], deals: [] }) } })
     return () => { live = false }
   }, [term])
 
@@ -61,7 +64,8 @@ export function SalesSearch() {
                 <span className="block text-xs text-muted-foreground">Deal · {d.stage.replace('_', ' ')} · {money(d.amount, d.currency)}</span>
               </button>
             ))}
-            {shown && shown.leads.length + shown.deals.length === 0 && <p className="p-2 text-sm text-muted-foreground">Nothing found.</p>}
+            {failed && <p className="p-2 text-sm text-destructive" role="alert">Search isn't working right now. Try again in a moment.</p>}
+            {!failed && shown && shown.leads.length + shown.deals.length === 0 && <p className="p-2 text-sm text-muted-foreground">Nothing found.</p>}
           </div>
         </DialogContent>
       </Dialog>
