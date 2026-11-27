@@ -130,6 +130,39 @@ def test_gate_needs_a_recent_line_type_lookup():
         assert d.failures == ["line_type_unchecked"] and not d.permanent and d.retry_at > NOW
 
 
+def test_another_campaigns_call_rests_the_prospect_but_the_same_campaign_keeps_its_own_retries():
+    campaign = campaign_doc()                                   # _id cmp_1
+    other = GateFacts(registry_status=FRESH, recent_calls=((NOW - timedelta(hours=3), "cmp_2"),))
+    d = decide(campaign=campaign, facts=other)
+    assert d.failures == ["recently_called"] and not d.permanent
+    assert d.retry_at == NOW - timedelta(hours=3) + timedelta(hours=settings.SALES_MIN_HOURS_BETWEEN_CAMPAIGNS)
+    same = GateFacts(registry_status=FRESH, recent_calls=((NOW - timedelta(hours=3), "cmp_1"),))
+    assert decide(campaign=campaign, facts=same).allowed       # its retry delay already decides that
+    assert decide(lead_doc(status="callback"), campaign, other).allowed      # they asked for this call
+
+
+def test_no_prospect_is_called_more_than_the_monthly_cap_across_campaigns():
+    cap = settings.SALES_MAX_CALLS_PER_PROSPECT_30D
+    calls = tuple((NOW - timedelta(days=25 - i), f"cmp_{i % 3}") for i in range(cap))
+    d = decide(facts=GateFacts(registry_status=FRESH, recent_calls=calls))
+    assert d.failures == ["prospect_cap"] and not d.permanent
+    assert d.retry_at == calls[0][0] + timedelta(days=30)       # when the oldest call drops out of the window
+    old = tuple((NOW - timedelta(days=40), "cmp_2") for _ in range(cap))
+    assert decide(facts=GateFacts(registry_status=FRESH, recent_calls=old)).allowed
+
+
+async def test_the_spacing_rule_counts_finished_calls_not_the_one_being_placed(seeded):
+    lead = await seeded[m.LEADS].find_one({})
+    await seeded[m.ATTEMPTS].insert_many([
+        {"_id": "a_done", "lead_id": lead["_id"], "campaign_id": "cmp_2", "status": "done", "outcome": "no_answer", "call_id": "c1",
+         "created_at": NOW - timedelta(hours=2)},
+        {"_id": "a_gate", "lead_id": lead["_id"], "campaign_id": "cmp_2", "status": "done", "outcome": "blocked_by_gate", "call_id": "c2",
+         "created_at": NOW - timedelta(hours=1)},
+        {"_id": "a_live", "lead_id": lead["_id"], "campaign_id": "cmp_1", "status": "dispatched", "call_id": "c3", "created_at": NOW}])
+    facts = await gate.gather_facts(seeded, lead, campaign_doc(), NOW)
+    assert facts.recent_calls == ((NOW - timedelta(hours=2), "cmp_2"),)
+
+
 def test_gate_blocks_the_internal_dnc_list():
     d = decide(facts=GateFacts(internal_dnc=True, registry_status=FRESH))
     assert "internal_dnc" in d.failures and d.permanent and d.lead_status() == "dnc"
@@ -247,6 +280,32 @@ async def test_registry_freshness_is_per_area_code(db):
     # a refresh replaces that area code's rows
     await registry.replace_registry(db, "us_national", ["+15125550122"], area_codes=["512"], now=NOW)
     assert await registry.registry_hits(db, "+15125550111", ["us_national"]) == []
+
+
+async def test_a_number_on_both_copies_stays_listed_while_a_registry_reloads(db):
+    await registry.replace_registry(db, "us_national", ["+15125550111", "+15125550122"], area_codes=["512"], now=NOW)
+    seen_mid_load: list = []
+
+    async def peek():
+        seen_mid_load.append(await registry.registry_hits(db, "+15125550111", ["us_national"]))
+
+    phones = ["+15125550133", "+15125550111"]
+    await peek()
+    # Load in batches of one so the check below runs between writes of the new copy.
+    original = db[m.REGISTRY].insert_many
+
+    async def insert_then_peek(docs, **kw):
+        result = await original(docs, **kw)
+        await peek()
+        return result
+    db[m.REGISTRY].insert_many = insert_then_peek
+    try:
+        await registry.replace_registry(db, "us_national", phones, area_codes=["512"], now=NOW, batch=1)
+    finally:
+        db[m.REGISTRY].insert_many = original
+    assert all(hits == ["us_national"] for hits in seen_mid_load)
+    assert await registry.registry_hits(db, "+15125550122", ["us_national"]) == []       # dropped after the load
+    assert await registry.registry_hits(db, "+15125550133", ["us_national"]) == ["us_national"]
 
 
 async def test_dnc_is_permanent_and_revokes_consent(db):

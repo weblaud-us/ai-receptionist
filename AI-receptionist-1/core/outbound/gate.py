@@ -56,6 +56,8 @@ class GateFacts:
     registry_status: Mapping[str, str] = field(default_factory=dict)   # required list → fresh/stale/missing/uncovered
     consent: Optional[Mapping[str, Any]] = None
     offer_company: str = ""            # the company the campaign's offer calls for ("" = the built-in offer)
+    # Finished calls to this prospect in the last 30 days, by any campaign: (started, campaign_id).
+    recent_calls: tuple[tuple[datetime, str], ...] = ()
 
 
 @dataclass
@@ -227,6 +229,12 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
         fail("frequency", "max_attempts", f"already tried {attempts} times")
     elif eligible is not None and eligible > now:
         fail("frequency", "too_soon", "not due yet", retry_at=eligible)
+    elif lead.get("status") != "callback":       # a callback they asked for is called when they asked
+        spacing = _spacing_failure(facts.recent_calls, str(campaign.get("_id") or ""), now)
+        if spacing:
+            fail("frequency", spacing[0], spacing[1], retry_at=spacing[2])
+        else:
+            checks["frequency"] = "pass"
     else:
         checks["frequency"] = "pass"
 
@@ -251,6 +259,24 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
 
     return GateDecision(allowed=not failures, failures=failures, checks=checks, at=now, mode=mode,
                         campaign_id=campaign.get("_id"), retry_at=max(retry) if retry and failures else None)
+
+
+SPACING_WINDOW = timedelta(days=30)
+
+
+def _spacing_failure(calls: tuple[tuple[datetime, str], ...], campaign_id: str,
+                     now: datetime) -> Optional[tuple[str, str, datetime]]:
+    """Across campaigns: rest after another campaign's call, and a cap on calls in 30 days."""
+    recent = sorted((_aware(at) or now, cid) for at, cid in calls if (_aware(at) or now) > now - SPACING_WINDOW)
+    cap = int(settings.SALES_MAX_CALLS_PER_PROSPECT_30D)
+    if cap > 0 and len(recent) >= cap:
+        until = recent[len(recent) - cap][0] + SPACING_WINDOW
+        return "prospect_cap", f"called {len(recent)} times in 30 days across campaigns", until
+    gap = timedelta(hours=max(0, int(settings.SALES_MIN_HOURS_BETWEEN_CAMPAIGNS)))
+    other = [at for at, cid in recent if cid != campaign_id]
+    if gap and other and other[-1] > now - gap:
+        return "recently_called", "another campaign called them recently", other[-1] + gap
+    return None
 
 
 def consent_company(consent: Mapping[str, Any]) -> str:
@@ -286,7 +312,11 @@ async def gather_facts(db: Any, lead: Mapping[str, Any], campaign: Mapping[str, 
     offer_company = ""
     if mode == "ai_consented":
         offer_company = str((await of.offer_for_campaign(db, campaign)).get("company_name") or "")
+    recent = [(_aware(a["created_at"]) or now, str(a.get("campaign_id") or "")) async for a in db[m.ATTEMPTS].find(
+        {"lead_id": lead.get("_id"), "status": "done", "outcome": {"$nin": list(m.UNCOUNTED_OUTCOMES)},
+         "created_at": {"$gte": now - SPACING_WINDOW}}, {"created_at": 1, "campaign_id": 1}).limit(200)]
     return GateFacts(
+        recent_calls=tuple(recent),
         offer_company=offer_company,
         internal_dnc=await registry.on_internal_dnc(db, phone),
         registry_hits=tuple(await registry.registry_hits(db, phone, (*required, *optional))),

@@ -891,6 +891,8 @@ const FAILURE_TEXT: Record<string, string> = {
   consent_not_written: 'Consent is not in writing',
   max_attempts: 'Maximum attempts reached',
   too_soon: 'Not due yet',
+  recently_called: 'Another campaign called them recently',
+  prospect_cap: 'Called the most times allowed this month',
   timezone_unknown: 'Timezone unknown',
   outside_hours: 'Outside calling hours',
 }

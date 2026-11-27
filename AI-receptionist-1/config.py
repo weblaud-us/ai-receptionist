@@ -325,6 +325,10 @@ class Settings(BaseSettings):
     # "Not interested" (not an opt-out): that offer is never pitched to them again, and no other
     # offer may call them for this many days (SALES_DIALER_PLAN.md Phase 1A).
     SALES_NOT_INTERESTED_COOLDOWN_DAYS: int = Field(default=180)
+    # Across campaigns: a prospect is rung by one campaign at most this soon after another one called,
+    # and at most this many times in 30 days by all of them (a callback they asked for is exempt).
+    SALES_MIN_HOURS_BETWEEN_CAMPAIGNS: int = Field(default=24)
+    SALES_MAX_CALLS_PER_PROSPECT_30D: int = Field(default=6)
     # Pre-call research (Phase 2): read each lead's website before the call. Off until switched on;
     # capped per day. Prices are OPENAI_MODEL's (gpt-4o-mini) per million tokens.
     SALES_RESEARCH_ENABLED:   bool  = Field(default=False)

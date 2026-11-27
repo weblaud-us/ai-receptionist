@@ -110,26 +110,38 @@ async def replace_registry(db: Any, list_name: str, phones: Iterable[str], *, ar
         raise ValueError(f"{list_name} is checked number by number: load a wash result with record_wash")
     now = now or datetime.now(timezone.utc)
     codes = sorted(set(area_codes)) or [ALL_AREA_CODES]
-    if ALL_AREA_CODES in codes:
-        await db[m.REGISTRY].delete_many({"list": list_name})
-    else:
-        for code in codes:
-            await db[m.REGISTRY].delete_many({"list": list_name, "phone": {"$regex": rf"^\+1{code}"}})
+    # Write the new copy first, then drop what it no longer lists: a number on both copies is never
+    # missing, so nothing on the list can be dialled while a reload runs (it used to delete first).
+    load_id = new_id("load")
+
+    async def write(numbers: List[str]) -> None:
+        await db[m.REGISTRY].update_many({"list": list_name, "phone": {"$in": numbers}}, {"$set": {"load": load_id}})
+        have = {r["phone"] async for r in db[m.REGISTRY].find({"list": list_name, "phone": {"$in": numbers}}, {"phone": 1})}
+        fresh = [{"list": list_name, "phone": p, "load": load_id} for p in numbers if p not in have]
+        if fresh:
+            await db[m.REGISTRY].insert_many(fresh, ordered=False)
+
     count = 0
-    chunk: List[Dict[str, Any]] = []
+    chunk: List[str] = []
     seen: set[str] = set()
     for phone in phones:
         if phone in seen:
             continue
         seen.add(phone)
-        chunk.append({"list": list_name, "phone": phone})
+        chunk.append(phone)
         if len(chunk) >= batch:
-            await db[m.REGISTRY].insert_many(chunk, ordered=False)
+            await write(chunk)
             count += len(chunk)
             chunk = []
     if chunk:
-        await db[m.REGISTRY].insert_many(chunk, ordered=False)
+        await write(chunk)
         count += len(chunk)
+    old_rows: Dict[str, Any] = {"list": list_name, "load": {"$ne": load_id}}
+    if ALL_AREA_CODES in codes:
+        await db[m.REGISTRY].delete_many(old_rows)
+    else:
+        for code in codes:
+            await db[m.REGISTRY].delete_many({**old_rows, "phone": {"$regex": rf"^\+1{code}"}})
     await db[m.REGISTRY_META].update_one(
         {"_id": list_name},
         {"$set": {**{f"area_codes.{c}": now for c in codes}, "refreshed_at": now, "last_rows": count}},
