@@ -103,7 +103,17 @@ class SalesContext:
         self.lead.update(sets)
         if self.dry_run:
             return
-        await self.db[m.LEADS].update_one({"_id": self.lead["_id"]}, {"$set": {**sets, "updated_at": self.clock()}})
+        # Never over a do-not-call: registry.add_to_dnc may have set it on another lead with this number.
+        await self.db[m.LEADS].update_one({"_id": self.lead["_id"], "status": {"$ne": "dnc"}},
+                                          {"$set": {**sets, "updated_at": self.clock()}})
+
+
+_OPTED_OUT = {"error": "dnc", "message": "They asked not to be contacted. Don't book, send or schedule anything; say goodbye."}
+
+
+def _opted_out(ctx: SalesContext) -> bool:
+    """They opted out on this call (or the number is on the do-not-call list): nothing more happens."""
+    return ctx.opted_out or ctx.lead.get("status") == "dnc"
 
 
 def _scheduler(ctx: SalesContext) -> Optional[SchedulingService]:
@@ -208,6 +218,8 @@ async def check_meeting_slots(ctx: SalesContext, args: Mapping[str, Any]) -> Dic
 
 
 async def book_meeting(ctx: SalesContext, args: Mapping[str, Any]) -> Dict[str, Any]:
+    if _opted_out(ctx):
+        return _OPTED_OUT
     svc = _scheduler(ctx)
     if svc is None:
         return {"error": "unavailable", "message": "The calendar isn't available. Offer to have someone email them instead."}
@@ -267,6 +279,8 @@ async def book_meeting(ctx: SalesContext, args: Mapping[str, Any]) -> Dict[str, 
 # ── Follow-ups ───────────────────────────────────────────────────────────────
 
 async def send_info_email(ctx: SalesContext, args: Mapping[str, Any]) -> Dict[str, Any]:
+    if _opted_out(ctx):
+        return _OPTED_OUT
     email = _valid_email(args.get("email")) or _valid_email(ctx.lead.get("email"))
     if not email:
         return {"error": "email_required", "message": "Ask for the email address and read it back to confirm."}
@@ -318,8 +332,8 @@ async def send_whatsapp_info(ctx: SalesContext, args: Mapping[str, Any]) -> Dict
     channels = ctx.offer.get("channels") or {}
     if not (channels.get("whatsapp") and channels.get("whatsapp_template")):
         return {"error": "off", "message": "WhatsApp isn't available for this offer. Offer email instead."}
-    if ctx.lead.get("status") == "dnc" or ctx.opted_out:
-        return {"error": "dnc", "message": "They asked not to be contacted. Don't send anything; say goodbye."}
+    if _opted_out(ctx):
+        return _OPTED_OUT
     raw = str(args.get("number") or "").strip()
     same = not raw or raw.lower() in ("this", "this number", "same", "same number", "this one")
     info = phones.parse(ctx.lead.get("phone") if same else raw, str(ctx.lead.get("country") or "US"))
@@ -400,6 +414,8 @@ async def estimate_roi(ctx: SalesContext, args: Mapping[str, Any]) -> Dict[str, 
 
 
 async def schedule_callback(ctx: SalesContext, args: Mapping[str, Any]) -> Dict[str, Any]:
+    if _opted_out(ctx):
+        return _OPTED_OUT
     raw = str(args.get("when") or "").strip()
     try:
         local = datetime.fromisoformat(raw)

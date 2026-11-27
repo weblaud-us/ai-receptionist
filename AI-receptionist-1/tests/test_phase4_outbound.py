@@ -389,6 +389,51 @@ async def test_dead_agents_are_reaped(seeded):
     assert (await seeded[m.LEADS].find_one({}))["status"] == "queued"
 
 
+async def test_a_crashed_call_never_requeues_a_lead_the_call_already_moved_on(seeded):
+    # The agent booked a meeting mid-call, then its process died before the shutdown hook ran.
+    sent = Dispatched()
+    await dialer.tick(seeded, now=NOW, dispatch=sent)
+    attempt = await seeded[m.ATTEMPTS].find_one({})
+    await seeded[m.ATTEMPTS].update_one({"_id": attempt["_id"]}, {"$set": {"status": "in_progress", "answered_at": NOW}})
+    await seeded[m.LEADS].update_one({"_id": attempt["lead_id"]}, {"$set": {"status": "demo_booked"}})
+    stats = await dialer.tick(seeded, now=NOW + timedelta(minutes=30), dispatch=sent)
+    assert stats["reaped"] == 1
+    assert (await seeded[m.ATTEMPTS].find_one({}))["outcome"] == "failed"
+    assert (await seeded[m.LEADS].find_one({}))["status"] == "demo_booked"
+
+
+async def test_a_call_that_started_late_is_not_reaped_while_it_is_still_talking(seeded):
+    sent = Dispatched()
+    await dialer.tick(seeded, now=NOW, dispatch=sent)
+    attempt = await seeded[m.ATTEMPTS].find_one({})
+    answered = NOW + timedelta(minutes=20)                 # the worker picked the job up late
+    await seeded[m.ATTEMPTS].update_one({"_id": attempt["_id"]}, {"$set": {
+        "status": "in_progress", "started_at": answered, "answered_at": answered}})
+    assert (await dialer.reap(seeded, NOW + timedelta(minutes=25))) == 0
+    assert (await seeded[m.ATTEMPTS].find_one({}))["status"] == "in_progress"
+    assert (await dialer.reap(seeded, answered + timedelta(minutes=60))) == 1
+
+
+async def test_after_an_opt_out_no_tool_books_sends_or_schedules_anything(seeded):
+    lead = {"_id": "lead_x", "phone": AUSTIN, "status": "in_progress", "email": "joe@example.com",
+            "timezones": ["America/Chicago"], "timezone": "America/Chicago", "country": "US"}
+    ctx = sales_tools.SalesContext(db=seeded, lead=lead, campaign={"_id": "cmp_1"}, attempt_id="att_x", call_id="out-att_x")
+    await sales_tools.add_to_dnc(ctx, {"reason": "asked"})
+    for tool, args in ((sales_tools.book_meeting, {"start": "2030-01-07T10:00", "name": "Joe", "email": "joe@example.com"}),
+                       (sales_tools.send_info_email, {"email": "joe@example.com"}),
+                       (sales_tools.schedule_callback, {"when": "2030-01-07T10:00"})):
+        assert (await tool(ctx, args))["error"] == "dnc"
+    assert ctx.outcome == "dnc"
+
+
+async def test_a_tool_never_overwrites_a_do_not_call_status(seeded):
+    await seeded[m.LEADS].insert_one({"_id": "lead_y", "phone": AUSTIN, "status": "dnc"})
+    ctx = sales_tools.SalesContext(db=seeded, lead={"_id": "lead_y", "phone": AUSTIN, "status": "in_progress"},
+                       campaign={"_id": "cmp_1"}, attempt_id="att_y", call_id="out-att_y")
+    await ctx.update_lead({"status": "demo_booked"})
+    assert (await seeded[m.LEADS].find_one({"_id": "lead_y"}))["status"] == "dnc"
+
+
 async def test_human_assisted_campaigns_are_only_dialled_by_hand(seeded):
     await seeded[m.CAMPAIGNS].replace_one({}, campaign_doc(mode="human_assisted"))   # re-signed for the new mode
     sent = Dispatched()
@@ -492,6 +537,9 @@ def test_sip_and_amd_results_map_to_outcomes():
     "Stop calling me", "please take me off your list", "Don't call here again", "remove my number",
     "put us on your do not call list", "I said no more calls", "do not contact us", "Take us off the list please",
     "lose my number", "don’t call this number",
+    "Stop", "Please stop.", "Stop it!", "Leave me alone", "just leave us alone please", "I don't want to be called",
+    "Stop bothering me", "I do not want any more calls", "We don't want your calls", "Please delete my details",
+    "I don't want you calling here",
 ])
 def test_opt_out_phrases_are_caught(text):
     assert optout.is_opt_out(text)
@@ -500,6 +548,8 @@ def test_opt_out_phrases_are_caught(text):
 @pytest.mark.parametrize("text", [
     "Hello?", "Yes this is the owner", "We get about twenty calls a day", "Call me back on Tuesday",
     "I don't know who answers the phone", "Can you call the office instead?", "Our list of services is online",
+    "We don't want to miss calls", "Stop by the office any time", "The bus stop is outside", "We don't want calls going to voicemail",
+    "Does it stop the phone ringing out?", "I'd want to delete old appointments",
 ])
 def test_ordinary_replies_are_not_opt_outs(text):
     assert not optout.is_opt_out(text)

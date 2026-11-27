@@ -249,12 +249,12 @@ async def test_offer_emails_are_rendered_from_the_offer(sales, db, monkeypatch):
 async def test_a_dry_run_writes_nothing(sales, db):
     await db[m.LEADS].insert_one(dict(sales.lead))
     sales.dry_run = True
-    await sales_tools.add_to_dnc(sales, {"reason": "test"})
     await sales_tools.send_info_email(sales, {"email": "joe@example.com"})
     slots = await sales_tools.check_meeting_slots(sales, {})
     booked = await sales_tools.book_meeting(sales, {"slot_id": slots["slots"][0]["slot_id"], "name": "Joe",
                                                     "email": "joe@example.com"})
     assert booked["success"] and booked["appointment_id"] == "test"
+    await sales_tools.add_to_dnc(sales, {"reason": "test"})            # last: nothing is booked after an opt-out
     assert not await db[m.DNC].count_documents({}) and not await db.appointments.count_documents({})
     assert (await db[m.LEADS].find_one({}))["status"] == "queued"
 

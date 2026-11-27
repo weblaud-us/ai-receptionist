@@ -528,7 +528,13 @@ async def sales_caller(ctx: JobContext) -> None:
             return
         _hand_over(session, state)
 
-    await db[m.ATTEMPTS].update_one({"_id": attempt_id}, {"$set": {"status": "dialing", "started_at": now}})
+    claimed = await db[m.ATTEMPTS].update_one({"_id": attempt_id, "status": "dispatched"},
+                                              {"$set": {"status": "dialing", "started_at": now}})
+    if not claimed.matched_count:                # closed meanwhile (reaped, or a person ended it): never ring
+        state.final_outcome, state.detail = "failed", "the attempt was closed before dialling"
+        _mark_end(state, "system")
+        await hang_up("attempt_closed")
+        return
     amd_llm = lk_openai.LLM(model=AMD_LLM_MODEL, client=openai_client(), temperature=0)
     async with AMD(session, llm=amd_llm, stt=None, participant_identity=LEAD_IDENTITY, ivr_detection=False,
                    suppress_compatibility_warning=True) as detector:

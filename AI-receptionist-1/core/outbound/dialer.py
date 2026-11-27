@@ -109,9 +109,16 @@ async def dialled_since(db: Any, query: Dict[str, Any], since: datetime) -> int:
 async def reap(db: Any, now: datetime) -> int:
     """Close attempts whose agent died, and release leads claimed by a tick that never finished."""
     reaped = 0
-    stale = await db[m.ATTEMPTS].find(
-        {"status": {"$in": list(m.ACTIVE_ATTEMPT_STATUSES)}, "created_at": {"$lt": _stale_before(now)}},
-        {"_id": 1}).to_list(200)
+    cutoff = _stale_before(now)
+    # Measured from when each stage began: a call that started late (a busy worker, the operator
+    # wait) is not cut off while it is still talking.
+    stale = await db[m.ATTEMPTS].find({"$or": [
+        {"status": "dispatched", "created_at": {"$lt": cutoff}},
+        {"status": "dialing", "started_at": {"$lt": cutoff}},
+        {"status": "in_progress", "answered_at": {"$lt": cutoff}},
+        {"status": {"$in": ["dialing", "in_progress"]}, "started_at": None, "answered_at": None,
+         "created_at": {"$lt": cutoff}},
+    ]}, {"_id": 1}).to_list(200)
     for row in stale:
         if await outcomes.finish_attempt(db, row["_id"], "failed", now=now, detail="no result from the agent"):
             reaped += 1

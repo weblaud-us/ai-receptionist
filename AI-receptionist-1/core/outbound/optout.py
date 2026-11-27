@@ -23,6 +23,12 @@ _PATTERNS = (
     r"\bunsubscribe\b",
     r"\bopt(ing)?\s*(me\s+)?out\b",
     r"\bnot\s+interested\b.*\b(don'?t|do\s+not|stop)\s+call",
+    r"^\W*(please\s+)?(just\s+)?stop(\s+(it|now|please|that))?\W*$",          # a bare "stop", said on its own
+    r"\bleave\s+(me|us)\s+alone\b",
+    r"\bstop\s+(bothering|harassing|pestering|hassling)\s+(me|us)\b",
+    r"\b(don'?t|do\s+not)\s+want\s+(to\s+be\s+(called|contacted|phoned|rung)|you\s+(to\s+)?(call|calling|ringing|phoning))\b",
+    r"\b(don'?t|do\s+not)\s+want\s+(any\s+(more\s+)?|more\s+|your\s+|these\s+|sales\s+)(phone\s+)?calls\b",
+    r"\b(delete|remove|erase|wipe)\s+(my|our)\s+(details|data|information|info|personal\s+data)\b",
 )
 _OPT_OUT = re.compile("|".join(f"(?:{p})" for p in _PATTERNS), re.IGNORECASE)
 

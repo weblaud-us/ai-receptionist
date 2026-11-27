@@ -87,6 +87,10 @@ async def apply_to_lead(db: Any, lead_id: str, campaign: Optional[Dict[str, Any]
     elif outcome in m.LEAD_STATUS_FOR_OUTCOME:
         sets["status"] = m.LEAD_STATUS_FOR_OUTCOME[outcome]
         sets["next_eligible_at"] = (callback_at or now + DEFAULT_CALLBACK_DELAY) if outcome == "callback" else None
+    elif outcome in m.SYSTEM_OUTCOMES and lead.get("status") not in ("in_progress", "queued"):
+        # The dialer closing an attempt whose agent died ("failed"): a tool may already have moved
+        # the lead on during the call (meeting booked, callback, wrong number…). Keep that.
+        pass
     else:                                                        # a retry outcome, or an unknown one
         made = int(lead.get("attempts") or 0)
         if made >= int(campaign.get("max_attempts") or 3):
