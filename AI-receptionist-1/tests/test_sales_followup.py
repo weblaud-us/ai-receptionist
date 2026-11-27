@@ -158,6 +158,32 @@ async def test_a_failed_email_is_retried_then_left_for_a_person(db, monkeypatch)
     assert (await db[followup.OUTBOX].find_one({}))["status"] == "failed"      # only a person retries it now
 
 
+async def test_an_email_stranded_before_its_first_try_is_sent_later(db, monkeypatch):
+    box = Mailbox()
+    monkeypatch.setattr(followup, "send_email", box)
+    # The process died between claiming a scheduled follow-up and sending it.
+    await db[followup.OUTBOX].insert_one({"_id": "eml_s", "to": "joe@example.com", "subject": "Hi", "text": "Hello",
+                                          "status": "pending", "tries": 0, "created_at": NOW - timedelta(days=2),
+                                          "claimed_at": NOW})
+    await followup.retry_outbox(db, now=NOW + timedelta(minutes=5))
+    assert box == []                                                           # it may still be sending
+    await followup.retry_outbox(db, now=NOW + timedelta(minutes=11))
+    assert len(box) == 1 and (await db[followup.OUTBOX].find_one({}))["status"] == "sent"
+
+
+async def test_only_a_failed_email_can_be_sent_again_by_hand(admin, db, monkeypatch):
+    box = Mailbox()
+    monkeypatch.setattr(followup, "send_email", box)
+    doc = await followup.send_sales_email(db, to="joe@example.com", subject="Hi", text="Hello", kind="info", now=NOW)
+    assert doc["status"] == "sent" and len(box) == 1
+    assert admin.post(f"/platform/sales/outbox/{doc['_id']}/retry").status_code == 409
+    await db[followup.OUTBOX].update_one({"_id": doc["_id"]}, {"$set": {"status": "scheduled"}})
+    assert admin.post(f"/platform/sales/outbox/{doc['_id']}/retry").status_code == 409   # not early either
+    await db[followup.OUTBOX].update_one({"_id": doc["_id"]}, {"$set": {"status": "failed"}})
+    assert admin.post(f"/platform/sales/outbox/{doc['_id']}/retry").json()["email"]["status"] == "sent"
+    assert len(box) == 2
+
+
 async def test_unsubscribed_addresses_never_get_sales_email(client, db, monkeypatch):
     box = Mailbox()
     monkeypatch.setattr(followup, "send_email", box)

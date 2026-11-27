@@ -409,6 +409,8 @@ async def reports(days: int = Query(90, ge=7, le=365), admin: Principal = Depend
 
 def _audit_query(action: Optional[str], target_type: Optional[str], target_id: Optional[str], user: Optional[str],
                  since: Optional[str], until: Optional[str]) -> Dict[str, Any]:
+    if action and not action.startswith("sales."):          # the sales audit only: never the rest of the platform
+        raise HTTPException(422, "Only sales actions (sales.…) can be searched here.")
     q: Dict[str, Any] = {"tenant_id": "platform", "action": {"$regex": "^" + re.escape(action or "sales.")}}
     if target_type:
         q["target_type"] = target_type

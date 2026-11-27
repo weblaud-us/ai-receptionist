@@ -40,6 +40,7 @@ PIPELINE_STAGES: tuple[str, ...] = ("new", "contacted", "interested", "meeting_b
 MANUAL_STAGES = frozenset({"proposal", "won", "lost"})          # a person's call: never overridden by a dial
 ACTIVITY_TYPES = ("call", "note", "email", "stage", "task", "meeting")
 OUTBOX_MAX_TRIES = 3
+STRANDED_AFTER = timedelta(minutes=10)         # a "pending" email nobody tried for this long is retried
 FOLLOW_UP_DAYS = 2
 UNSUB_KIND = "sales_unsub"
 REPLY_KIND = "sales_reply"
@@ -211,8 +212,13 @@ async def retry_outbox(db: Any, *, now: Optional[datetime] = None, limit: int = 
     seq = await send_due(db, now=now, limit=limit)
     stats["sent"] += seq["sent"]
     stats["failed"] += seq["failed"]
-    rows = await db[OUTBOX].find({"status": "pending", "tries": {"$gte": 1},
-                                  "last_try_at": {"$lte": now - timedelta(minutes=5)}}).limit(limit).to_list(limit)
+    stranded = now - STRANDED_AFTER
+    rows = await db[OUTBOX].find({"status": "pending", "$or": [
+        {"tries": {"$gte": 1}, "last_try_at": {"$lte": now - timedelta(minutes=5)}},
+        # Claimed (or written) but never tried: the process died before the send. Not lost for good.
+        {"tries": {"$in": [0, None]}, "claimed_at": {"$lte": stranded}},
+        {"tries": {"$in": [0, None]}, "claimed_at": None, "created_at": {"$lte": stranded}},
+    ]}).limit(limit).to_list(limit)
     for row in rows:
         if await is_suppressed(db, row["to"]):
             await db[OUTBOX].update_one({"_id": row["_id"]}, {"$set": {"status": "suppressed", "error": "unsubscribed"}})
@@ -313,7 +319,8 @@ async def send_due(db: Any, *, now: Optional[datetime] = None, limit: int = 20) 
             await db[OUTBOX].update_one({"_id": row["_id"]}, {"$set": {"status": "cancelled", "error": why}})
             stats["cancelled"] += 1
             continue
-        claimed = await db[OUTBOX].find_one_and_update({"_id": row["_id"], "status": "scheduled"}, {"$set": {"status": "pending"}})
+        claimed = await db[OUTBOX].find_one_and_update({"_id": row["_id"], "status": "scheduled"},
+                                                       {"$set": {"status": "pending", "claimed_at": now}})
         if not claimed:
             continue
         done = await _try(db, {**row, "status": "pending"}, now)

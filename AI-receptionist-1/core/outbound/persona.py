@@ -343,6 +343,8 @@ def build_prompt(offer: Mapping[str, Any], variant: Mapping[str, Any], lead: Map
         price_rule,
         f"- If asked something you don't know, offer to have {host} follow up by email.",
         "- If this is clearly not the business you meant to call, apologise, call mark_wrong_number, then end_call.",
+        *(["- They asked for this call on our website. If they say they never asked for it, apologise, call "
+           "add_to_dnc, say goodbye and call end_call."] if consented else []),
         "- Offer times only from check_meeting_slots. Never invent a time. Confirm the day, time and their email "
         "before book_meeting.",
         channel_rule,

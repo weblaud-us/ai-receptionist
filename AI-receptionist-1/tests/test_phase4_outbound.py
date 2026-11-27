@@ -909,6 +909,37 @@ async def test_consent_form_records_consent_and_queues_the_call(client, db, read
     assert client.post("/public/demo-call", json={**body, "phone": "512-555-0178"}).status_code == 429
 
 
+async def test_the_consent_form_never_resets_a_lead_that_is_already_being_worked(client, db, ready, monkeypatch,
+                                                                                  frozen_api_clock):
+    from routers.sales import CONSENT_VERSION
+
+    await db[m.CAMPAIGNS].insert_one(campaign_doc(_id="cmp_form", mode="ai_consented"))
+    monkeypatch.setattr(settings, "SALES_CONSENT_CAMPAIGN_ID", "cmp_form")
+    await db[m.LEADS].insert_one({"_id": "lead_b", "owner": m.OWNER_PLATFORM, "phone": "+15125550188",
+                                  "status": "demo_booked", "attempts": 2, "campaign_id": "cmp_1",
+                                  "business_name": "Bea's Dental", "contact_name": "Bea", "email": ""})
+    body = {"phone": "512-555-0188", "name": "Someone Else", "business_name": "Other Name", "email": "x@example.com",
+            "consent": True, "consent_version": CONSENT_VERSION, "page": "/ai-demo"}
+    assert client.post("/public/demo-call", json=body).status_code == 200
+    lead = await db[m.LEADS].find_one({"_id": "lead_b"})
+    assert (lead["status"], lead["attempts"], lead["campaign_id"]) == ("demo_booked", 2, "cmp_1")
+    assert (lead["business_name"], lead["contact_name"], lead["email"]) == ("Bea's Dental", "Bea", "x@example.com")
+    assert lead["consent"]["type"] == "written"                                    # the consent is still recorded
+    # A second request for the same number the same day changes nothing and records nothing.
+    consents = await db[m.CONSENT].count_documents({})
+    assert client.post("/public/demo-call", json=body).json()["ok"] is True
+    assert await db[m.CONSENT].count_documents({}) == consents
+
+
+def test_consented_calls_end_politely_when_they_never_asked_for_one():
+    lead = lead_doc()
+    for mode, expected in (("ai_consented", True), ("ai_cold_b2b_us", False)):
+        offer = persona.legacy_offer()
+        prompt = persona.build_prompt(offer, offer["variants"][0], lead, campaign_doc(mode=mode), now=NOW)
+        assert ("If they say they never asked for it" in prompt) is expected
+
+
+
 def test_production_refuses_a_dialer_on_the_customers_trunk():
     from config import Settings
 

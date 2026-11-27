@@ -597,8 +597,14 @@ async def retry_email(email_id: str, admin: Principal = Depends(manager)):
     row = await db[followup.OUTBOX].find_one({"_id": email_id})
     if not row:
         raise HTTPException(404, "Email not found")
+    if row.get("status") != "failed":                 # sent, scheduled or being sent: never send it twice
+        raise HTTPException(409, "Only an email that failed to send can be sent again.")
     if await followup.is_suppressed(db, row["to"]):
         raise HTTPException(409, "That address unsubscribed.")
+    claimed = await db[followup.OUTBOX].find_one_and_update({"_id": email_id, "status": "failed"},
+                                                            {"$set": {"status": "pending", "claimed_at": utcnow()}})
+    if not claimed:
+        raise HTTPException(409, "Someone is already sending it again.")
     done = await followup._try(db, {**row, "tries": 0}, utcnow())
     return {"email": _out({k: v for k, v in done.items() if k != "attachments"})}
 
@@ -1829,6 +1835,10 @@ class DemoCallBody(BaseModel):
     website: str = Field(default="", max_length=200)      # honeypot: people never see or fill this field
 
 
+# Lead statuses a form request may put back in the queue. Anything else is already being worked.
+DEMO_CALL_REQUEUE_FROM = frozenset({"new", "queued", "exhausted", "not_interested", "callback"})
+
+
 @public_sales_router.post("/demo-call")
 async def request_demo_call(body: DemoCallBody, request: Request):
     """Written consent → consent record → the lead joins the consented campaign and is called."""
@@ -1853,6 +1863,13 @@ async def request_demo_call(body: DemoCallBody, request: Request):
     if await registry.on_internal_dnc(db, info.e164):
         raise HTTPException(409, "This number asked us not to call it. Email us if you'd like that changed.")
 
+    thanks = {"ok": True, "message": "Thanks! Our AI assistant will call you shortly, during business hours."}
+    # One request per number a day: a form can't be used to have the AI ring someone over and over.
+    if not await ratelimit.allow(f"democall:phone:{info.e164}", 1, 86400):
+        return thanks
+    existing = await db[m.LEADS].find_one({"owner": m.OWNER_PLATFORM, "phone": info.e164},
+                                          {"status": 1, "contact_name": 1, "business_name": 1, "email": 1})
+
     now = utcnow()
     source = f"form:{body.page.strip() or 'demo-call'}"
     consent = await registry.record_consent(
@@ -1861,10 +1878,16 @@ async def request_demo_call(body: DemoCallBody, request: Request):
         scope={"company": offer["company_name"], "offer_id": offer["id"]})
     zones = phones.timezones_for(info)
     email = body.email.strip().lower()
-    sets = {"contact_name": body.name.strip(), "business_name": body.business_name.strip(),
-            "email": email if "@" in email else "", "campaign_id": campaign["_id"], "status": "queued",
-            "next_eligible_at": now, "attempts": 0, "updated_at": now,
-            "consent": {"type": "written", "at": now, "source": source, "record_id": consent["_id"]}}
+    sets: Dict[str, Any] = {"updated_at": now,
+                            "consent": {"type": "written", "at": now, "source": source, "record_id": consent["_id"]}}
+    # A lead already being worked (on a call, interested, meeting booked, bad number…) keeps its place:
+    # the form only records the consent. Names and email are filled in, never written over.
+    if existing is None or existing.get("status") in DEMO_CALL_REQUEUE_FROM:
+        sets.update(campaign_id=campaign["_id"], status="queued", next_eligible_at=now, attempts=0)
+    for key, value in (("contact_name", body.name.strip()), ("business_name", body.business_name.strip()),
+                       ("email", email if "@" in email else "")):
+        if existing is None or not existing.get(key):
+            sets[key] = value
     await db[m.LEADS].update_one(
         {"owner": m.OWNER_PLATFORM, "phone": info.e164},
         {"$set": {k: v for k, v in sets.items() if v not in ("", None)},
@@ -1876,4 +1899,4 @@ async def request_demo_call(body: DemoCallBody, request: Request):
                           "notes": "", "tags": ["form"], "gate": None, "gate_log": [], "created_at": now}},
         upsert=True)
     logger.info("Demo call requested from %s (consent %s)", source, consent["_id"])
-    return {"ok": True, "message": "Thanks! Our AI assistant will call you shortly, during business hours."}
+    return thanks

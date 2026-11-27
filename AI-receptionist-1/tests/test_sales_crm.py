@@ -226,6 +226,10 @@ async def test_the_audit_viewer_shows_sales_entries_and_the_chain_holds(admin, d
     assert admin.get("/platform/sales/audit/verify").json()["intact"] is True
     csv = admin.get("/platform/sales/audit.csv")
     assert csv.status_code == 200 and "sales.offer.create" in csv.text
+    # The action filter is a prefix inside the sales audit, never a way into the rest of the platform's log.
+    assert admin.get("/platform/sales/audit", params={"action": "tenant."}).status_code == 422
+    assert admin.get("/platform/sales/audit.csv", params={"action": ""}).status_code == 200
+    assert admin.get("/platform/sales/audit", params={"action": "sales.offer"}).status_code == 200
 
 
 async def test_migration_opens_deals_for_leads_past_interested_once_and_scores_fit(db):
