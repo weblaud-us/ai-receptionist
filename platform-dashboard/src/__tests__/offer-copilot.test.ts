@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChoices, choicesFor } from '@/components/sales/offer-editor/suggestions'
+import { applyChoices, choicesFor, currentOpener, openerPatch } from '@/components/sales/offer-editor/suggestions'
 import { BLANK_OFFER, settingsOf } from '@/components/sales/offer-editor/draft'
 import { completeness, issueCounts, shiftUnconfirmed, tabOf } from '@/components/sales/offer-editor/readiness'
 import { diffOffers, pathLabel, wordDiff } from '@/lib/offer-diff'
@@ -78,6 +78,30 @@ describe('AI suggestions', () => {
     const choices = choicesFor('variant', form, { variants: [...form.variants, v] })
     expect(choices).toHaveLength(1)
     expect(applyChoices(form, { variants: [...form.variants, v] }, new Set([choices[0].key]), []).patch.variants).toHaveLength(2)
+  })
+
+  it('offers a suggested ROI as one choice and keeps its AI figures unconfirmed', () => {
+    const form = offer()
+    const roi = { enabled: true, result_label: 'extra revenue a month', monthly_cost: null,
+      inputs: [{ question: 'How many calls do you miss a week?', label: 'missed calls a week', per: 'week' as const, max: 500 }],
+      factors: [{ label: 'value of a new patient', value: 1200, percent: false }] }
+    const choices = choicesFor('roi', form, { roi })
+    expect(choices).toHaveLength(1)
+    expect(choices[0].after).toContain('value of a new patient: 1200')
+    const out = applyChoices(form, { roi }, new Set([choices[0].key]), ['roi.factors.0'])
+    expect(out.patch.roi).toEqual(roi)
+    expect(out.unconfirmed).toEqual(['roi.factors.0'])
+    expect(applyChoices(form, { roi }, new Set(), ['roi.factors.0'])).toEqual({ patch: {}, unconfirmed: [] })
+  })
+
+  it('puts a picked opener on the right script, or on the consented opener', () => {
+    const second = { ...BLANK_OFFER.variants[0], id: 'after_hours', label: 'After hours', cold_opener: 'Old' }
+    const form = { ...offer(), variants: [...offer().variants, second] }
+    const patch = openerPatch(form, 'after_hours', 'New opener')
+    expect(patch.variants?.map((v) => v.cold_opener)).toEqual([form.variants[0].cold_opener, 'New opener'])
+    expect(currentOpener(form, 'after_hours')).toBe('Old')
+    expect(openerPatch(form, 'consented_opener', 'Asked')).toEqual({ consented_opener: 'Asked' })
+    expect(openerPatch(form, 'gone', 'x')).toEqual({})
   })
 })
 

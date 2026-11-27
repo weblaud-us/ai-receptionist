@@ -8,7 +8,7 @@ import { Input } from '@receptionist/shared/components/ui/input'
 import { cn } from '@receptionist/shared/lib/utils'
 import { wordDiff } from '@/lib/offer-diff'
 import { assistOffer, type AiAssistStatus, type AssistResult, type AssistSection, type Market, type OfferSettings } from '@/lib/sales'
-import { applyChoices, choicesFor } from './suggestions'
+import { applyChoices, choicesFor, currentOpener, openerPatch } from './suggestions'
 
 export interface AssistAction {
   label: string
@@ -35,9 +35,11 @@ export function AiAssist({ actions, form, market, ai, onApply, className }: {
   const [error, setError] = useState('')
   const [result, setResult] = useState<AssistResult | null>(null)
   const [kept, setKept] = useState<Set<string>>(new Set())
+  const [picked, setPicked] = useState(0)
 
   const off = ai && !ai.enabled
   const choices = result ? choicesFor(asking?.section ?? 'basics', form, result.patch) : []
+  const options = result?.options
 
   const run = (a: AssistAction) => {
     setLoading(true)
@@ -45,6 +47,7 @@ export function AiAssist({ actions, form, market, ai, onApply, className }: {
     assistOffer({ offer: form, section: a.section, action: a.action ?? 'add', target: a.target, instruction, market })
       .then((r) => {
         setResult(r)
+        setPicked(0)
         setKept(new Set(choicesFor(a.section, form, r.patch).map((c) => c.key)))
       })
       .catch((e: Error) => setError(e.message))
@@ -58,6 +61,12 @@ export function AiAssist({ actions, form, market, ai, onApply, className }: {
   }
   const apply = () => {
     if (!result) return
+    if (options) {
+      const choice = options[picked]
+      if (choice) onApply(openerPatch(form, asking?.target, choice.opener), [])
+      close()
+      return
+    }
     const out = applyChoices(form, result.patch, kept, result.ai_unconfirmed)
     onApply(out.patch, out.unconfirmed)
     close()
@@ -100,6 +109,24 @@ export function AiAssist({ actions, form, market, ai, onApply, className }: {
               </p>
               {error && <p className="text-sm text-destructive">{error}</p>}
             </div>
+          ) : options ? (
+            <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label="Openers to choose from">
+              {result.notes && <p className="text-sm text-muted-foreground">{result.notes}</p>}
+              {currentOpener(form, asking?.target) && (
+                <p className="text-xs text-muted-foreground">Now: “{currentOpener(form, asking?.target)}”</p>
+              )}
+              {options.map((o, i) => (
+                <button key={o.opener} type="button" role="radio" aria-checked={picked === i} onClick={() => setPicked(i)}
+                  className={cn('flex w-full gap-3 rounded-lg border p-3 text-left text-sm', picked === i && 'border-primary/40 bg-primary/5')}>
+                  <span className={cn('mt-0.5 size-4 shrink-0 rounded-full border', picked === i && 'border-[5px] border-primary')} />
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="block font-medium">{o.angle}</span>
+                    <span className="block whitespace-pre-wrap leading-relaxed">“{o.opener}”</span>
+                  </span>
+                </button>
+              ))}
+              <p className="text-xs text-muted-foreground">Each one already says it’s an AI, names you and offers the opt-out. Pick one, then edit it if you like.</p>
+            </div>
           ) : choices.length === 0 ? (
             <p className="text-sm text-muted-foreground">The AI didn’t suggest anything different this time. Try again, or tell it what to focus on.</p>
           ) : (
@@ -127,7 +154,9 @@ export function AiAssist({ actions, form, market, ai, onApply, className }: {
             ) : (
               <>
                 <Button variant="outline" disabled={loading} onClick={() => asking && run(asking)}>{loading && <Loader2 className="animate-spin" />} Try again</Button>
-                <Button disabled={kept.size === 0} onClick={apply}><Check /> Apply {kept.size || ''}</Button>
+                {options
+                  ? <Button disabled={!options[picked]} onClick={apply}><Check /> Use this opener</Button>
+                  : <Button disabled={kept.size === 0} onClick={apply}><Check /> Apply {kept.size || ''}</Button>}
               </>
             )}
           </DialogFooter>

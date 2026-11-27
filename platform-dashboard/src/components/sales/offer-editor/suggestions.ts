@@ -2,7 +2,7 @@
  * Turning an AI suggestion (a patch for one section) into choices a person ticks, and applying only
  * the ones they keep (SALES_SUITE_PLAN.md Phase 4). Pure, so it is unit-tested.
  */
-import type { AssistSection, Objection, OfferSettings, ScriptVariant } from '@/lib/sales'
+import type { AssistSection, Objection, OfferRoi, OfferSettings, ScriptVariant } from '@/lib/sales'
 
 export interface Choice {
   key: string
@@ -18,6 +18,12 @@ const isList = (k: string): k is ListKey => (LISTS as readonly string[]).include
 const objText = (o: Objection | undefined) => (o ? `“${o.objection}” → ${o.response}` : '')
 const variantText = (v: ScriptVariant | undefined) =>
   v ? [`Name: ${v.label}`, `Opener: ${v.cold_opener}`, v.first_question && `First question: ${v.first_question}`, v.pitch && `Pitch: ${v.pitch}`, v.human_opener && `For a person: ${v.human_opener}`].filter(Boolean).join('\n') : ''
+const roiText = (r: OfferRoi | undefined) =>
+  r ? [
+    ...r.inputs.map((x, i) => `Question ${i + 1} (${x.label}${x.per === 'once' ? '' : `, per ${x.per}`}): ${x.question}`),
+    ...r.factors.map((f) => `Your figure: ${f.label}: ${f.value}${f.percent ? ' %' : ''}`),
+    `Result: ${r.result_label}`,
+  ].join('\n') : ''
 const emailText = (e: { subject: string; body: string } | undefined) => (e ? `Subject: ${e.subject}\n\n${e.body}` : '')
 const KEY_LABEL: Record<string, string> = {
   what_we_sell: 'What you sell', ideal_customer: 'Who it’s for', info_email: 'Information email',
@@ -57,6 +63,9 @@ export function choicesFor(section: AssistSection, form: OfferSettings, patch: P
       const text = (xs: { after_days: number; subject: string; body: string }[] | undefined) =>
         (xs ?? []).map((x) => `After ${x.after_days} days: ${x.subject}\n${x.body}`).join('\n\n')
       if (JSON.stringify(form.follow_ups ?? []) !== JSON.stringify(after)) out.push({ key, label: 'Follow-up emails', before: text(form.follow_ups), after: text(after) })
+    } else if (key === 'roi') {
+      const after = value as OfferRoi
+      if (JSON.stringify(form.roi) !== JSON.stringify(after)) out.push({ key, label: 'ROI questions and figures', before: roiText(form.roi), after: roiText(after) })
     } else if (key === 'info_email' || key === 'confirmation_email') {
       const after = value as { subject: string; body: string }
       if (JSON.stringify(form[key]) !== JSON.stringify(after)) out.push({ key, label: KEY_LABEL[key], before: emailText(form[key]), after: emailText(after) })
@@ -67,6 +76,19 @@ export function choicesFor(section: AssistSection, form: OfferSettings, patch: P
   }
   void section
   return out
+}
+
+/** The patch that puts a picked opener in place: a script's cold opener, or the consented opener. */
+export function openerPatch(form: OfferSettings, target: string | undefined, opener: string): Partial<OfferSettings> {
+  if (target === 'consented_opener') return { consented_opener: opener }
+  if (!form.variants.some((v) => v.id === target)) return {}
+  return { variants: form.variants.map((v) => (v.id === target ? { ...v, cold_opener: opener } : v)) }
+}
+
+/** The opener an "openers" suggestion would replace. */
+export function currentOpener(form: OfferSettings, target: string | undefined): string {
+  if (target === 'consented_opener') return form.consented_opener
+  return form.variants.find((v) => v.id === target)?.cold_opener ?? ''
 }
 
 /** The form patch for the choices kept, and which AI facts in it still need confirming. */
@@ -112,6 +134,10 @@ export function applyChoices(
         else next.push(v)
       }
       if (JSON.stringify(next) !== JSON.stringify(form.variants)) out.variants = next.slice(0, 4)
+    } else if (key === 'roi') {
+      if (!kept.has(key)) continue
+      out.roi = value as OfferRoi
+      facts.push(...unconfirmed.filter((p) => p.startsWith('roi.factors.')))
     } else if (kept.has(key)) {
       ;(out as Record<string, unknown>)[key] = value
       if (unconfirmed.includes(key)) facts.push(key)

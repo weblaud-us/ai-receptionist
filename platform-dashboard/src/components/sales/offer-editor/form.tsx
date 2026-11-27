@@ -372,7 +372,11 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
                 )}
                 <RoiEditor roi={form.roi ?? BLANK_OFFER.roi} currency={form.deal_currency ?? 'USD'} pricingMode={form.pricing.mode}
                   onChange={(roi) => set({ roi })} fact={(i) => factProps(`roi.factors.${i}`)}
-                  onRemoveFactor={(i) => shiftFacts('roi.factors', i)} />
+                  onRemoveFactor={(i) => shiftFacts('roi.factors', i)}
+                  action={assist([
+                    { label: 'Suggest questions and figures', section: 'roi' },
+                    ...((form.roi?.inputs.length ?? 0) > 0 ? [{ label: 'Make the questions sound natural', section: 'roi' as const, action: 'rewrite' as const }] : []),
+                  ])} />
               </TabsContent>
 
               <TabsContent value="scripts" className="space-y-3">
@@ -384,6 +388,7 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
                 </div>
                 <VariantsEditor items={form.variants} ai={aiFields.has('variants')} onChange={(variants) => set({ variants })}
                   action={(v) => assist([
+                    { label: 'Suggest openers to choose from', section: 'openers', target: v.id },
                     { label: 'Fix this opener so it passes the checks', section: 'fix_opener', target: v.id },
                     { label: 'Sharpen this script', section: 'variant', action: 'rewrite', target: v.id },
                   ])} />
@@ -420,7 +425,7 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
 
               <TabsContent value="consent" className="space-y-3">
                 <F label="Opener for people who asked for a call" path="consented_opener" hint="Only for consented campaigns. Same rules as a cold opener." ai={aiFields.has('consented_opener')}
-                  action={assist([{ label: 'Write the consented opener, voicemail and consent wording', section: 'consent_voicemail' }, { label: 'Fix the consented opener', section: 'fix_opener', target: 'consented_opener' }])}>
+                  action={assist([{ label: 'Write the consented opener, voicemail and consent wording', section: 'consent_voicemail' }, { label: 'Suggest openers to choose from', section: 'openers', target: 'consented_opener' }, { label: 'Fix the consented opener', section: 'fix_opener', target: 'consented_opener' }])}>
                   <Textarea id={fieldId('consented_opener')} rows={3} value={form.consented_opener} onChange={(e) => set({ consented_opener: e.target.value })} />
                 </F>
                 <F label="Opener when they asked us to call back" path="callback_opener"
@@ -469,7 +474,8 @@ export function OfferForm({ id, data, start, onClose, onCreated, onReload, onCre
 
           <aside className="space-y-4 lg:sticky lg:top-0 lg:self-start">
             <PreviewPanel preview={preview.data} error={preview.error} loading={preview.loading} variants={form.variants}
-              variantId={variantId || form.variants[0]?.id} onVariant={setVariantId} onGoTo={goTo} />
+              variantId={variantId || form.variants[0]?.id} onVariant={setVariantId} onGoTo={goTo}
+              action={assist([{ label: 'Suggest openers to choose from', section: 'openers', target: variantId || form.variants[0]?.id }])} />
             <Checklist checks={ready.checks} onGoTo={goTo} />
             <ReviewPanel id={id} form={form} market={market} ai={ai} disabled={readOnly}
               saved={offer?.last_review?.result} savedCurrent={!dirty && data?.last_review_current}

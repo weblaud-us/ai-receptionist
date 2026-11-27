@@ -59,9 +59,11 @@ export function FactConfirm({ unconfirmed, source, onConfirm }: { unconfirmed: b
   )
 }
 
-export function PreviewPanel({ preview, error, loading, variants, variantId, onVariant, onGoTo }: {
+export function PreviewPanel({ preview, error, loading, variants, variantId, onVariant, onGoTo, action }: {
   preview?: OfferPreview; error?: string; loading: boolean; variants: ScriptVariant[]; variantId?: string
   onVariant: (id: string) => void; onGoTo: (path: string) => void
+  /** ✨ AI suggestions for the opener of the script shown */
+  action?: ReactNode
 }) {
   const problems = (preview?.issues ?? []).filter((i) => i.level === 'problem')
   const warnings = (preview?.issues ?? []).filter((i) => i.level === 'warning')
@@ -70,7 +72,10 @@ export function PreviewPanel({ preview, error, loading, variants, variantId, onV
       <div className="space-y-2 rounded-lg border p-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-medium">Opening line</h3>
-          {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+          <span className="flex items-center gap-1">
+            {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+            {action}
+          </span>
         </div>
         {variants.length > 1 && (
           <SimpleSelect size="sm" className="w-full" value={variantId ?? ''} onChange={onVariant}
@@ -240,9 +245,11 @@ export function EmailEditor({ title, value, onChange, path, ai }: { title: strin
 
 const PER_OPTIONS = [{ value: 'week', label: 'per week' }, { value: 'month', label: 'per month' }, { value: 'once', label: 'a plain number' }]
 
-export function RoiEditor({ roi, currency, pricingMode, onChange, fact, onRemoveFactor }: {
+export function RoiEditor({ roi, currency, pricingMode, onChange, fact, onRemoveFactor, action }: {
   roi: OfferRoi; currency: string; pricingMode: 'never' | 'range'; onChange: (r: OfferRoi) => void
   fact: (i: number) => { unconfirmed: boolean; source?: string; onConfirm: (ok: boolean) => void }; onRemoveFactor: (i: number) => void
+  /** ✨ AI suggestions for the questions and figures */
+  action?: ReactNode
 }) {
   const [examples, setExamples] = useState<string[]>([])
   const edit = (patch: Partial<OfferRoi>) => onChange({ ...roi, ...patch })
@@ -253,6 +260,7 @@ export function RoiEditor({ roi, currency, pricingMode, onChange, fact, onRemove
     <div className="space-y-3 rounded-lg border p-3" id={fieldId('roi')} tabIndex={-1} data-field="roi">
       <div className="flex items-center gap-2">
         <h3 className="flex-1 text-sm font-medium">What it’s worth to them (ROI)</h3>
+        {action}
         <label className="flex items-center gap-2 text-sm">Use on calls <Switch checked={roi.enabled} onCheckedChange={(v) => edit({ enabled: !!v })} /></label>
       </div>
       <p className="text-xs text-muted-foreground">

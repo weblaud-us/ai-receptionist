@@ -367,7 +367,7 @@ export interface GeneratedOffer {
 
 export type AssistSection =
   | 'basics' | 'value_props' | 'proof_points' | 'discovery_questions' | 'qualification_questions' | 'pain_hypotheses'
-  | 'objections' | 'variant' | 'fix_opener' | 'emails' | 'consent_voicemail' | 'follow_ups'
+  | 'objections' | 'variant' | 'fix_opener' | 'openers' | 'roi' | 'emails' | 'consent_voicemail' | 'follow_ups'
 
 export interface AssistInput {
   offer: Partial<OfferSettings>
@@ -378,7 +378,13 @@ export interface AssistInput {
   market?: Market
 }
 
-export interface AssistResult { patch: Partial<OfferSettings>; ai_unconfirmed: string[]; notes: string; cost_usd: number }
+/** One opener to pick from ("openers" section); every one already passes the opener checks. */
+export interface OpenerOption { angle: string; opener: string }
+
+export interface AssistResult {
+  patch: Partial<OfferSettings>; ai_unconfirmed: string[]; notes: string; cost_usd: number
+  options?: OpenerOption[]
+}
 
 export interface ReviewFinding {
   severity: 'high' | 'medium' | 'low'
