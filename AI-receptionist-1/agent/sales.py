@@ -280,13 +280,12 @@ class SalesAgent(Agent):
         """End the call. Use only after you have said goodbye.
 
         Args:
-            outcome: How the call went: interested, not_interested, gatekeeper or wrong_number.
+            outcome: How the call went: interested or gatekeeper. (For "not interested" or a wrong
+                number, call mark_not_interested or mark_wrong_number first.)
         """
-        # A meeting or a callback only counts when its tool succeeded; the model cannot claim one here.
-        if outcome in ("interested", "not_interested", "gatekeeper", "wrong_number"):
-            self.sales.set_outcome(outcome)
-        elif outcome in sales_tools.END_CALL_OUTCOMES:
-            self.sales.set_outcome("interested")
+        recorded = sales_tools.end_call_outcome(outcome)    # code decides what a claim may record
+        if recorded:
+            self.sales.set_outcome(recorded)
         self.state.ended_reason = "agent_hangup"
         _mark_end(self.state, "agent")
         await context.wait_for_playout()

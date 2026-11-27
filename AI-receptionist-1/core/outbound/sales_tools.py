@@ -48,6 +48,18 @@ _OUTCOME_ORDER = ("dnc", "wrong_number", "demo_booked", "callback", "interested"
 END_CALL_OUTCOMES = ("demo_booked", "interested", "callback", "not_interested", "gatekeeper", "wrong_number")
 
 
+def end_call_outcome(outcome: str) -> Optional[str]:
+    """What the model's end_call(outcome) may record on its own. A meeting or callback counts only
+    when its tool succeeded, and "not interested" / "wrong number" have consequences (the offer is
+    never pitched again, other offers wait; the number is marked bad), so those come only from
+    mark_not_interested / mark_wrong_number. A claimed meeting or callback still means interest."""
+    if outcome in ("interested", "gatekeeper"):
+        return outcome
+    if outcome in ("demo_booked", "callback"):
+        return "interested"
+    return None
+
+
 @dataclass
 class SalesContext:
     db: Any

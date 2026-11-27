@@ -493,6 +493,15 @@ async def test_a_tool_never_overwrites_a_do_not_call_status(seeded):
     assert (await seeded[m.LEADS].find_one({"_id": "lead_y"}))["status"] == "dnc"
 
 
+def test_end_call_cannot_record_a_consequential_outcome_on_the_models_word():
+    assert sales_tools.end_call_outcome("interested") == "interested"
+    assert sales_tools.end_call_outcome("gatekeeper") == "gatekeeper"
+    assert sales_tools.end_call_outcome("demo_booked") == "interested"           # only book_meeting books
+    assert sales_tools.end_call_outcome("callback") == "interested"              # only schedule_callback schedules
+    for claim in ("not_interested", "wrong_number", "dnc", "anything"):
+        assert sales_tools.end_call_outcome(claim) is None
+
+
 async def test_human_assisted_campaigns_are_only_dialled_by_hand(seeded):
     await seeded[m.CAMPAIGNS].replace_one({}, campaign_doc(mode="human_assisted"))   # re-signed for the new mode
     sent = Dispatched()
@@ -634,6 +643,20 @@ def test_every_opener_discloses_ai_company_and_opt_out():
         assert of.validate_offer(of.OfferSettings.model_validate(offer))[0] == []
         assert "{" not in persona.voicemail_message(offer) and offer["company_name"] in persona.consent_text(offer)
     assert persona.check_opener("Hi, got a minute?") != []
+
+
+@pytest.mark.parametrize("text,discloses", [
+    ("Hi, this is Ava, an AI assistant from WebLaud.", True),
+    ("Hi, it's Ava, the AI assistant from WebLaud, calling back.", True),
+    ("Hi, I'm an AI calling from WebLaud.", True),
+    ("Hello, this is an AI from WebLaud.", True),
+    ("Hi, this is Sam from WebLaud, we build AI tools for practices.", False),     # mentions AI, isn't one
+    ("Hi, we're an AI agency called WebLaud.", False),
+    ("Hi, this is Sam from WebLaud about AI.", False),
+])
+def test_an_opener_must_say_the_caller_is_an_ai_not_just_mention_ai(text, discloses):
+    problems = persona.check_opener(text + " If you'd rather not hear from us, just say so.", company="WebLaud")
+    assert (not any("AI" in p for p in problems)) is discloses, problems
 
 
 def test_offer_validation_rejects_unsafe_placeholders_and_bad_openers():

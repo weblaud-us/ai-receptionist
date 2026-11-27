@@ -64,6 +64,12 @@ FENCE_TAG = re.compile(r"</?\s*(?:offer|prospect_research|campaign_notes|lead_no
                        r"website_text|rules)\b[^>]*>", re.IGNORECASE)
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 _OPT_OUT = ("off our list", "off the list", "opt out", "not to be called", "stop calling", "rather not")
+# The opener must say the *caller* is an AI, not merely mention AI ("we build AI tools" is not a disclosure).
+_AI_IDENTITY = re.compile(
+    r"\b(i'?m|i am)\s+(an?\s+|the\s+)?(ai|artificial[- ]intelligence)\b"
+    r"|\b(an?|the)\s+(ai|artificial[- ]intelligence)\s+(assistant|agent|voice|caller|receptionist|system|model|bot)\b"
+    r"|\b(an?|the)\s+ai\b(?=\s*(,|\.|;|$|from\b|calling\b|on\s+behalf\b|here\b|working\b))",
+    re.IGNORECASE)
 
 
 def render(template: str, values: Mapping[str, Any]) -> str:
@@ -101,8 +107,8 @@ def check_opener(text: str, *, company: Optional[str] = None) -> List[str]:
     company = company if company is not None else settings.SALES_COMPANY_NAME
     low = (text or "").lower()
     problems = []
-    if " ai " not in f" {low} " and "an ai" not in low and " ai," not in f" {low}":
-        problems.append("does not say it is an AI")
+    if not _AI_IDENTITY.search(" ".join(low.replace("’", "'").split())):
+        problems.append("does not say it is an AI (e.g. \"this is Ava, an AI assistant from …\")")
     if not company or company.lower() not in low:
         problems.append("does not name the company")
     if not any(p in low for p in _OPT_OUT):
