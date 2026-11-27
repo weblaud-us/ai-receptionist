@@ -9,6 +9,7 @@ GET   /t/overview                        KPIs: calls today, bookings, messages, 
 GET   /t/settings · PATCH /t/settings    editable business + assistant settings (audited)
 POST  /t/onboarding/template             apply a vertical's example services and FAQs
 POST  /t/onboarding/step                 save wizard progress
+GET   /t/getting-started                 the first things to do, each ticked off from real data
 GET   /t/verticals                       vertical catalog for the wizard
 CRUD  /t/services /t/resources /t/exceptions /t/knowledge
 GET   /t/knowledge/suggestions · POST /t/knowledge/test   unanswered common questions · try a caller's question
@@ -56,6 +57,7 @@ from core.repositories.scoped import scoped_db
 from core.sensitive import drop_ciphertext, unseal
 from core import ratelimit
 from core.services import availability as av
+from core.services import getting_started
 from core.services import site_import
 from core.services import whatsapp_outbox as wa_outbox
 from core.services.scheduling import SchedulingError, SchedulingService
@@ -280,6 +282,12 @@ async def onboarding_step(body: StepBody, request: Request, tp: TenantPrincipal 
         progress["completed_at"] = utcnow().isoformat()
     await update_tenant(tp.tenant, {"onboarding": progress}, allowed=EDITABLE_FIELDS, user_id=tp.user.user_id, ip=_ip(request))
     return {"success": True, "onboarding": progress}
+
+
+@tenant_router.get("/getting-started")
+async def getting_started_list(tp: TenantPrincipal = Depends(_admin)):
+    """The overview's getting-started list. Team and the DPA are the owner's, so admins don't see them."""
+    return await getting_started.for_member(get_db(), tp.tenant, owner=tp.can("owner"))
 
 
 class SiteImportBody(BaseModel):

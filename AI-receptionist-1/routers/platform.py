@@ -42,11 +42,11 @@ from core.prompts.verticals import vertical_catalog
 from core.repositories import Repos
 from core.repositories.base import utcnow
 from core.repositories.repos import PhoneNumbersStore, TenantsStore, UsersStore
-from core.services import numbers as number_service, site_import
+from core.services import getting_started, numbers as number_service, site_import
 from core.services.scheduling import ACTIVE_STATUSES
 from core.services.tenant_admin import EDITABLE_FIELDS, PLATFORM_FIELDS, create_tenant, update_tenant
 from core.tenancy import invalidate, resolve_by_id
-from core.tenancy.models import VERTICALS
+from core.tenancy.models import VERTICALS, TenantConfig
 from database.mongodb import get_db
 from utils.serialize import to_jsonable
 
@@ -361,6 +361,11 @@ async def get_tenant(tenant_id: str, admin: Principal = Depends(require_platform
     members = await UsersStore(db).for_tenant(tenant_id)
     invites = await db.invites.find({"tenant_id": tenant_id}).to_list(100)
     u = usage[0] if usage else {}
+    try:   # the launch checklist; read from this fresh document, not the resolver's cache
+        signals = await getting_started.signals(db, TenantConfig.from_doc(doc))
+    except Exception:
+        logger.warning("Launch checklist signals unavailable for %s", tenant_id, exc_info=True)
+        signals = None
     stats = {
         "calls_30d": u.get("calls", 0), "minutes_30d": round((u.get("seconds") or 0) / 60, 1),
         "calls_total": await repos.calls.count(),
@@ -372,7 +377,7 @@ async def get_tenant(tenant_id: str, admin: Principal = Depends(require_platform
         "knowledge": await repos.knowledge.count(),
         "services": await repos.services.count(),
     }
-    return {"tenant": _clean(doc), "stats": stats,
+    return {"tenant": _clean(doc), "stats": stats, "signals": signals,
             "numbers": [to_jsonable({k: v for k, v in n.items() if k != "_id"})
                         for n in await PhoneNumbersStore(db).for_tenant(tenant_id)],
             "members": [_member_view(m, tenant_id) for m in members],
