@@ -25,8 +25,8 @@ export default function Businesses() {
 
   return (
     <>
-      <PageHeader title="Businesses" description="Every business on the platform. Opening one acts as its owner in the client dashboard — every change is audited."
-        actions={<Button onClick={() => navigate('/businesses/new')}><Plus /> New business</Button>} />
+      <PageHeader title="Businesses" help="launch-a-business" description="Every business on the platform. Opening one acts as its owner in the client dashboard — every change is audited."
+        actions={<Button data-tour="new-business" onClick={() => navigate('/businesses/new')}><Plus /> New business</Button>} />
       {q.error && (
         String((q.error as Error).message).startsWith('mfa_required') ? (
           <div className="mb-4 space-y-3">

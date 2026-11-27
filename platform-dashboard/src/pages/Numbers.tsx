@@ -37,6 +37,7 @@ export default function Numbers() {
     <>
       <PageHeader
         title="Numbers"
+        help="numbers"
         description="Australian, UK and EU numbers need a regulatory bundle approved by Twilio before they can be bought. You get an e-mail for each new order."
         actions={<SimpleSelect value={status} onChange={setStatus} options={FILTERS} />}
       />

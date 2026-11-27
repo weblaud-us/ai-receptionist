@@ -48,10 +48,10 @@ export default function Dialer() {
 
   return (
     <>
-      <PageHeader title="Sales dialer" description="Outbound calls that sell whatever you offer, and the CRM to close them. Every number passes the compliance checks before every call." />
-      <div className="-mt-2 mb-3 flex justify-end"><SalesSearch /></div>
+      <PageHeader title="Sales dialer" help="sales-first-day" description="Outbound calls that sell whatever you offer, and the CRM to close them. Every number passes the compliance checks before every call." />
+      <div className="-mt-2 mb-3 flex justify-end" data-tour="dialer-search"><SalesSearch /></div>
       {mfa ? (
-        <div className="mb-4 max-w-md space-y-3">
+        <div className="mb-4 max-w-md space-y-3" data-tour="mfa-card">
           <ErrorBanner error={new Error('The dialer needs two-factor sign-in. Turn it on below, then reload.')} />
           <SecurityCard />
         </div>
@@ -65,7 +65,7 @@ export default function Dialer() {
       <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) }, { replace: true })}>
         <TabsList variant="line" className="mb-4 flex-wrap">
           {TABS.filter((t) => (t !== 'team' || platformAdmin) && (t !== 'activity' || canDo(user, 'manager'))).map((t) => (
-            <TabsTrigger key={t} value={t}>
+            <TabsTrigger key={t} value={t} data-tour={`dialer-tab-${t}`}>
               {TAB_LABEL[t]}{t === 'live' && (live.data?.total ?? 0) > 0 && <span className="ml-1.5 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-600">{live.data?.total}</span>}
             </TabsTrigger>
           ))}

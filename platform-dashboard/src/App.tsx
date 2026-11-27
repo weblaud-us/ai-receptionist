@@ -19,6 +19,8 @@ const Legal = lazy(() => import('@/pages/Legal'))
 const Numbers = lazy(() => import('@/pages/Numbers'))
 const DemoLeads = lazy(() => import('@/pages/DemoLeads'))
 const Account = lazy(() => import('@/pages/Account'))
+const Help = lazy(() => import('@/pages/Help'))
+const HelpArticle = lazy(() => import('@/pages/Help').then((m) => ({ default: m.HelpArticle })))
 
 const Fallback = () => (
   <div className="space-y-4">
@@ -60,6 +62,8 @@ export default function App() {
           <Route path="legal" element={<Legal />} />
           <Route path="numbers" element={<Numbers />} />
           <Route path="account" element={<Account />} />
+          <Route path="help" element={<Help />} />
+          <Route path="help/:slug" element={<HelpArticle />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

@@ -4,6 +4,8 @@ import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, FileText,
 import { LaudlineLogo } from '@receptionist/shared/components/laudline-logo'
 import { AccountMenu } from '@receptionist/shared/components/account-menu'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
+import { HelpMenu } from '@receptionist/shared/components/help-menu'
+import { TourProvider, useTour } from '@receptionist/shared/components/tour'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { CLIENT_URL } from '@receptionist/shared/lib/urls'
@@ -11,6 +13,8 @@ import { cn } from '@receptionist/shared/lib/utils'
 import { useTheme } from '@receptionist/shared/providers/theme'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { salesOnly } from '@/lib/roles'
+import { tourFor } from '@/tours/platform-tours'
+import { useAutoTour } from '@/tours/use-auto-tour'
 
 interface NavItem {
   to: string
@@ -20,6 +24,9 @@ interface NavItem {
   /** Also highlight under this path prefix (e.g. a list's detail pages). */
   also?: string
 }
+
+/** "/" → "nav-businesses", "/numbers" → "nav-numbers": what welcome tours point at. */
+const tourId = (to: string) => `nav-${to === '/' ? 'businesses' : to.slice(1)}`
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Businesses', icon: Building2, end: true, also: '/businesses/' },
@@ -45,6 +52,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
           to={to}
           end={end}
           onClick={onNavigate}
+          data-tour={tourId(to)}
           className={({ isActive }) =>
             cn(
               'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
@@ -96,7 +104,23 @@ const PageLoading = () => (
   </div>
 )
 
+function PlatformHelpMenu() {
+  const { user } = useAuth()
+  const tour = useTour()
+  const def = user ? tourFor(user) : null
+  return <HelpMenu onTour={def && user ? () => tour.start(def, user) : undefined} />
+}
+
 export function PlatformLayout() {
+  return (
+    <TourProvider>
+      <Shell />
+    </TourProvider>
+  )
+}
+
+function Shell() {
+  useAutoTour()
   const { pathname } = useLocation()
   const [menu, setMenu] = useState(false)
 
@@ -107,19 +131,20 @@ export function PlatformLayout() {
         <div className="flex-1 overflow-y-auto pb-4">
           <NavList />
         </div>
-        <div className="border-t border-sidebar-border p-3">
+        <div className="border-t border-sidebar-border p-3" data-tour="account-menu">
           <AccountMenu roleLabel="Platform admin" />
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-col">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur lg:px-8">
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu">
+          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="Menu" data-tour="menu-button">
             <Menu />
           </Button>
           <div className="flex-1" />
+          <PlatformHelpMenu />
           <ThemeToggle />
-          <div className="lg:hidden"><AccountMenu roleLabel="Platform admin" compact /></div>
+          <div className="lg:hidden" data-tour="account-menu"><AccountMenu roleLabel="Platform admin" compact /></div>
         </header>
         <main className="flex-1 px-4 py-6 lg:px-8">
           <Suspense fallback={<PageLoading />}>

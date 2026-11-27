@@ -8,21 +8,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@rece
 import { Checkbox } from '@receptionist/shared/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@receptionist/shared/components/ui/dialog'
 import { Input } from '@receptionist/shared/components/ui/input'
+import { PROSE } from '@receptionist/shared/components/markdown'
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { useDebounced } from '@receptionist/shared/hooks/use-debounced'
 import { dateTime, timeAgo } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
 import { useLegalDoc, useLegalDocs, useLegalMutations, useLegalPreview, useLegalVersion, type LegalDocSummary } from '@/lib/legal'
-
-/** Readable styles for the rendered document (the same HTML the marketing site shows). */
-const PROSE = cn(
-  'max-w-none text-sm leading-relaxed text-foreground',
-  '[&_h1]:mb-3 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold',
-  '[&_h3]:mb-1.5 [&_h3]:mt-4 [&_h3]:font-semibold [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
-  '[&_li]:my-0.5 [&_a]:text-primary [&_a]:underline [&_strong]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground',
-  '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs [&_td]:border [&_td]:p-1.5 [&_th]:border [&_th]:bg-muted/50 [&_th]:p-1.5 [&_th]:text-left',
-  '[&_code]:rounded [&_code]:bg-muted [&_code]:px-1',
-)
 
 function Status({ doc }: { doc: LegalDocSummary }) {
   if (!doc.published_version) return <Badge variant="secondary" className="border-0 bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">Not published</Badge>
@@ -41,6 +32,7 @@ export default function Legal() {
     <>
       <PageHeader
         title="Legal documents"
+        help="legal-documents"
         description={<>The Terms, Privacy Policy, Subscription policy and the rest, as the website shows them at <code className="rounded bg-muted px-1">/legal/…</code>. Write in Markdown; text in [square brackets] must be filled in before a document can be published.</>}
       />
       {docs.isError && <ErrorBanner error={docs.error} onRetry={() => docs.refetch()} />}

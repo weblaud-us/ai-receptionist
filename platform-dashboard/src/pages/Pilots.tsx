@@ -84,6 +84,7 @@ export default function Pilots() {
     <>
       <PageHeader
         title="Pilots"
+        help="pilots"
         description="3–5 free businesses, overflow calls first, a 15-minute call every week. Each one gets this scorecard by e-mail on Mondays."
         actions={<Button onClick={() => { setEditing(undefined); setOpen(true) }}><Plus /> Start a pilot</Button>}
       />

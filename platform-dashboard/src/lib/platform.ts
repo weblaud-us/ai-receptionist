@@ -176,6 +176,19 @@ export interface TenantDetails {
   recent_calls: TenantCall[]
   audit: AuditEntry[]
   number_orders: NumberOrder[]
+  /** The launch checklist (core/services/getting_started.py); null if it couldn't be worked out. */
+  signals?: LaunchSignals | null
+}
+
+export interface LaunchSignals {
+  setup: boolean
+  test_call: boolean
+  number: boolean
+  first_call: boolean
+  knowledge: boolean
+  calendar: boolean
+  team: boolean
+  dpa: boolean
 }
 
 /** Orders still moving: the details page and the wizard's last step refresh while one is. */

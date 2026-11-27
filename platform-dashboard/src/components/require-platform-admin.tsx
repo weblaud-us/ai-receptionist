@@ -7,8 +7,8 @@ import { Button } from '@receptionist/shared/components/ui/button'
 import { CLIENT_URL } from '@receptionist/shared/lib/urls'
 import { salesOnly } from '@/lib/roles'
 
-/** Where a sales-team member (not a platform admin) may go: the dialer and their own account. */
-const SALES_PATHS = ['/dialer', '/account']
+/** Where a sales-team member (not a platform admin) may go: the dialer, their own account and the guides. */
+const SALES_PATHS = ['/dialer', '/account', '/help']
 
 /**
  * The whole app is for platform administrators. A business user who signs in here is pointed to

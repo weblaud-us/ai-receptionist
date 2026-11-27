@@ -94,7 +94,7 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
       <Button size="sm" variant="ghost" className="-ml-2 mb-3" nativeButton={false} render={<Link to="/" />}>
         <ArrowLeft /> Businesses
       </Button>
-      <PageHeader title="New business" description="Start from the business's website: details, hours, services and FAQs are filled in for you to check. The number, owner invite and setup are done automatically." />
+      <PageHeader title="New business" help="launch-a-business" description="Start from the business's website: details, hours, services and FAQs are filled in for you to check. The number, owner invite and setup are done automatically." />
       <ol className="mb-4 flex flex-wrap gap-2">
         {STEPS.map((s, n) => (
           <li key={s} className={cn('flex items-center gap-2 rounded-full border px-3 py-1 text-xs',
@@ -253,7 +253,7 @@ function Done({ result: r, onReset }: { result: ProvisionResult; onReset: () => 
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast.success('Copied'))
   return (
     <>
-      <PageHeader title={`${r.tenant.name} is set up`} description="Here's what happened." />
+      <PageHeader title={`${r.tenant.name} is set up`} description="Here's what happened. Next: the launch checklist on the business page shows what's left." help="launch-a-business" />
       <Card>
         <CardContent className="space-y-3 pt-6 text-sm">
           <Summary icon={<Check className="text-primary!" />} title="Business created">

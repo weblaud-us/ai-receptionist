@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ArrowLeft, Copy, ExternalLink, KeyRound, Loader2, Pause, Play, Plus, Trash2, UserPlus, XCircle } from 'lucide-react'
 import { ConfirmDialog, EmptyState, ErrorBanner, Field, KeyValue } from '@receptionist/shared/components/blocks'
@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@receptionist/shared/c
 import { COUNTRIES, CURRENCIES, TIMEZONES, dateOnly, dateTime, duration, timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { impersonateUrl } from '@receptionist/shared/lib/urls'
 import { AddNumberDialog } from '@/components/add-number-dialog'
+import { LaunchChecklist } from '@/components/launch-checklist'
 import { OrderProgress } from '@/components/number-chooser'
 import {
   useNumberOrderMutations,
@@ -46,10 +47,16 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 
 const copy = (text: string, what = 'Copied') => void navigator.clipboard.writeText(text).then(() => toast.success(what))
 
+const DETAIL_TABS = ['overview', 'controls', 'team', 'numbers', 'activity'] as const
+type DetailTab = (typeof DETAIL_TABS)[number]
+
 export default function BusinessDetail() {
   const { id } = useParams<{ id: string }>()
   const q = usePlatformTenant(id)
   const t = q.data?.tenant
+  const [params, setParams] = useSearchParams()
+  const tab: DetailTab = (DETAIL_TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as DetailTab) : 'overview'
+  const openTab = (next: DetailTab) => setParams(next === 'overview' ? {} : { tab: next }, { replace: true })
 
   return (
     <>
@@ -69,7 +76,7 @@ export default function BusinessDetail() {
         <>
           <Header tenant={t} />
           <StatStrip data={q.data} />
-          <Tabs defaultValue="overview" className="mt-6">
+          <Tabs value={tab} onValueChange={(v) => openTab(v as DetailTab)} className="mt-6">
             <TabsList variant="line" className="mb-2 flex-wrap">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="controls">Controls</TabsTrigger>
@@ -77,7 +84,7 @@ export default function BusinessDetail() {
               <TabsTrigger value="numbers">Numbers ({q.data.numbers.filter((n) => n.status !== 'released').length})</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
             </TabsList>
-            <TabsContent value="overview"><OverviewTab data={q.data} /></TabsContent>
+            <TabsContent value="overview"><OverviewTab data={q.data} onTab={openTab} /></TabsContent>
             <TabsContent value="controls"><ControlsTab tenant={t} /></TabsContent>
             <TabsContent value="team"><TeamTab data={q.data} /></TabsContent>
             <TabsContent value="numbers"><NumbersTab data={q.data} /></TabsContent>
@@ -144,11 +151,12 @@ function StatStrip({ data }: { data: TenantDetails }) {
 
 /* ───────────── overview ───────────── */
 
-function OverviewTab({ data }: { data: TenantDetails }) {
+function OverviewTab({ data, onTab }: { data: TenantDetails; onTab: (tab: 'team' | 'numbers' | 'controls') => void }) {
   const t = data.tenant
   const b = t.billing
   return (
     <div className="space-y-4">
+      <LaunchChecklist data={data} onTab={onTab} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Profile</CardTitle></CardHeader>
