@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Ear, Loader2, Mic, MicOff, PhoneOff } from 'lucide-react'
 import { Button } from '@receptionist/shared/components/ui/button'
 import type { JoinInfo } from '@/lib/sales'
+import { readTranscript, type TextStreamRoom, type TranscriptSegment } from '@/lib/transcript'
+
+export type { TranscriptSegment }
 
 /**
  * Joins a sales call's LiveKit room from the browser.
@@ -9,12 +12,21 @@ import type { JoinInfo } from '@/lib/sales'
  * - takeover: your microphone is live and the AI goes silent for the rest of the call.
  * The LiveKit client is loaded only when a call is joined.
  */
-export function CallAudio({ join, title, onLeave, onHangUp }: {
+export function CallAudio({ join, title, onLeave, onHangUp, onTranscript, onEnded }: {
   join: JoinInfo
   title: string
   onLeave: () => void
   onHangUp?: () => void
+  /** Live transcript of the lead (and the AI, when it speaks). */
+  onTranscript?: (segment: TranscriptSegment) => void
+  onEnded?: () => void
 }) {
+  const transcriptRef = useRef(onTranscript)
+  const endedRef = useRef(onEnded)
+  useEffect(() => {
+    transcriptRef.current = onTranscript
+    endedRef.current = onEnded
+  })
   const sink = useRef<HTMLDivElement>(null)
   const room = useRef<import('livekit-client').Room | null>(null)
   const [state, setState] = useState<'connecting' | 'connected' | 'ended' | 'error'>('connecting')
@@ -33,7 +45,14 @@ export function CallAudio({ join, title, onLeave, onHangUp }: {
           if (track.kind === Track.Kind.Audio) sink.current?.appendChild(track.attach())
         })
         r.on(RoomEvent.TrackUnsubscribed, (track) => track.detach().forEach((el) => el.remove()))
-        r.on(RoomEvent.Disconnected, () => !cancelled && setState('ended'))
+        r.on(RoomEvent.Disconnected, () => {
+          if (cancelled) return
+          setState('ended')
+          endedRef.current?.()
+        })
+        ;(r as unknown as TextStreamRoom).registerTextStreamHandler?.('lk.transcription', (reader, from) => {
+          void readTranscript(reader, from.identity, (seg) => transcriptRef.current?.(seg)).catch(() => {})
+        })
         await r.connect(join.url, join.token)
         if (cancelled) return void r.disconnect()
         if (takeover) await r.localParticipant.setMicrophoneEnabled(true)

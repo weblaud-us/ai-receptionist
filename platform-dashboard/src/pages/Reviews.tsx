@@ -50,8 +50,8 @@ function ReviewSheet({ call, onClose }: { call: QueuedCall | null; onClose: () =
         toast.success('Reviewed')
       }
       onClose()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save')
+    } catch {
+      // the global mutation error toast has already said what went wrong
     }
   }
 

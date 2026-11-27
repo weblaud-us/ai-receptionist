@@ -1,39 +1,55 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react'
 import { EmptyState, ErrorBanner, Field, PageHeader, Pagination } from '@receptionist/shared/components/blocks'
 import { SecurityCard } from '@receptionist/shared/components/security-card'
 import { Campaigns } from '@/components/sales/campaigns'
 import { Leads } from '@/components/sales/leads'
+import { Offers } from '@/components/sales/offers'
+import { Pipeline } from '@/components/sales/pipeline'
 import { Live } from '@/components/sales/live'
 import { Results } from '@/components/sales/results'
+import { Team } from '@/components/sales/team'
+import { NumbersCard } from '@/components/sales/numbers'
+import { Reports } from '@/components/sales/reports'
+import { ActivityLog } from '@/components/sales/activity'
+import { SalesSearch } from '@/components/sales/search'
+import { can as canDo } from '@/lib/roles'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Input } from '@receptionist/shared/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@receptionist/shared/components/ui/tabs'
 import { useAuth } from '@receptionist/shared/auth/auth'
 import { dateOnly, dateTime, titleCase } from '@receptionist/shared/lib/format'
-import { MODE_LABEL, useDnc, useLiveSalesCalls, useSalesMutations, useSalesStatus } from '@/lib/sales'
-import { cn } from '@receptionist/shared/lib/utils'
+import { downloadSalesCsv, MODE_LABEL, useDnc, useLiveSalesCalls, useSalesMutations, useSalesStatus } from '@/lib/sales'
 
-const TABS = ['campaigns', 'leads', 'live', 'results', 'compliance'] as const
+const TABS = ['offers', 'campaigns', 'leads', 'pipeline', 'live', 'results', 'reports', 'activity', 'compliance', 'team'] as const
 type Tab = (typeof TABS)[number]
-const TAB_LABEL: Record<Tab, string> = { campaigns: 'Campaigns', leads: 'Leads', live: 'Live calls', results: 'Results', compliance: 'Compliance' }
+const TAB_LABEL: Record<Tab, string> = {
+  offers: 'Offers', campaigns: 'Campaigns', leads: 'Leads', pipeline: 'Pipeline', live: 'Live calls', results: 'Results', reports: 'Reports', activity: 'Activity', compliance: 'Compliance', team: 'Team',
+}
 
-/** Outbound AI sales dialer (Roadmap Phase 4). Platform administrators only. */
+/** Outbound sales dialer (Roadmap Phase 4; SALES_DIALER_PLAN.md). Platform admins and the sales team
+ * (viewer < caller < manager, SALES_SUITE_PLAN.md Phase 2). */
 export default function Dialer() {
   const { user } = useAuth()
-  const admin = !!user?.is_platform_admin
-  const [tab, setTab] = useState<Tab>('campaigns')
+  const admin = canDo(user, 'viewer')
+  const platformAdmin = canDo(user, 'admin')
+  const [params, setParams] = useSearchParams()
+  const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'campaigns'
   const status = useSalesStatus()
   const live = useLiveSalesCalls(admin)
+  const [quickOffer, setQuickOffer] = useState<string | null>(null)
 
-  if (!admin) return <EmptyState title="Platform administrators only" icon={<ShieldCheck className="size-8" />} />
+  if (!admin) return <EmptyState title="For the sales team only" icon={<ShieldCheck className="size-8" />} />
   const mfa = String((status.error as Error | null)?.message ?? '').startsWith('mfa_required')
 
   return (
     <>
-      <PageHeader title="Sales dialer" description="Outbound calls that sell your receptionist. Every number passes the compliance checks before every call." />
+      <PageHeader title="Sales dialer" description="Outbound calls that sell whatever you offer, and the CRM to close them. Every number passes the compliance checks before every call." />
+      <div className="-mt-2 mb-3 flex justify-end"><SalesSearch /></div>
       {mfa ? (
         <div className="mb-4 max-w-md space-y-3">
           <ErrorBanner error={new Error('The dialer needs two-factor sign-in. Turn it on below, then reload.')} />
@@ -46,19 +62,25 @@ export default function Dialer() {
           <div><div className="font-medium">The dialer can't place calls yet</div><ul className="list-disc pl-4 text-muted-foreground">{status.data.problems.map((p) => <li key={p}>{p}</li>)}</ul></div>
         </div>
       )}
-      <div className="mb-4 flex flex-wrap gap-1 border-b">
-        {TABS.map((t) => (
-          <button key={t} type="button" onClick={() => setTab(t)}
-            className={cn('-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors', tab === t ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}>
-            {TAB_LABEL[t]}{t === 'live' && (live.data?.total ?? 0) > 0 && <span className="ml-1.5 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-600">{live.data?.total}</span>}
-          </button>
-        ))}
-      </div>
-      {tab === 'campaigns' && <Campaigns />}
-      {tab === 'leads' && <Leads />}
-      {tab === 'live' && <Live />}
-      {tab === 'results' && <Results />}
-      {tab === 'compliance' && <Compliance />}
+      <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) }, { replace: true })}>
+        <TabsList variant="line" className="mb-4 flex-wrap">
+          {TABS.filter((t) => (t !== 'team' || platformAdmin) && (t !== 'activity' || canDo(user, 'manager'))).map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {TAB_LABEL[t]}{t === 'live' && (live.data?.total ?? 0) > 0 && <span className="ml-1.5 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-600">{live.data?.total}</span>}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="offers"><Offers onCreateCampaign={(id) => { setQuickOffer(id); setParams({ tab: 'campaigns' }, { replace: true }) }} /></TabsContent>
+        <TabsContent value="campaigns"><Campaigns quickOffer={quickOffer} onQuickDone={() => setQuickOffer(null)} /></TabsContent>
+        <TabsContent value="leads"><Leads /></TabsContent>
+        <TabsContent value="pipeline"><Pipeline /></TabsContent>
+        <TabsContent value="live"><Live /></TabsContent>
+        <TabsContent value="results"><Results /></TabsContent>
+        <TabsContent value="compliance"><Compliance /></TabsContent>
+        <TabsContent value="reports"><Reports /></TabsContent>
+        {canDo(user, 'manager') && <TabsContent value="activity"><ActivityLog /></TabsContent>}
+        {platformAdmin && <TabsContent value="team"><Team /></TabsContent>}
+      </Tabs>
     </>
   )
 }
@@ -86,6 +108,7 @@ function Compliance() {
           ))}
         </CardContent>
       </Card>
+      <NumbersCard />
       <Card>
         <CardHeader><CardTitle>What may be called</CardTitle><CardDescription>Set on the server. A lawyer must confirm these for each market before the first campaign.</CardDescription></CardHeader>
         <CardContent className="space-y-2 text-sm">
@@ -95,12 +118,26 @@ function Compliance() {
         </CardContent>
       </Card>
       <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle>Australia: Do Not Call Register</CardTitle>
+          <CardDescription>The register can't be downloaded: you wash numbers at donotcall.gov.au and get a result per number, good for {30} days. An Australian number without a fresh result is never called.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3 text-sm">
+          {status.au_dncr_needs_wash > 0
+            ? <span className="flex items-center gap-1.5"><AlertTriangle className="size-4 text-amber-600" /> {status.au_dncr_needs_wash} Australian number{status.au_dncr_needs_wash === 1 ? '' : 's'} need a wash</span>
+            : <span className="flex items-center gap-1.5"><CheckCircle2 className="size-4 text-emerald-600" /> Every Australian lead has a fresh result</span>}
+          <Button size="sm" variant="outline" disabled={!status.au_dncr_needs_wash}
+            onClick={() => void downloadSalesCsv('dncr-wash').catch((e: Error) => toast.error(e.message))}>Download numbers to wash</Button>
+          <span className="text-xs text-muted-foreground">Then load the result: <code>python -m scripts.import_dnc_registry au_dncr --wash-result wash.csv --country AU</code></span>
+        </CardContent>
+      </Card>
+      <Card className="lg:col-span-2">
         <CardHeader><CardTitle>Your do-not-call list ({status.counts.dnc})</CardTitle><CardDescription>Permanent. Numbers are added when someone asks on a call, or by you. They can't be removed here.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Add a number"><Input value={phone} placeholder="+15125551234" onChange={(e) => setPhone(e.target.value)} /></Field>
+            <Field label="Add a number"><Input value={phone} placeholder="+61290000000" onChange={(e) => setPhone(e.target.value)} /></Field>
             <Button disabled={phone.replace(/\D/g, '').length < 8 || m.addDnc.isPending}
-              onClick={() => m.addDnc.mutate(phone, { onSuccess: (r) => { toast.success(r.added ? `${r.phone} will never be called` : 'Already on the list'); setPhone('') }, onError: (e) => toast.error(e.message) })}>Add</Button>
+              onClick={() => m.addDnc.mutate(phone, { onSuccess: (r) => { toast.success(r.added ? `${r.phone} will never be called` : 'Already on the list'); setPhone('') } })}>Add</Button>
             <div className="flex-1" />
             <Input className="max-w-xs" placeholder="Find a number" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
           </div>

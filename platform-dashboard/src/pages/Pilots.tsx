@@ -41,7 +41,6 @@ function PilotDialog({ open, onOpenChange, pilot }: { open: boolean; onOpenChang
           toast.success(active ? 'Pilot saved' : 'Pilot ended')
           onOpenChange(false)
         },
-        onError: (e) => toast.error(e.message),
       },
     )
   return (

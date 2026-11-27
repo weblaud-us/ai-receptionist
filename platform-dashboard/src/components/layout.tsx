@@ -1,14 +1,16 @@
 import { Suspense, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, Hash, Loader2, LogOut, Menu, MessageSquareText, Moon, PhoneOutgoing, Rocket, Scale, Sun } from 'lucide-react'
+import { Building2, ChartNoAxesCombined, ClipboardCheck, ExternalLink, FileText, Hash, Loader2, Menu, MessageSquareText, Moon, PhoneOutgoing, Rocket, Scale, Sun } from 'lucide-react'
 import { LaudlineLogo } from '@receptionist/shared/components/laudline-logo'
-import { useAuth } from '@receptionist/shared/auth/auth'
+import { AccountMenu } from '@receptionist/shared/components/account-menu'
 import { ErrorBoundary } from '@receptionist/shared/components/error-boundary'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@receptionist/shared/components/ui/sheet'
 import { CLIENT_URL } from '@receptionist/shared/lib/urls'
 import { cn } from '@receptionist/shared/lib/utils'
 import { useTheme } from '@receptionist/shared/providers/theme'
+import { useAuth } from '@receptionist/shared/auth/auth'
+import { salesOnly } from '@/lib/roles'
 
 interface NavItem {
   to: string
@@ -28,13 +30,16 @@ const NAV: NavItem[] = [
   { to: '/pilots', label: 'Pilots', icon: Rocket },
   { to: '/reviews', label: 'Transcript review', icon: ClipboardCheck },
   { to: '/compliance', label: 'Compliance', icon: Scale },
+  { to: '/legal', label: 'Legal documents', icon: FileText },
 ]
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation()
+  const { user } = useAuth()
+  const items = salesOnly(user) ? NAV.filter((n) => n.to === '/dialer') : NAV
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV.map(({ to, label, icon: Icon, end, also }) => (
+      {items.map(({ to, label, icon: Icon, end, also }) => (
         <NavLink
           key={to}
           to={to}
@@ -93,7 +98,6 @@ const PageLoading = () => (
 
 export function PlatformLayout() {
   const { pathname } = useLocation()
-  const { user, logout } = useAuth()
   const [menu, setMenu] = useState(false)
 
   return (
@@ -104,21 +108,7 @@ export function PlatformLayout() {
           <NavList />
         </div>
         <div className="border-t border-sidebar-border p-3">
-          <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-            <div className="min-w-0 text-sm">
-              <div className="truncate font-medium text-sidebar-foreground">{user?.name || user?.email}</div>
-              <div className="text-xs text-sidebar-foreground/60">Platform admin</div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Log out"
-              className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              onClick={() => void logout()}
-            >
-              <LogOut />
-            </Button>
-          </div>
+          <AccountMenu roleLabel="Platform admin" />
         </div>
       </aside>
 
@@ -129,9 +119,7 @@ export function PlatformLayout() {
           </Button>
           <div className="flex-1" />
           <ThemeToggle />
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => void logout()} aria-label="Log out">
-            <LogOut />
-          </Button>
+          <div className="lg:hidden"><AccountMenu roleLabel="Platform admin" compact /></div>
         </header>
         <main className="flex-1 px-4 py-6 lg:px-8">
           <Suspense fallback={<PageLoading />}>

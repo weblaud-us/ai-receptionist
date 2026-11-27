@@ -121,7 +121,7 @@ function LeadSheet({ id, onClose }: { id: string | null; onClose: () => void }) 
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const setStatus = (status: string) =>
-    lead && m.update.mutate({ id: lead.id, status: status as DemoLeadStatus }, { onError: (e) => toast.error(e.message) })
+    lead && m.update.mutate({ id: lead.id, status: status as DemoLeadStatus })
 
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
@@ -181,7 +181,6 @@ function LeadSheet({ id, onClose }: { id: string | null; onClose: () => void }) 
           loading={m.remove.isPending}
           onConfirm={() => lead && m.remove.mutate(lead.id, {
             onSuccess: () => { toast.success('Lead deleted'); setConfirmDelete(false); onClose() },
-            onError: (e) => toast.error(e.message),
           })} />
       </SheetContent>
     </Sheet>
@@ -192,7 +191,7 @@ function Notes({ id, saved }: { id: string; saved: string }) {
   const m = useDemoLeadMutations()
   const [notes, setNotes] = useState(saved)
   const save = () =>
-    m.update.mutate({ id, notes }, { onSuccess: () => toast.success('Notes saved'), onError: (e) => toast.error(e.message) })
+    m.update.mutate({ id, notes }, { onSuccess: () => toast.success('Notes saved') })
   return (
     <Field label="Notes">
       <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Called back, interested in the Growth plan…" />

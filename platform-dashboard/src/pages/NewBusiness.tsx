@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Globe, Loader2, Mail, PencilLine, Phone, Rocket } from 'lucide-react'
 import { Field, PageHeader } from '@receptionist/shared/components/blocks'
 import { SiteDraftReview } from '@receptionist/shared/components/site-draft-review'
+import { SiteImportProgress } from '@receptionist/shared/components/site-import-progress'
+import { useSiteImportStream } from '@receptionist/shared/hooks/use-site-import-stream'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Input } from '@receptionist/shared/components/ui/input'
@@ -58,15 +60,20 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
   const vlist = (verticals.data?.verticals ?? []).filter((v) => v.key === 'dental').map((v) => ({ key: v.key, label: v.label }))
   const verticalLabel = vlist.find((v) => v.key === p.vertical)?.label ?? titleCase(p.vertical)
 
-  const fetchSite = () =>
-    siteImport.mutate(url, {
-      onSuccess: ({ draft: d }) => {
-        setDraft(d)
-        if (!owner.email && d.profile.email) setOwner((o) => ({ ...o, email: d.profile.email }))
-        toast.success(`Read ${d.sources.length} page${d.sources.length === 1 ? '' : 's'}. Check the details.`)
-        setStep('review')
-      },
-    })
+  // Live progress while the site is read (falls back to the one-shot call if streaming fails).
+  const reading = useSiteImportStream({
+    path: '/platform/site-import/stream',
+    tenant: null,
+    fallback: siteImport.mutateAsync,
+    onDraft: (d) => {
+      setDraft(d)
+      if (!owner.email && d.profile.email) setOwner((o) => ({ ...o, email: d.profile.email }))
+      toast.success(`Read ${d.sources.length} page${d.sources.length === 1 ? '' : 's'}. Check the details.`)
+      setStep('review')
+    },
+  })
+  const busy = reading.state.running
+  const fetchSite = () => { if (url.trim().length > 3 && !busy) void reading.run(url.trim()) }
 
   const create = () => {
     const kept = draftForApi(draft)
@@ -109,16 +116,16 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Input autoFocus value={url} placeholder="bellasalon.com" disabled={siteImport.isPending}
+                <Input autoFocus value={url} placeholder="practice.com.au" disabled={busy}
                   onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && url.trim().length > 3) fetchSite() }} />
-                <Button disabled={url.trim().length < 4 || siteImport.isPending} onClick={fetchSite}>
-                  {siteImport.isPending ? <Loader2 className="animate-spin" /> : <Globe />} Fetch details
+                  onKeyDown={(e) => { if (e.key === 'Enter') fetchSite() }} />
+                <Button disabled={url.trim().length < 4 || busy} onClick={fetchSite}>
+                  {busy ? <Loader2 className="animate-spin" /> : <Globe />} Fetch details
                 </Button>
               </div>
-              {siteImport.isPending && <p className="text-sm text-muted-foreground">Reading the website. This usually takes 15–40 seconds…</p>}
+              <SiteImportProgress state={reading.state} />
               <div className="border-t pt-4">
-                <Button variant="outline" disabled={siteImport.isPending} onClick={() => { setDraft(manualDraft()); setStep('review') }}>
+                <Button variant="outline" disabled={busy} onClick={() => { setDraft(manualDraft()); setStep('review') }}>
                   <PencilLine /> No website: enter details by hand
                 </Button>
               </div>
@@ -132,7 +139,8 @@ function NewBusiness({ onReset }: { onReset: () => void }) {
               <CardTitle>Check the details</CardTitle>
               <CardDescription>Name, type, country and timezone are required. Services and answers replace the type's examples.</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <SiteImportProgress state={reading.state} />
               <SiteDraftReview draft={draft} onChange={setDraft} verticals={vlist} showServices={p.vertical !== 'hotel'} />
             </CardContent>
           </>
