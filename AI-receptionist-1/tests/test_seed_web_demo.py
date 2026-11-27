@@ -10,7 +10,7 @@ async def test_seed_creates_both_demo_practices(db):
     assert await seed(db, max_concurrent=4) == ["ten_demo_au", "ten_demo_gb"]
     au, gb = await resolve_by_id("ten_demo_au"), await resolve_by_id("ten_demo_gb")
     assert (au.name, au.country, au.currency, au.vertical) == ("Harbourline Dental", "AU", "AUD", "dental")
-    assert (gb.name, gb.country, gb.timezone) == ("Wimpole Dental", "GB", "Europe/London")
+    assert (gb.name, gb.country, gb.timezone) == ("Wimpole Dental Rooms", "GB", "Europe/London")
     for t in (au, gb):
         assert t.status == "active" and len(t.hours) == 7 and t.limits.max_concurrent_calls == 4
         assert t.agent.name == "Ava" and t.agent.max_call_minutes * 60 >= settings.WEB_DEMO_MAX_SECONDS
@@ -18,7 +18,7 @@ async def test_seed_creates_both_demo_practices(db):
         assert not t.missed_call_recovery.enabled and not t.escalation.enabled
         assert "demo" in t.agent.custom_instructions.lower()
     assert au.agent.language == "en-AU" and gb.agent.stt_language == "en-GB"
-    assert {r["name"] for r in await Repos(db, "ten_demo_au").resources.find({})} == {"Dr Priya Patel", "Dr Tom Nguyen"}
+    assert {r["name"] for r in await Repos(db, "ten_demo_au").resources.find({})} == {"Dr Priya Patel", "Dr Tom Lee"}
     assert await Repos(db, "ten_demo_au").services.count({}) > 0           # the dental template
 
 

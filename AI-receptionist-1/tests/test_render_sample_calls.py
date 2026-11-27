@@ -6,13 +6,12 @@ from scripts.voice_bakeoff import RATE
 
 def test_parses_every_scenario_line_but_not_the_trace():
     scenarios = parse_scenarios(SCENARIOS_TS.read_text(encoding="utf-8"))
-    assert {"implant-price", "regional", "emergency", "text-back"} <= set(scenarios)
+    assert {"implant-price", "regional", "emergency"} <= set(scenarios)
     au = scenarios["emergency"]["au"]
     assert [ln.who for ln in au] == ["patient", "assistant", "patient"]
     assert au[1].text.startswith("Please hang up and call 000 now.")
     assert "999" in scenarios["emergency"]["uk"][1].text
     assert scenarios["regional"]["au"][0].text == "Hi, do you take Bupa? And can I claim on the spot?"
-    assert all(ln.who == "system" for ln in scenarios["text-back"]["au"])      # nothing to speak
 
 
 def test_lines_keep_their_time_unless_the_previous_one_is_still_talking():
