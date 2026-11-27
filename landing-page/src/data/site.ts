@@ -30,18 +30,42 @@ export const NAV = [
   { href: '#pricing', label: 'Pricing' },
 ] as const;
 
+/**
+ * The legal documents, published at /legal/<key> (pages/legal/[doc].astro). Their text is edited in the
+ * platform dashboard (Legal documents) and read from the API; `footer` ones are linked from every page.
+ */
+export const LEGAL_DOCS = [
+  { key: 'terms', label: 'Terms of service', footer: true },
+  { key: 'privacy', label: 'Privacy policy', footer: true },
+  { key: 'subscription', label: 'Subscription and billing policy', footer: true },
+  { key: 'cookies', label: 'Cookie policy', footer: true },
+  { key: 'dpa', label: 'Data processing agreement', footer: true },
+  { key: 'aup', label: 'Acceptable use policy', footer: false },
+  { key: 'subprocessors', label: 'Sub-processors', footer: false },
+  { key: 'sla', label: 'Service level agreement', footer: false },
+  { key: 'security', label: 'Security overview', footer: false },
+] as const;
+export type LegalKey = (typeof LEGAL_DOCS)[number]['key'];
+export const legalHref = (key: LegalKey) => `/legal/${key}`;
+
 export const LINKS = {
   site: VITE_SITE_URL.replace(/\/$/, ''),
   login: VITE_DASHBOARD_LOGIN_URL,
   demoCall: VITE_DEMO_CALL_URL,
   bookDemo: VITE_BOOK_DEMO_URL || VITE_DEMO_CALL_URL,
   demoPhone: { au: VITE_DEMO_PHONE_AU, uk: VITE_DEMO_PHONE_UK } as Record<Region, string>,
-  privacy: VITE_PRIVACY_URL,
-  terms: VITE_TERMS_URL,
-  dpa: VITE_DPA_URL,
+  // Our own /legal pages unless a build points one somewhere else.
+  privacy: VITE_PRIVACY_URL || legalHref('privacy'),
+  terms: VITE_TERMS_URL || legalHref('terms'),
+  dpa: VITE_DPA_URL || legalHref('dpa'),
+  subscription: legalHref('subscription'),
+  cookies: legalHref('cookies'),
 };
 
 export const CLAIM_ZDR = VITE_CLAIM_ZDR;
+
+/** The API (legal documents, live demo). Empty in a build without one. */
+export const API_URL = VITE_API_URL.replace(/\/$/, '');
 
 /**
  * The live "Talk to it now" demo (LiveDemo.astro). On only when switched on AND both the API origin and

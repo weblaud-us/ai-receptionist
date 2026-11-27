@@ -1,46 +1,83 @@
 ---
 /**
- * "Talk to it now": the live tap-to-talk demo at the top of the demo section.
+ * "Talk to Ava": the live tap-to-talk demo that leads the demo section.
  *
  * The visitor signs in with Google (that is the lead: it lands in the platform dashboard's Demo leads),
- * taps the orb and talks to the receptionist of a fictional demo practice in the browser, with a live
- * transcript and a countdown. Afterwards: the signup button and an optional practice name.
- * live-demo.ts runs it. Shown only when the build has the demo switched on (WEB_DEMO in data/site.ts);
- * without JavaScript it explains why nothing happens and points to the sample calls below.
+ * taps the orb and talks to the receptionist of a fictional demo practice in the browser. While they
+ * talk they see live captions for both sides and, as it happens, what Ava is doing (checking the diary,
+ * booking, flagging an emergency), streamed by the agent (AI-receptionist-1/agent/activity.py).
+ * "Play the patient" cards give them something to say. Afterwards: the signup button and an optional
+ * practice name. live-demo.ts runs it. Shown only when the build has the demo switched on (WEB_DEMO in
+ * data/site.ts); without JavaScript it explains why nothing happens and points to the sample calls below.
  */
 import Button from './Button.astro';
 import R from './R.astro';
 import { DEMO_PRACTICE, LINKS, WEB_DEMO } from '../data/site';
 
-const prompts = {
-  au: ["Can I book a check-up next Tuesday?", "I've chipped a tooth and it hurts", 'How much is a clean?', 'Do you take HCF?'],
-  uk: ['Can I book a check-up next Tuesday?', "I've chipped a tooth and it hurts", 'How much is a hygiene visit?', 'Do you see NHS patients?'],
-};
+/** Things to try, as the patient. `say` is what the visitor reads out; the AU and UK lines differ. */
+const roles = [
+  {
+    id: 'book',
+    title: 'Book a check-up',
+    say: { au: 'Can I book a check-up and clean next Tuesday?', uk: 'Can I book a check-up next Tuesday?' },
+    watch: 'Checks the real diary and books it',
+  },
+  {
+    id: 'price',
+    title: 'Ask for a price',
+    say: { au: 'Roughly what does a full arch of implants cost?', uk: 'Roughly what does a full arch of implants cost?' },
+    watch: 'Never guesses a treatment price',
+  },
+  {
+    id: 'regional',
+    title: { au: 'Health fund question', uk: 'NHS question' },
+    say: { au: 'Do you take Bupa? Can I claim on the spot?', uk: 'Are you taking on new NHS patients?' },
+    watch: { au: 'Answers from the practice’s own facts', uk: 'Offers private care without pressure' },
+  },
+  {
+    id: 'emergency',
+    title: 'Describe an emergency',
+    say: { au: 'My face is swollen and it’s getting hard to swallow.', uk: 'My face is swollen and it’s getting hard to swallow.' },
+    watch: { au: 'Says “call 000” first and alerts the practice', uk: 'Says “call 999” first and alerts the practice' },
+  },
+] as const;
+const both = (v: string | { au: string; uk: string }) => (typeof v === 'string' ? { au: v, uk: v } : v);
 ---
 {
   WEB_DEMO.enabled && (
-    <div id="talk" class="live card mb-[max(3rem,4.5vw)] grid grid-cols-1 overflow-hidden lg:grid-cols-12" data-live-demo
+    <div id="talk" class="live glass mb-[max(2.5rem,3.5vw)] grid grid-cols-1 overflow-hidden lg:grid-cols-12" data-live-demo
       data-api={WEB_DEMO.api} data-client-id={WEB_DEMO.googleClientId} data-state="signed-out">
-      {/* Left: what this is */}
+      {/* Left: you play the patient */}
       <div class="flex flex-col justify-between gap-8 border-b border-[var(--line)] px-5 py-6 sm:px-7 lg:col-span-5 lg:border-b-0 lg:border-r">
         <div>
           <p class="ord-label flex items-center gap-2.5 text-aqua-light">
-            <span class="live-dot" aria-hidden="true"></span> Live demo · about three minutes
+            <span class="live-dot" aria-hidden="true"></span> Live · in your browser · about three minutes
           </p>
-          <h3 class="h3 mt-3">Talk to it yourself.</h3>
-          <p class="mt-3 max-w-[44ch] text-[0.9375rem] leading-relaxed text-[var(--fg-2)]">
-            Sign in with Google, tap the button and speak to Ava, the AI receptionist at <R v={DEMO_PRACTICE} />, a demo practice.
-            Ask what your patients ask. It books into a real diary, so try to catch it out.
+          <h3 class="h3 mt-3">You're the patient.</h3>
+          <p class="mt-3 max-w-[46ch] text-[0.9375rem] leading-relaxed text-[var(--fg-2)]">
+            Sign in with Google, tap the button and talk to Ava, the AI receptionist at <R v={DEMO_PRACTICE} />, a demo practice
+            with a real diary. Pick a part to play, or ask anything your patients ask.
           </p>
-          <p class="ord-label mt-6 text-[var(--fg-3)]">Try saying</p>
-          <ul class="mt-2.5 flex flex-wrap gap-2" aria-label="Things to try saying">
-            {prompts.au.map((p) => <li class="r-au chip live-prompt">“{p}”</li>)}
-            {prompts.uk.map((p) => <li class="r-uk chip live-prompt">“{p}”</li>)}
+          <p class="ord-label mt-6 text-[var(--fg-3)]">Play the patient</p>
+          <ul class="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Things to try saying">
+            {
+              roles.map((r) => (
+                <li>
+                  <button type="button" class="live-role" data-ld-role={r.id}>
+                    <span class="live-role-title"><R v={both(r.title)} /></span>
+                    <span class="live-role-say">“<R v={both(r.say)} />”</span>
+                    <span class="live-role-watch"><R v={both(r.watch)} /></span>
+                  </button>
+                </li>
+              ))
+            }
           </ul>
         </div>
         <p class="text-[0.75rem] leading-relaxed text-[var(--fg-3)]">
-          We use your Google name and e-mail to see who tried the demo, and may contact you about the product. Demo calls are transcribed;
-          don't share real health details. {LINKS.privacy && <a class="underline underline-offset-2 hover:text-[var(--fg)]" href={LINKS.privacy}>Privacy policy</a>}
+          We use your Google name and e-mail to see who tried the demo, and may contact you about the product. Demo calls are transcribed,
+          never recorded; don't share real health details.
+          <a class="underline underline-offset-2 hover:text-[var(--fg)]" href={LINKS.privacy}>Privacy policy</a> ·
+          <a class="underline underline-offset-2 hover:text-[var(--fg)]" href={LINKS.cookies}>Cookie policy</a>
         </p>
       </div>
 
@@ -54,20 +91,31 @@ const prompts = {
         </div>
 
         <div class="flex flex-1 flex-col items-center gap-5 px-5 py-8 sm:px-6">
-          <button type="button" class="live-orb" data-ld-orb disabled aria-describedby="live-status">
+          <button type="button" class="live-orb" data-ld-orb aria-describedby="live-status">
             <span class="live-orb-label" data-ld-label>Sign in to talk</span>
           </button>
           <p id="live-status" class="min-h-[1.5em] text-center text-[0.9375rem] text-[var(--fg-2)]" role="status" aria-live="polite" data-ld-status>
             Sign in with Google to start.
           </p>
-          <div data-ld-signin class="min-h-[44px]"></div>
+          <p class="live-cue" data-ld-cue hidden aria-live="polite"></p>
+          <div data-ld-signin class="live-signin min-h-[44px]"></div>
           <button type="button" class="btn btn-outline !h-11" data-ld-end hidden><span>End call</span></button>
-          <p class="hidden text-center text-[0.875rem] text-alert-light" data-ld-error role="alert"></p>
+          <p class="hidden max-w-[52ch] text-center text-[0.875rem] text-alert-light" data-ld-error role="alert"></p>
           <noscript><p class="text-center text-[0.875rem] text-[var(--fg-3)]">Turn on JavaScript to talk to the demo, or play the sample calls below.</p></noscript>
         </div>
 
-        <ol class="live-log max-h-[260px] space-y-1 overflow-y-auto border-t border-[var(--line)] px-3 py-3 sm:px-5" data-ld-log
-          aria-label="Live transcript" role="log" aria-live="polite" hidden></ol>
+        <div class="live-panes grid grid-cols-1 border-t border-[var(--line)] md:grid-cols-2" data-ld-panes hidden>
+          <section class="min-w-0 border-b border-[var(--line)] px-4 py-4 sm:px-5 md:border-b-0 md:border-r" aria-labelledby="ld-acts-title">
+            <h4 id="ld-acts-title" class="ord-label text-[var(--fg-3)]">What Ava is doing</h4>
+            <ol class="live-acts mt-3" data-ld-acts aria-live="polite">
+              <li class="live-act" data-status="idle"><span class="live-act-icon" aria-hidden="true"></span><span>Waiting for you to speak…</span></li>
+            </ol>
+          </section>
+          <section class="min-w-0 px-3 py-4 sm:px-4" aria-labelledby="ld-log-title">
+            <h4 id="ld-log-title" class="ord-label px-1 text-[var(--fg-3)]">Live captions</h4>
+            <ol class="live-log mt-2 max-h-[280px] space-y-1 overflow-y-auto" data-ld-log aria-label="Live transcript" role="log" aria-live="polite"></ol>
+          </section>
+        </div>
 
         <div class="border-t border-[var(--line)] px-5 py-5 sm:px-6" data-ld-after hidden>
           <p class="text-[var(--fg)]">That was the demo. Want Ava answering your practice's phone?</p>

@@ -286,7 +286,7 @@ html.lenis body {
   .meta,
   .ord-label {
     font-family: var(--font-mono);
-    font-size: max(0.75rem, 2.8vw);
+    font-size: max(0.8125rem, 2.8vw);
     line-height: 1.4;
     letter-spacing: 0;
     font-weight: 500;
@@ -315,7 +315,7 @@ html.lenis body {
     }
     .meta,
     .ord-label {
-      font-size: max(0.75rem, 1.3vw);
+      font-size: max(0.8125rem, 1.3vw);
     }
   }
   @media (min-width: 1025px) {
@@ -344,7 +344,7 @@ html.lenis body {
     }
     .meta,
     .ord-label {
-      font-size: max(0.75rem, 0.7vw);
+      font-size: max(0.8125rem, 0.75vw);
     }
   }
   /* The second clause of a headline, in the band's accent. */
@@ -465,6 +465,14 @@ html.lenis body {
     border: 1px solid var(--line);
     border-radius: 2px;
   }
+  /* A text panel that sits over the orb: dark enough to read on, blurred so the orb still shows through. */
+  .glass {
+    background: rgb(5 9 12 / 0.74);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+  }
   .well {
     background: var(--well);
     border: 1px solid var(--line);
@@ -570,13 +578,97 @@ html.lenis body {
     transition: opacity 0.6s var(--ease-ordin);
   }
   html.motion .ord-step[data-on="false"] {
-    opacity: 0.32;
+    opacity: 0.55;
   }
   .ord-step .ord-num {
     transition: color 0.6s var(--ease-ordin);
   }
   .ord-step[data-on="true"] .ord-num {
     color: var(--accent);
+  }
+
+  /* Privacy flow (Compliance): nodes joined by a line that fills as the steps light up (--p from scenes.ts). */
+  .flow-list {
+    position: relative;
+  }
+  .flow-list::before,
+  .flow-list::after {
+    content: "";
+    position: absolute;
+    left: calc(1.375rem - 0.5px);
+    top: 2.25rem;
+    width: 1px;
+    pointer-events: none;
+  }
+  .flow-list::before {
+    bottom: 2.25rem;
+    background: var(--line-strong);
+  }
+  .flow-list::after {
+    height: calc((100% - 4.5rem) * var(--p, 1));
+    background: linear-gradient(to bottom, var(--color-aqua), var(--color-aqua-light));
+    transition: height 0.3s linear;
+  }
+  .flow-step {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 2.75rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: max(1rem, 1.2vw);
+    row-gap: 0.5rem;
+    padding-block: max(0.7rem, 0.85vw);
+  }
+  @media (min-width: 640px) {
+    .flow-step {
+      grid-template-columns: 2.75rem minmax(0, 1fr) auto;
+    }
+  }
+  .flow-node {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    aspect-ratio: 1;
+    border-radius: 9999px;
+    border: 1px solid var(--line-strong);
+    background: var(--color-night);
+    color: var(--fg-2);
+    transition:
+      color 0.6s var(--ease-ordin),
+      border-color 0.6s var(--ease-ordin),
+      background-color 0.6s var(--ease-ordin),
+      box-shadow 0.6s var(--ease-ordin);
+  }
+  .flow-node svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  .flow-step[data-on="true"] .flow-node,
+  html:not(.motion) .flow-node {
+    color: var(--color-aqua-light);
+    border-color: rgb(94 255 198 / 0.45);
+    background: #07140f;
+    box-shadow: 0 0 18px rgb(52 232 166 / 0.18);
+  }
+  .flow-chip {
+    grid-column: 2;
+    justify-self: start;
+    font-family: var(--font-mono);
+    font-size: max(0.8125rem, 0.75vw);
+    font-weight: 500;
+    line-height: 1.3;
+    color: var(--fg);
+    padding: 0.4em 0.75em;
+    border: 1px solid rgb(94 255 198 / 0.28);
+    background: rgb(52 232 166 / 0.07);
+    border-radius: 2px;
+  }
+  @media (min-width: 640px) {
+    .flow-chip {
+      grid-column: 3;
+      justify-self: end;
+      white-space: nowrap;
+    }
   }
 
   /* Range input (ROI calculator). */
@@ -1011,6 +1103,185 @@ html.js .slot-fill[data-shown="true"] {
 .live-line:last-child {
   background: rgb(52 232 166 / 0.05);
 }
+/* While Ava speaks, her orb glows warmer than when it follows the visitor's voice. */
+[data-live-demo][data-state="listening"] .live-orb {
+  background: radial-gradient(circle at 50% 35%, #d9fff0, var(--color-aqua-light) 50%, var(--color-aqua) 100%);
+}
+
+/* "Play the patient" cards. */
+.live-role {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  height: 100%;
+  padding: 0.8rem 0.9rem;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: rgb(230 236 228 / 0.02);
+  cursor: pointer;
+  transition:
+    border-color 0.3s var(--ease-ordin),
+    background-color 0.3s var(--ease-ordin);
+}
+.live-role:hover {
+  border-color: var(--line-strong);
+  background: rgb(230 236 228 / 0.04);
+}
+.live-role:focus-visible {
+  outline: 2px solid var(--color-aqua-light);
+  outline-offset: 2px;
+}
+.live-role[aria-pressed="true"] {
+  border-color: rgb(94 255 198 / 0.5);
+  background: rgb(52 232 166 / 0.08);
+}
+.live-role-title {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--fg);
+}
+.live-role-say {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+.live-role-watch {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--fg-3);
+}
+.live-role[aria-pressed="true"] .live-role-watch {
+  color: var(--color-aqua-light);
+}
+/* The line to say, big, under the orb, while a part is picked. */
+.live-cue {
+  max-width: 34ch;
+  padding: 0.6rem 0.9rem;
+  border: 1px dashed rgb(94 255 198 / 0.4);
+  border-radius: 2px;
+  text-align: center;
+  font-size: max(1rem, 1.05vw);
+  line-height: 1.45;
+  color: var(--fg);
+}
+.live-cue::before {
+  content: "Say: ";
+  color: var(--color-aqua-light);
+}
+.live-signin[data-nudge="true"] {
+  border-radius: 4px;
+  animation: live-nudge 1.2s var(--ease-ordin) 2;
+}
+@keyframes live-nudge {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(94 255 198 / 0); }
+  40% { box-shadow: 0 0 0 6px rgb(94 255 198 / 0.35); }
+}
+
+/* What Ava is doing, live (agent/activity.py events). */
+.live-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.live-act {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--fg);
+  animation: live-rise 0.35s var(--ease-ordin);
+}
+.live-act[data-status="idle"] {
+  color: var(--fg-3);
+}
+.live-act-detail {
+  display: block;
+  margin-top: 0.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+}
+.live-act-icon {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.15rem;
+  border-radius: 9999px;
+  border: 2px solid rgb(94 255 198 / 0.2);
+  border-top-color: var(--color-aqua-light);
+  animation: live-spin 0.9s linear infinite;
+}
+.live-act[data-status="idle"] .live-act-icon {
+  border-color: var(--line-strong);
+  animation: none;
+}
+.live-act[data-status="done"] .live-act-icon {
+  border: 0;
+  animation: none;
+  background: var(--color-aqua);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 0.8rem no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 0.8rem no-repeat;
+}
+.live-act[data-status="alert"] .live-act-icon,
+.live-act[data-status="failed"] .live-act-icon {
+  border: 0;
+  animation: none;
+  background: var(--color-alert-light, #ff8a7a);
+}
+.live-act[data-status="alert"] {
+  color: var(--color-alert-light, #ff8a7a);
+}
+@keyframes live-rise {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+/* "Prefer to listen?" — the sample calls, folded under the live demo. */
+.sample-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 1rem;
+  row-gap: 0.25rem;
+  padding: max(1rem, 1.2vw) max(1.25rem, 1.6vw);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--card);
+  cursor: pointer;
+  list-style: none;
+  transition: border-color 0.3s var(--ease-ordin);
+}
+.sample-summary::-webkit-details-marker {
+  display: none;
+}
+.sample-summary:hover {
+  border-color: var(--line-strong);
+}
+.sample-summary > .ord-label {
+  grid-column: 1;
+}
+.sample-summary > .t-24 {
+  grid-column: 1;
+}
+.sample-chevron {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-right: 1.5px solid var(--fg-2);
+  border-bottom: 1.5px solid var(--fg-2);
+  transform: rotate(45deg);
+  transition: transform 0.3s var(--ease-ordin);
+}
+.sample-calls[open] .sample-chevron {
+  transform: rotate(-135deg);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1037,4 +1308,80 @@ html.js .slot-fill[data-shown="true"] {
   .preloader {
     display: none !important;
   }
+}
+
+/* ---------- Legal documents (/legal/<key>): long-form reading on paper ---------- */
+.legal-prose {
+  max-width: 72ch;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--color-ink);
+}
+.legal-prose > * + * {
+  margin-top: 1em;
+}
+.legal-prose h2 {
+  margin-top: 2.4em;
+  font-size: 1.375rem;
+  line-height: 1.3;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.legal-prose h3 {
+  margin-top: 1.8em;
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+.legal-prose h2 + *,
+.legal-prose h3 + * {
+  margin-top: 0.6em;
+}
+.legal-prose a {
+  color: var(--color-teal);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.legal-prose strong {
+  font-weight: 600;
+}
+.legal-prose ul,
+.legal-prose ol {
+  padding-left: 1.4em;
+}
+.legal-prose ul {
+  list-style: disc;
+}
+.legal-prose ol {
+  list-style: decimal;
+}
+.legal-prose li + li {
+  margin-top: 0.35em;
+}
+.legal-prose blockquote {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 1em;
+  color: var(--color-slate);
+}
+.legal-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+.legal-prose table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.legal-prose th,
+.legal-prose td {
+  border: 1px solid var(--line);
+  padding: 0.55em 0.75em;
+  text-align: left;
+  vertical-align: top;
+}
+.legal-prose th {
+  background: rgb(5 9 12 / 0.04);
+  font-weight: 500;
 }

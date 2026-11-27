@@ -8,14 +8,16 @@ interface Props {
   titles: Regional<string>;
   descriptions: Regional<string>;
   noindex?: boolean;
+  /** A page that isn't one of the region front pages (e.g. /legal/terms): its own canonical URL, no hreflang pair. */
+  path?: string;
 }
-const { titles, descriptions, noindex = false } = Astro.props;
+const { titles, descriptions, noindex = false, path } = Astro.props;
 const region = regionFromPath(Astro.url.pathname);
 const title = titles[region];
 const description = descriptions[region];
 const facts = REGION[region];
 const site = LINKS.site;
-const canonical = `${site}${facts.path}`;
+const canonical = `${site}${path ?? facts.path}`;
 const ogImage = `${site}/og.png`;
 
 const prices = PLANS.map((p) => p.monthly[region]);
@@ -65,9 +67,9 @@ const jsonLd = {
     <meta name="title-uk" content={titles.uk} />
     <meta name="theme-color" content="#05090C" />
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
-    {!noindex && <link rel="alternate" hreflang="en-AU" href={`${site}/`} />}
-    {!noindex && <link rel="alternate" hreflang="en-GB" href={`${site}/uk/`} />}
-    {!noindex && <link rel="alternate" hreflang="x-default" href={`${site}/`} />}
+    {!noindex && !path && <link rel="alternate" hreflang="en-AU" href={`${site}/`} />}
+    {!noindex && !path && <link rel="alternate" hreflang="en-GB" href={`${site}/uk/`} />}
+    {!noindex && !path && <link rel="alternate" hreflang="x-default" href={`${site}/`} />}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="sitemap" href="/sitemap-index.xml" />
 

@@ -15,7 +15,8 @@ const STATES: Record<string, State> = {
   hero: { x: 0.5, y: 0.02, scale: 0.36, distort: 0.5, alpha: 1, aurora: 1 },
   leak: { x: 0.72, y: -0.4, scale: 0.28, distort: 0.8, alpha: 0.8, aurora: 0.45 },
   demo: { x: -0.74, y: 0.46, scale: 0.24, distort: 1, alpha: 0.7, aurora: 0.25 },
-  guard: { x: 0.68, y: -0.06, scale: 0.34, distort: 0.35, alpha: 0.9, aurora: 0.5 },
+  // Off to the right edge and dimmer: the privacy flow's text sits in front of it.
+  guard: { x: 0.94, y: 0.12, scale: 0.3, distort: 0.35, alpha: 0.55, aurora: 0.4 },
   light: { x: 0.5, y: -0.8, scale: 0.2, distort: 0.3, alpha: 0, aurora: 0 },
   cta: { x: 0, y: 0.04, scale: 0.4, distort: 0.6, alpha: 0.85, aurora: 0.8 },
 };

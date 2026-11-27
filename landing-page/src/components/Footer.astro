@@ -2,17 +2,19 @@
 /**
  * Footer (Ordin): link columns, a full-width wordmark and a mono status line. On desktop it
  * is fixed underneath the page and revealed as the last band scrolls away (motion/scenes.ts).
+ * `home` prefixes the in-page links, for pages that aren't the front page (the /legal pages pass "/").
  */
 import Wordmark from '../assets/laudline.svg';
 import Logo from './Logo.astro';
 import R from './R.astro';
-import { BRAND, LINKS, YEAR } from '../data/site';
+import { BRAND, LEGAL_DOCS, LINKS, YEAR, legalHref } from '../data/site';
 
-const legal = [
-  { href: LINKS.privacy, label: 'Privacy policy' },
-  { href: LINKS.dpa, label: 'Data processing agreement' },
-  { href: LINKS.terms, label: 'Terms of service' },
-].filter((l) => l.href);
+interface Props {
+  home?: string;
+}
+const { home = '' } = Astro.props;
+const own: Partial<Record<string, string>> = { terms: LINKS.terms, privacy: LINKS.privacy, dpa: LINKS.dpa };
+const legal = LEGAL_DOCS.filter((d) => d.footer).map((d) => ({ href: own[d.key] ?? legalHref(d.key), label: d.label }));
 const linkClass = 'text-[max(0.9375rem,1.05vw)] tracking-[-0.01em] text-ink transition-colors duration-300 hover:text-teal';
 const headClass = 'ord-label text-teal';
 ---
@@ -26,17 +28,17 @@ const headClass = 'ord-label text-teal';
     <nav aria-labelledby="f-product" class="lg:col-span-2 lg:col-start-6">
       <h2 id="f-product" class={headClass}>Product</h2>
       <ul class="mt-5 space-y-2.5">
-        <li><a class={linkClass} href="#how-it-works">How it works</a></li>
-        <li><a class={linkClass} href="#demo">Sample calls</a></li>
-        <li><a class={linkClass} href="#roi">ROI calculator</a></li>
-        <li><a class={linkClass} href="#pricing">Pricing</a></li>
+        <li><a class={linkClass} href={`${home}#how-it-works`}>How it works</a></li>
+        <li><a class={linkClass} href={`${home}#demo`}>Live demo</a></li>
+        <li><a class={linkClass} href={`${home}#roi`}>ROI calculator</a></li>
+        <li><a class={linkClass} href={`${home}#pricing`}>Pricing</a></li>
       </ul>
     </nav>
 
     <nav aria-labelledby="f-legal" class="lg:col-span-3">
       <h2 id="f-legal" class={headClass}>Compliance and legal</h2>
       <ul class="mt-5 space-y-2.5">
-        <li><a class={linkClass} href="#compliance">Privacy and hosting</a></li>
+        <li><a class={linkClass} href={`${home}#compliance`}>Privacy and hosting</a></li>
         {legal.map((l) => <li><a class={linkClass} href={l.href}>{l.label}</a></li>)}
       </ul>
     </nav>

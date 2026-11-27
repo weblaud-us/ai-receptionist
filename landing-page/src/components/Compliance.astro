@@ -21,6 +21,15 @@ const flow = [
   { title: { au: 'Auto-purge', uk: 'Auto-purge' }, sub: { au: '30, 60 or 90 days', uk: '30, 60 or 90 days' } },
 ] as const;
 
+// One line icon per step (24×24, stroked): phone, map pin, no-training, lock, timer.
+const ICONS = [
+  '<path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+  '<path d="M12 21s-7-6.1-7-11.5a7 7 0 0 1 14 0C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  '<path d="M12 3.5l1.7 4.3 4.3 1.7-4.3 1.7L12 15.5l-1.7-4.3L6 9.5l4.3-1.7z"/><path d="M4 20 20 4"/>',
+  '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/>',
+  '<circle cx="12" cy="13.5" r="7"/><path d="M12 10v3.5l2.5 2M10 3h4"/>',
+];
+
 const shared = [
   {
     title: CLAIM_ZDR ? 'Zero data retention on AI processing' : 'Never used to train AI',
@@ -54,19 +63,28 @@ const shared = [
         </p>
       </div>
 
-      <figure class="lg:col-span-7">
-        <ol class="border-t border-[var(--line-strong)]" aria-label="How a call's data moves" data-steps>
+      <figure class="glass p-[max(1.25rem,1.8vw)] lg:col-span-7">
+        <p class="ord-label mb-2 flex items-center justify-between gap-4 text-[var(--fg-2)]">
+          <span>How a call's data moves</span>
+          <span class="text-[var(--fg-3)]">01 → 05</span>
+        </p>
+        <ol class="flow-list" aria-label="How a call's data moves" data-steps>
           {
             flow.map((n, i) => (
-              <li class="ord-step grid grid-cols-[2.5rem_1fr] items-baseline gap-x-4 border-b border-[var(--line)] py-[max(1rem,1.25vw)] sm:grid-cols-[3rem_1fr_auto]" data-scene-item>
-                <span class="ord-num ord-label text-[var(--fg-3)]">{String(i + 1).padStart(2, '0')}</span>
-                <span class="t-30 text-[var(--fg)]"><R v={typeof n.title === 'string' ? { au: n.title, uk: n.title } : n.title} /></span>
-                <span class="col-start-2 mt-1 ord-label text-[var(--fg-2)] sm:col-start-3 sm:mt-0 sm:text-right"><R v={n.sub} /></span>
+              <li class="ord-step flow-step" data-scene-item>
+                <span class="flow-node" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" set:html={ICONS[i]} />
+                </span>
+                <span class="flex min-w-0 items-baseline gap-3">
+                  <span class="ord-num ord-label text-[var(--fg-3)]">{String(i + 1).padStart(2, '0')}</span>
+                  <span class="t-30 text-[var(--fg)]"><R v={typeof n.title === 'string' ? { au: n.title, uk: n.title } : n.title} /></span>
+                </span>
+                <span class="flow-chip"><R v={n.sub} /></span>
               </li>
             ))
           }
         </ol>
-        <figcaption class="mt-4 text-[0.8125rem] text-[var(--fg-3)]">
+        <figcaption class="mt-4 border-t border-[var(--line)] pt-4 text-[0.875rem] leading-relaxed text-[var(--fg-2)]">
           Database, transcripts and servers stay in AWS <R v={city} />. Speech and language models run where each provider hosts them.
         </figcaption>
       </figure>

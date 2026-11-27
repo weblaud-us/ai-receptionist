@@ -1,8 +1,10 @@
 ---
 /**
- * Sample calls: a scenario selector driving a two-pane player. Left, the call (waveform, seek,
- * timed transcript); right, the agent's tool calls in step with it. demo-player.ts runs it; without
- * JavaScript every transcript and trace is still fully readable.
+ * The demo section. With the live demo switched on (WEB_DEMO), the visitor talks to Ava first
+ * (LiveDemo.astro) and the recorded sample calls sit below as "prefer to listen?". Without it, the
+ * sample calls lead. Each sample call is a two-pane player: left, the call (waveform, seek, timed
+ * transcript); right, what Ava did, in plain words, in step with it. demo-player.ts runs it; without
+ * JavaScript every transcript and step is still fully readable.
  */
 import LiveDemo from './LiveDemo.astro';
 import Regional from './Regional.astro';
@@ -14,11 +16,12 @@ import { SCENARIOS, SPEAKER_LABEL } from '../data/scenarios';
 import { LINKS, WEB_DEMO } from '../data/site';
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const stamp = (s: number) => `+${s.toFixed(1).padStart(4, '0')}s`;
 const phone = LINKS.demoPhone;
 const hasLive = Boolean(LINKS.demoCall || phone.au || phone.uk);
 const tel = (n: string) => `tel:${n.replace(/[^\d+]/g, '')}`;
-const statusLabel = { ok: 'ok', blocked: 'blocked', alert: 'alert' } as const;
+const statusLabel = { ok: 'done', blocked: 'held back', alert: 'urgent' } as const;
+const live = WEB_DEMO.enabled;
+const count = ['', 'One', 'Two', 'Three', 'Four', 'Five'][SCENARIOS.length] ?? String(SCENARIOS.length);
 const statusClass = {
   ok: 'border-aqua/25 text-aqua',
   blocked: 'border-champagne/35 text-champagne',
@@ -27,20 +30,34 @@ const statusClass = {
 ---
 <section id="demo" data-tone="dark" data-orb="demo" class="tone-dark overflow-hidden" aria-labelledby="demo-title">
   <div class="container-page section-pad">
-    <SectionRule idx="02" label={WEB_DEMO.enabled ? 'Live demo' : 'Sample calls'}>{WEB_DEMO.enabled ? 'Talk to it · or hear four calls' : 'Four scenarios · one rulebook'}</SectionRule>
+    <SectionRule idx="02" label={live ? 'Live demo' : 'Sample calls'}>{live ? 'Talk to it · or listen' : `${count} scenarios · one rulebook`}</SectionRule>
     <div class="mt-[max(2rem,3vw)] grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-end">
-      <h2 id="demo-title" class="h2 lg:col-span-8">Hear it handle real dental calls. <span class="hl">Then see every step it took.</span></h2>
+      {
+        live ? (
+          <h2 id="demo-title" class="h2 lg:col-span-8">Talk to Ava. <span class="hl">Try to catch it out.</span></h2>
+        ) : (
+          <h2 id="demo-title" class="h2 lg:col-span-8">Hear it handle real dental calls. <span class="hl">Then see every step it took.</span></h2>
+        )
+      }
       <p class="lede lg:col-span-4">
-        Four calls practices worry about most. Each follows the rules your team would: no guessing at prices, no diagnosis, emergencies first.
+        {live
+          ? 'You play the patient. Ask about prices, book a visit, describe an emergency, and watch what it does as you speak.'
+          : `${count} calls practices worry about most. Each follows the rules your team would: no guessing at prices, no diagnosis, emergencies first.`}
       </p>
     </div>
 
     <div class="mt-[max(3rem,4.5vw)]">
       <LiveDemo />
-      {WEB_DEMO.enabled && <p class="ord-label mb-3 text-[var(--fg-3)]">Or hear four sample calls · no microphone needed</p>}
     </div>
 
-    <div role="tablist" aria-label="Sample calls" class="grid grid-cols-2 border-l border-t border-[var(--line)] lg:grid-cols-4" data-demo-tabs>
+    <details class="sample-calls" open={!live} data-sample-calls>
+    <summary class:list={['sample-summary', !live && 'hidden']}>
+      <span class="ord-label text-[var(--fg-2)]">Prefer to listen?</span>
+      <span class="t-24 text-[var(--fg)]">Hear {count.toLowerCase()} sample calls <span class="text-[var(--fg-3)]">· no microphone needed</span></span>
+      <span class="sample-chevron" aria-hidden="true"></span>
+    </summary>
+
+    <div role="tablist" aria-label="Sample calls" class:list={['grid grid-cols-2 border-l border-t border-[var(--line)] bg-[var(--card)]', SCENARIOS.length === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4', live && 'mt-4']} data-demo-tabs>
       {
         SCENARIOS.map((s, i) => (
           <button
@@ -73,11 +90,11 @@ const statusClass = {
               const sc = withRecording(s.id, r, s.script[r]);    // real audio + timing once rendered
               const tid = `transcript-${s.id}-${r}`;
               return (
-                <div class={`r-${r} card grid grid-cols-1 overflow-hidden lg:grid-cols-12`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>
+                <div class={`r-${r} glass grid grid-cols-1 overflow-hidden lg:grid-cols-12`} data-player data-duration={sc.duration} data-audio={sc.audio ?? ''}>
                   {/* Left pane: the call */}
                   <div class="flex min-w-0 flex-col lg:col-span-7 lg:border-r lg:border-[var(--line)]">
                     <div class="border-b border-[var(--line)] px-5 pb-5 pt-6 sm:px-7">
-                      <p class="ord-label text-[var(--fg-3)]">call_{s.id} · report</p>
+                      <p class="ord-label text-[var(--fg-3)]">Sample call · {fmt(sc.duration)}</p>
                       <h3 class="h3 mt-2">{sc.title}</h3>
                       <p class="mt-1.5 text-[0.9375rem] text-[var(--fg-2)]">{sc.context}</p>
 
@@ -134,22 +151,22 @@ const statusClass = {
                     </ol>
                   </div>
 
-                  {/* Right pane: the agent trace */}
+                  {/* Right pane: what Ava did, in plain words */}
                   <div class="flex min-w-0 flex-col border-t border-[var(--line)] bg-[rgb(0_0_0/0.22)] lg:col-span-5 lg:border-t-0">
                     <div class="flex items-center justify-between border-b border-[var(--line)] px-5 py-4 sm:px-6">
-                      <p class="ord-label text-[var(--fg)]">Agent trace</p>
+                      <p class="ord-label text-[var(--fg)]">What {SPEAKER_LABEL.assistant} did</p>
                       <span class="chip" data-trace-state>idle</span>
                     </div>
-                    <ol class="flex-1 space-y-0.5 px-2 py-3 font-mono text-[0.75rem] sm:px-3" aria-label="Agent tool calls">
+                    <ol class="flex-1 space-y-0.5 px-2 py-3 sm:px-3" aria-label={`What ${SPEAKER_LABEL.assistant} did`}>
                       {sc.trace.map((t) => (
-                        <li class="trace-row grid grid-cols-[3.75rem_minmax(0,1fr)] gap-x-3 rounded-[2px] px-2 py-2" data-at={t.at}>
-                          <span class="text-[var(--fg-3)] tnum">{stamp(t.at)}</span>
+                        <li class="trace-row grid grid-cols-[2.75rem_minmax(0,1fr)] gap-x-3 rounded-[2px] px-2 py-2" data-at={t.at}>
+                          <span class="pt-0.5 font-mono text-[0.75rem] text-[var(--fg-3)] tnum">{fmt(t.at)}</span>
                           <span class="min-w-0">
                             <span class="flex items-start justify-between gap-2">
-                              <span class="min-w-0 text-[var(--fg)] [overflow-wrap:anywhere]">{t.fn}</span>
-                              <span class:list={['shrink-0 rounded-[2px] border px-1.5 text-[0.625rem] leading-[18px]', statusClass[t.status]]}>{statusLabel[t.status]}</span>
+                              <span class="min-w-0 text-[0.9375rem] leading-snug text-[var(--fg)]">{t.label}</span>
+                              <span class:list={['shrink-0 rounded-[2px] border px-1.5 font-mono text-[0.6875rem] leading-[18px]', statusClass[t.status]]}>{statusLabel[t.status]}</span>
                             </span>
-                            <span class="mt-0.5 block text-[var(--fg-2)] [overflow-wrap:anywhere]">→ {t.result}</span>
+                            <span class="mt-0.5 block text-[0.8125rem] text-[var(--fg-2)] [overflow-wrap:anywhere]">{t.result}</span>
                           </span>
                         </li>
                       ))}
@@ -173,6 +190,7 @@ const statusClass = {
         ))
       }
     </div>
+    </details>
 
     {
       hasLive && (

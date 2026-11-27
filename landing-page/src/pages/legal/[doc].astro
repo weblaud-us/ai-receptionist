@@ -1,0 +1,116 @@
+---
+/**
+ * /legal/<key>: Terms, Privacy, Subscription and billing, Cookies, DPA and the rest.
+ *
+ * The text is edited and published in the platform dashboard (Legal documents) and served by the API
+ * (GET /public/legal/documents/<key>, HTML rendered there with raw HTML escaped). The build fetches it
+ * when the API is reachable, so the page is complete without JavaScript; a small script then fetches
+ * again and shows a newer version if one has been published since the build.
+ */
+import Footer from '../../components/Footer.astro';
+import Logo from '../../components/Logo.astro';
+import Base from '../../layouts/Base.astro';
+import { API_URL, BRAND, LEGAL_DOCS, type LegalKey } from '../../data/site';
+
+export function getStaticPaths() {
+  return LEGAL_DOCS.map((d) => ({ params: { doc: d.key } }));
+}
+
+interface Published {
+  key: string;
+  title: string;
+  version: string;
+  published_at: string;
+  html: string;
+}
+
+const key = Astro.params.doc as LegalKey;
+const meta = LEGAL_DOCS.find((d) => d.key === key)!;
+
+let doc: Published | null = null;
+if (API_URL) {
+  try {
+    const res = await fetch(`${API_URL}/public/legal/documents/${key}`, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) doc = (await res.json()) as Published;
+  } catch {
+    // The API isn't reachable from the build: the browser fetches it instead.
+  }
+}
+const title = doc?.title ?? meta.label.charAt(0).toUpperCase() + meta.label.slice(1);
+const updated = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const titles = { au: `${title} | ${BRAND}`, uk: `${title} | ${BRAND}` };
+const descriptions = { au: `${BRAND} ${meta.label}.`, uk: `${BRAND} ${meta.label}.` };
+---
+<Base titles={titles} descriptions={descriptions} path={`/legal/${key}`}>
+  <main id="main" data-tone="light" class="tone-light bg-paper min-h-dvh">
+    <header class="border-b border-[var(--line)]">
+      <div class="container-page flex items-center justify-between gap-4 py-5">
+        <a href="/" aria-label={`${BRAND} front page`}><Logo /></a>
+        <a href="/" class="ord-label text-teal hover:underline">← Back to {BRAND}</a>
+      </div>
+    </header>
+
+    <div class="container-page grid grid-cols-1 gap-10 py-[max(3rem,5vw)] lg:grid-cols-12">
+      <nav aria-label="Legal documents" class="lg:col-span-3">
+        <p class="ord-label text-teal">Legal</p>
+        <ul class="mt-4 space-y-1.5">
+          {
+            LEGAL_DOCS.map((d) => (
+              <li>
+                <a href={`/legal/${d.key}`} aria-current={d.key === key ? 'page' : undefined}
+                  class:list={['block py-1 text-[0.9375rem] transition-colors hover:text-teal', d.key === key ? 'font-medium text-ink' : 'text-slate']}>
+                  {d.label.charAt(0).toUpperCase() + d.label.slice(1)}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+
+      <article class="min-w-0 lg:col-span-8 lg:col-start-5" data-legal data-key={key} data-api={API_URL} data-version={doc?.version ?? ''} data-published={doc?.published_at ?? ''}>
+        <h1 class="h2 text-ink" data-legal-title>{title}</h1>
+        <p class="ord-label mt-4 text-slate" data-legal-meta>
+          {doc ? `Version ${doc.version} · Last updated ${updated(doc.published_at)}` : ''}
+        </p>
+        <div class="legal-prose mt-8" data-legal-body>
+          {doc ? <Fragment set:html={doc.html} /> : <p class="text-slate" data-legal-pending>Loading…</p>}
+        </div>
+        <noscript>{!doc && <p class="text-slate">This document is being prepared. Please check back soon, or contact us.</p>}</noscript>
+      </article>
+    </div>
+  </main>
+  <Footer home="/" />
+</Base>
+
+<script>
+  // Show the latest published version (the build may be older than the last publish).
+  const el = document.querySelector<HTMLElement>('[data-legal]');
+  const api = el?.dataset.api;
+  if (el && api) {
+    const body = el.querySelector<HTMLElement>('[data-legal-body]')!;
+    const meta = el.querySelector<HTMLElement>('[data-legal-meta]')!;
+    const title = el.querySelector<HTMLElement>('[data-legal-title]')!;
+    const pending = () => {
+      if (!el.dataset.version) body.innerHTML = '<p class="text-slate">This document is being prepared. Please check back soon.</p>';
+    };
+    fetch(`${api}/public/legal/documents/${el.dataset.key}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((doc: { title: string; version: string; published_at: string; html: string } | null) => {
+        if (!doc) return pending();
+        // A typo fix keeps the version, so compare when it was published.
+        if (doc.published_at === el.dataset.published) return;
+        title.textContent = doc.title;
+        document.title = document.title.replace(/^[^|]*\|/, `${doc.title} |`);
+        const date = new Date(doc.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+        meta.textContent = `Version ${doc.version} · Last updated ${date}`;
+        // Rendered by the API from Markdown with raw HTML escaped (core/compliance/legal_docs.render).
+        body.innerHTML = doc.html;
+        el.dataset.version = doc.version;
+        el.dataset.published = doc.published_at;
+      })
+      .catch(pending);
+  } else if (el && !el.dataset.version) {
+    el.querySelector<HTMLElement>('[data-legal-body]')!.innerHTML = '<p class="text-slate">This document is being prepared. Please check back soon.</p>';
+  }
+</script>

@@ -12,8 +12,15 @@
  * - If the browser blocks playback (autoplay rules), the orb asks for a tap and that tap turns the sound
  *   on instead of ending the call. If no agent joins the room, the call ends with a message rather than
  *   leaving the visitor in silence.
+ * - "What Ava is doing" is the agent's `laudline.activity` text stream (AI-receptionist-1/agent/activity.py):
+ *   one JSON event per tool step, updated in place by id (running → done / failed / alert).
+ * - "Play the patient" cards put the line to say under the orb; before a call they also start one
+ *   (or, signed out, point at the Google button).
+ * - The microphone opens before the demo session starts (mic.ts), so a busy or blocked microphone never
+ *   spends a session or sends Ava into an empty room.
  */
-import type { RemoteTrack, Room } from 'livekit-client';
+import type { LocalAudioTrack, RemoteTrack, Room } from 'livekit-client';
+import { acquireMic, micMessage, stopTrack } from './mic';
 import { currentRegion } from './region';
 
 type State = 'signed-out' | 'ready' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ending' | 'ended';
@@ -49,6 +56,15 @@ interface StartResponse {
 interface GoogleId {
   initialize(opts: Record<string, unknown>): void;
   renderButton(el: HTMLElement, opts: Record<string, unknown>): void;
+  prompt(): void;
+}
+
+/** One step from agent/activity.py. */
+interface Activity {
+  id: string;
+  label: string;
+  status: 'running' | 'done' | 'failed' | 'alert';
+  detail?: string;
 }
 declare global {
   interface Window {
@@ -112,6 +128,10 @@ export function initLiveDemo() {
   const practiceForm = $<HTMLFormElement>('[data-ld-practice]');
   const saved = $('[data-ld-saved]');
   const audioBox = $('[data-ld-audio]');
+  const cue = $('[data-ld-cue]');
+  const panes = $('[data-ld-panes]');
+  const acts = $<HTMLOListElement>('[data-ld-acts]');
+  const roles = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-ld-role]'));
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   let state: State = 'signed-out';
@@ -119,6 +139,7 @@ export function initLiveDemo() {
   let credentialAt = 0;
   let firstName = '';
   let room: Room | null = null;
+  let mic: LocalAudioTrack | MediaStreamTrack | null = null;
   let audioCtx: AudioContext | null = null;
   let agentAnalyser: AnalyserNode | null = null;
   let micAnalyser: AnalyserNode | null = null;
@@ -128,14 +149,18 @@ export function initLiveDemo() {
   let maxSeconds = 180;
   let soundBlocked = false;
   let joinTimer = 0;
+  let signInReady = false;
   const segments = new Map<string, HTMLLIElement>();
+  const steps = new Map<string, HTMLLIElement>();
 
   const setState = (next: State) => {
     state = next;
     root.dataset.state = next;
     label.textContent = soundBlocked && IN_CALL.includes(next) && next !== 'ending' ? 'Tap for sound' : LABEL[next];
-    orb.disabled = next === 'signed-out' || next === 'connecting' || next === 'ending';
-    orb.setAttribute('aria-label', next === 'ready' || next === 'ended' ? 'Start the demo call' : IN_CALL.includes(next) ? `Call in progress: ${LABEL[next]}` : LABEL[next]);
+    // Signed out, the orb still works: it points at the Google button rather than doing nothing.
+    orb.disabled = next === 'connecting' || next === 'ending';
+    orb.setAttribute('aria-label', next === 'ready' || next === 'ended' ? 'Start the demo call'
+      : next === 'signed-out' ? 'Sign in with Google to talk' : IN_CALL.includes(next) ? `Call in progress: ${LABEL[next]}` : LABEL[next]);
     endBtn.hidden = !IN_CALL.includes(next) || next === 'ending';
     signin.hidden = next !== 'signed-out';
     after.hidden = next !== 'ended';
@@ -177,6 +202,23 @@ export function initLiveDemo() {
       use_fedcm_for_button: true,
     });
     gid.renderButton(signin, { type: 'standard', theme: 'filled_black', size: 'large', text: 'continue_with', shape: 'rectangular', width: 260 });
+    signInReady = true;
+  };
+
+  /** Signed out and the visitor tapped the orb or a role: show where to sign in (and offer One Tap). */
+  const nudgeSignIn = () => {
+    say('Continue with Google just below to start talking.');
+    signin.dataset.nudge = 'false';
+    void signin.offsetWidth; // restart the animation
+    signin.dataset.nudge = 'true';
+    signin.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' });
+    if (signInReady) {
+      try {
+        window.google?.accounts.id.prompt();
+      } catch {
+        /* the button is still there */
+      }
+    } else void setupSignIn();
   };
 
   const near = new IntersectionObserver(
@@ -209,6 +251,56 @@ export function initLiveDemo() {
     li.querySelector('.live-text')!.textContent = text;
     log.scrollTop = log.scrollHeight;
   };
+
+  // ── What Ava is doing ─────────────────────────────────────────────────
+  const resetSteps = () => {
+    steps.clear();
+    const li = document.createElement('li');
+    li.className = 'live-act';
+    li.dataset.status = 'idle';
+    const icon = document.createElement('span');
+    icon.className = 'live-act-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = 'Listening for what you need…';
+    li.append(icon, text);
+    acts.replaceChildren(li);
+  };
+  const onActivity = (ev: Activity) => {
+    if (!ev?.id || !ev.label) return;
+    acts.querySelector('[data-status="idle"]')?.remove();
+    let li = steps.get(ev.id);
+    if (!li) {
+      li = document.createElement('li');
+      li.className = 'live-act';
+      const icon = document.createElement('span');
+      icon.className = 'live-act-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      li.append(icon, document.createElement('span'));
+      acts.append(li);
+      steps.set(ev.id, li);
+    }
+    li.dataset.status = ev.status || 'running';
+    const body = li.lastElementChild!;
+    body.textContent = ev.label;
+    if (ev.detail) {
+      const d = document.createElement('span');
+      d.className = 'live-act-detail';
+      d.textContent = ev.detail;
+      body.append(d);
+    }
+    acts.scrollTop = acts.scrollHeight;
+  };
+
+  // ── Play the patient ──────────────────────────────────────────────────
+  const pickRole = (btn: HTMLButtonElement | null) => {
+    roles.forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    const line = btn?.querySelector(`.live-role-say .r-${currentRegion()}`)?.textContent?.trim()
+      ?? btn?.querySelector('.live-role-say')?.textContent?.trim() ?? '';
+    cue.textContent = line.replace(/^“|”$/g, '');
+    cue.hidden = !btn || !line;
+  };
+  roles.forEach((b) => b.setAttribute('aria-pressed', 'false'));
 
   // ── Audio level → orb ─────────────────────────────────────────────────
   const analyser = (track: MediaStreamTrack): AnalyserNode | null => {
@@ -264,6 +356,8 @@ export function initLiveDemo() {
     audioBox.replaceChildren();
     agentAnalyser = micAnalyser = null;
     segments.clear();
+    stopTrack(mic);
+    mic = null;
     room = null;
   };
 
@@ -293,11 +387,20 @@ export function initLiveDemo() {
     setState('connecting');
     say('Connecting you to the practice…');
     log.replaceChildren();
-    log.hidden = true;
+    resetSteps();
     saved.textContent = '';
     // Inside the tap: unlock audio before any await, or Safari keeps it muted.
     audioCtx ??= new AudioContext();
     void audioCtx.resume();
+
+    // The microphone first: if it can't open, don't spend a demo session (or send Ava into an empty room).
+    say('Opening your microphone…');
+    try {
+      mic = await acquireMic();
+    } catch (e) {
+      return fail(micMessage(e));
+    }
+    say('Connecting you to the practice…');
 
     let res: Response;
     try {
@@ -346,6 +449,13 @@ export function initLiveDemo() {
         }
       });
       r.on(RoomEvent.Disconnected, () => ended());
+      r.registerTextStreamHandler('laudline.activity', async (reader) => {
+        try {
+          onActivity(JSON.parse(await reader.readAll()) as Activity);
+        } catch {
+          /* a malformed event is skipped, never fatal */
+        }
+      });
       r.registerTextStreamHandler('lk.transcription', async (reader, participant) => {
         const attrs = reader.info.attributes ?? {};
         const micSid = r.localParticipant.getTrackPublication(Track.Source.Microphone)?.trackSid;
@@ -364,25 +474,19 @@ export function initLiveDemo() {
       });
 
       await r.connect(body.url, body.token);
-      try {
-        await r.localParticipant.setMicrophoneEnabled(true);
-      } catch (e) {
-        await r.disconnect();
-        const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
-        return fail(denied ? 'Microphone access was blocked. Allow it in your browser’s address bar, then tap again.'
-          : 'No microphone found. Plug one in, or play the sample calls below.');
-      }
+      await r.localParticipant.publishTrack(mic!, { source: Track.Source.Microphone });
       try {
         await r.startAudio();
       } catch {
         // Not fatal: the orb asks for a tap (AudioPlaybackStatusChanged) and that tap retries.
       }
       soundBlocked = !r.canPlaybackAudio;
-      const mic = r.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
-      if (mic) micAnalyser = analyser(mic);
+      const micMst = r.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+      if (micMst) micAnalyser = analyser(micMst);
       // The agent may already be speaking its greeting; don't overwrite that.
       if (state === 'connecting') setState('listening');
       else setState(state);
+      panes.hidden = false;
       say(soundBlocked
         ? 'Your browser blocked the sound. Tap the button to hear Ava.'
         : `Connected to ${body.practice_name ?? 'the practice'}. Ava will answer in a moment.`);
@@ -397,7 +501,10 @@ export function initLiveDemo() {
       }, AGENT_JOIN_TIMEOUT_MS);
       if (!reduced) raf = requestAnimationFrame(tick);
     } catch {
-      void room?.disconnect();
+      const r = room;
+      room = null;   // so its Disconnected event doesn't show "Call ended" over the error
+      r?.removeAllListeners();
+      void r?.disconnect();
       fail("Couldn't start the call. Please try again, or play the sample calls below.");
     }
   };
@@ -419,11 +526,20 @@ export function initLiveDemo() {
   };
 
   orb.addEventListener('click', () => {
+    if (state === 'signed-out') return nudgeSignIn();
     if (soundBlocked && room) return unblockSound();
     if (state === 'ready' || state === 'ended') void start();
     else if (state === 'listening' || state === 'thinking' || state === 'speaking') stop();
   });
   endBtn.addEventListener('click', stop);
+  roles.forEach((b) =>
+    b.addEventListener('click', () => {
+      pickRole(b);
+      if (state === 'signed-out') nudgeSignIn();
+      else if (state === 'ready' || state === 'ended') void start();
+    }),
+  );
+  document.addEventListener('regionchange', () => pickRole(roles.find((b) => b.getAttribute('aria-pressed') === 'true') ?? null));
   again.addEventListener('click', () => void start());
   window.addEventListener('pagehide', () => void room?.disconnect());
 
