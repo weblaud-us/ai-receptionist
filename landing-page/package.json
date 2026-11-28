@@ -38,7 +38,7 @@
     "eslint-plugin-jsx-a11y-x": "^0.2.0",
     "globals": "^17.14.0",
     "sharp": "^0.35.5",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "typescript-eslint": "^8.73.0"
   }
 }
