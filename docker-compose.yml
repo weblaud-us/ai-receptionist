@@ -13,7 +13,8 @@
 #
 # Code is mounted, so the API, the voice worker and both frontends reload when you save a file.
 # The first start installs the frontend packages (about a minute); later starts reuse them until
-# package-lock.json changes. Sales dialer worker too:  docker compose --profile dialer up --build
+# package-lock.json changes. The sales worker starts too, but nothing is dialled without
+# OUTBOUND_DIALER_ENABLED=true in .env and a started campaign or an approved single call.
 # Other compose files: AI-receptionist-1/docker-compose.dev.yml (public call link tunnels, local
 # Kokoro voice) and deploy/docker-compose.prod.yml (staging / production).
 
@@ -44,12 +45,12 @@ services:
     <<: *backend
     command: python -m agent.worker dev
 
-  # Outbound sales dialer (Phase 4). Off unless you ask for it:  docker compose --profile dialer up
-  # Nothing is dialled without OUTBOUND_DIALER_ENABLED=true in .env and a started campaign.
+  # The outbound sales agent (Phase 4). Only ever started by the dialer for one call: it never answers
+  # an inbound call. Nothing is dialled without OUTBOUND_DIALER_ENABLED=true in .env and a started
+  # campaign or an approved single call. Without it, single calls are cancelled after 2 minutes.
   sales-worker:
     <<: *backend
     command: python -m agent.sales_worker dev
-    profiles: ["dialer"]
 
   # Reminders, digests, calendar sync, WhatsApp replies, the dialer tick. Failed jobs: python -m jobs dead
   jobs:

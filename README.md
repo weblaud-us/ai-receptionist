@@ -198,7 +198,7 @@ each. They share their image layers and run as a non-root user (UID 10001).
 | `api` | `api` | Webhooks, dashboard and platform APIs, call page, health and metrics | Replicas (state lives in Redis) |
 | `worker` | `worker` | LiveKit voice agent; one job per call; drains live calls on SIGTERM | Replicas (2–4 per host) or LiveKit Cloud Agents |
 | `jobs` | `jobs` | arq queue: reminders, digests, calendar and PMS sync, WhatsApp replies, retention, billing ticks | Single instance |
-| `sales-worker` | `worker` | Outbound sales agent; only with the `dialer` profile and `OUTBOUND_DIALER_ENABLED=true` | Single instance |
+| `sales-worker` | `worker` | Outbound sales agent; starts with the dev stack, and in production `deploy.sh` runs it when `OUTBOUND_DIALER_ENABLED=true` | Single instance |
 | `fallback_app` | `api` | Twilio disaster-recovery TwiML on a **separate provider**; rings the business when the main stack is unreachable | Independent |
 
 ### Life of an inbound call
@@ -316,9 +316,9 @@ make dev                # or: npm run stack   (Windows without make)
 | MongoDB / Redis | `localhost:27017` / `localhost:6379` |
 
 Code is mounted into the containers, so the API, the voice worker, both dashboards and the landing page reload on save.
+The outbound sales worker starts too; it dials nothing until `OUTBOUND_DIALER_ENABLED=true`.
 
 ```bash
-npm run stack:dialer    # also start the outbound sales worker (dials nothing until enabled)
 make logs               # follow backend logs
 make down               # stop everything (data volumes are kept)
 ```

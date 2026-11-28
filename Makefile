@@ -12,7 +12,7 @@ test:           ## lint, type check and tests on Linux
 	docker compose run --rm tests
 
 logs:           ## follow the backend logs
-	docker compose logs -f api worker jobs
+	docker compose logs -f api worker sales-worker jobs
 
 images:         ## build the three production backend images locally
 	docker build --target api    -t receptionist-api    AI-receptionist-1

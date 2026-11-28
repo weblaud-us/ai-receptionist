@@ -178,9 +178,9 @@ make dev                                                   # or: npm run stack
 | Platform admin app | http://localhost:5174 |
 | MongoDB / Redis | `localhost:27017` / `localhost:6379` |
 
-Code is mounted, so the API, the worker and both frontends reload when you save a file. To include
-the outbound sales dialer: `npm run stack:dialer`. Nothing is dialled unless
-`OUTBOUND_DIALER_ENABLED=true` is set and a campaign is started.
+Code is mounted, so the API, the worker and both frontends reload when you save a file. The outbound
+sales worker starts with the stack too. Nothing is dialled unless `OUTBOUND_DIALER_ENABLED=true` is set
+and a campaign is started or a single call is approved.
 
 **Smoke checks** once it's up:
 

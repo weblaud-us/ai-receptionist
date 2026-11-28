@@ -62,7 +62,7 @@ what to do when something goes wrong is in [RUNBOOK.md](RUNBOOK.md#outbound-dial
    `uv run python -m scripts.import_dnc_registry us_national 512.txt 737.txt` — and monthly after
    that. `--status` shows what's loaded.
 5. `OUTBOUND_DIALER_ENABLED=true`, restart; run the sales worker
-   (`python -m agent.sales_worker dev` locally, or `docker compose --profile dialer up`; production:
+   (`docker compose up` starts it locally, or `python -m agent.sales_worker dev`; production:
    `deploy.sh` starts `sales-worker` when the flag is on). The Sales dialer page's warning box
    disappears when everything is in place.
 
