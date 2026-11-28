@@ -9,6 +9,7 @@ let level = 'viewer'
 
 vi.mock('@/lib/sales', () => ({
   MODE_LABEL: { human_assisted: 'Human-assisted' },
+  endedText: (r?: { cancelled?: boolean }) => (r?.cancelled ? 'Cancelled before it rang' : 'Call ended'),
   useLiveSalesCalls: () => ({
     data: { total: 1, calls: [{ id: 'att_1', business_name: 'Harbour Dental', to: '+61290000000', status: 'in_progress', mode: 'human_assisted', amd: null, created_at: new Date().toISOString() }] },
     error: null,

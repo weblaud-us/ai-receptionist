@@ -1,4 +1,5 @@
-/** Live call transcripts from LiveKit's `lk.transcription` text streams (power dialer, test calls). */
+/** Live call transcripts from LiveKit's `lk.transcription` text streams (power dialer, test calls, single calls). */
+import { useCallback, useState } from 'react'
 
 /** One line of the live transcript, as LiveKit's `lk.transcription` text streams deliver it. */
 export interface TranscriptSegment { id: string; identity: string; text: string; final: boolean }
@@ -18,4 +19,19 @@ export function readTranscript(reader: TextStreamReader, identity: string, emit:
     }
     emit({ id, identity, text, final: attrs['lk.transcription_final'] !== 'false' })
   })()
+}
+
+/** The transcript as it streams in: a segment is updated in place until it is final. */
+export function useTranscript() {
+  const [segments, setSegments] = useState<TranscriptSegment[]>([])
+  const onTranscript = useCallback((seg: TranscriptSegment) =>
+    setSegments((prev) => {
+      const i = prev.findIndex((s) => s.id === seg.id)
+      if (i === -1) return [...prev, seg]
+      const next = [...prev]
+      next[i] = seg
+      return next
+    }), [])
+  const reset = useCallback(() => setSegments([]), [])
+  return { segments, onTranscript, reset }
 }

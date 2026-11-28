@@ -26,6 +26,8 @@ export const INTERNAL_HELP_ROWS = [
     summary: 'Do-not-call registers, our own list, and what the AI says.' },
   { slug: 'live-calls', title: 'Live calls', group: 'Sales', audience: EVERYONE,
     summary: 'Listening in, taking over and ending a call.' },
+  { slug: 'single-call', title: 'Call one business', group: 'Sales', audience: EVERYONE,
+    summary: 'The AI gets one call ready, you check it, the AI calls. No campaign needed.' },
 ]
 
 export const internalHelp: HelpRegistry = helpRegistry(

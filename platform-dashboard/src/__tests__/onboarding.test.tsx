@@ -92,6 +92,9 @@ describe('welcome tours', () => {
     expect(forManager[0].id).toBe('welcome')
     expect(forManager.find((s) => s.id === 'offers')!.body).toContain('You can edit these')
     expect(resolveSteps(SALES_TOUR.steps, viewer).find((s) => s.id === 'offers')!.body).toContain('Managers edit these')
+    // Single calls are for callers and up: a viewer's tour never points at a button they can't see.
+    expect(forManager.some((s) => s.id === 'single-call')).toBe(true)
+    expect(resolveSteps(SALES_TOUR.steps, viewer).some((s) => s.id === 'single-call')).toBe(false)
   })
 
   it('starts by itself only on the landing page, once', () => {

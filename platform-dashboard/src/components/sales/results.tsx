@@ -41,7 +41,8 @@ export function Results() {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
         <SimpleSelect size="sm" value={campaignId} onChange={(v) => { setCampaignId(v); setPage(1) }}
-          options={[{ value: 'all', label: 'All campaigns' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]} />
+          options={[{ value: 'all', label: 'All campaigns' }, { value: 'single', label: 'Single calls' },
+            ...campaigns.map((c) => ({ value: c.id, label: c.name }))]} />
         <SimpleSelect size="sm" value={outcome} onChange={(v) => { setOutcome(v); setPage(1) }}
           options={[{ value: 'all', label: 'Every outcome' }, ...(f.data?.outcomes ?? []).map((o) => ({ value: o, label: outcomeText(labels, o) }))]} />
         <SimpleSelect size="sm" value={days} onChange={setDays}

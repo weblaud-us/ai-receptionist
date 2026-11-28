@@ -50,6 +50,8 @@ export interface SalesLead {
   agent_notes?: string
   tags: string[]
   website?: string
+  /** They have no website of their own (a person said so, or all they have is a Facebook-style page). */
+  no_website?: boolean
   whatsapp?: string
   whatsapp_consent_at?: string | null
   /** The last estimate the agent gave them on a call. */
@@ -460,6 +462,12 @@ export interface Attempt {
   experiment_id?: string | null
   playbook_applied?: boolean
   memory_lines?: string[]
+  /** A single call (SALES_SINGLE_CALL_PLAN.md): placed for one business, without a campaign. */
+  kind?: 'single'
+  /** Who approved a single call, when, and exactly what they reviewed (and overrode, and why). */
+  approval?: { by: string; by_name?: string; at: string; hash: string; mode_reason?: string; overrides?: string[]; override_reason?: string } | null
+  /** Checks a sales manager overrode on a single call (lib/single-call.ts `Override`). */
+  overrides?: string[]
 }
 
 /** Fixed-rule checks on what the agent said, worked out without a model (backend core/outbound/coach.scan). */
@@ -535,6 +543,8 @@ export interface SalesStatus {
   /** Australian leads with no fresh Do Not Call Register wash (they can't be called until washed). */
   au_dncr_needs_wash: number
   counts: { leads: number; dnc: number }
+  /** Single calls (SALES_SINGLE_CALL_PLAN.md): can they go out at all, and if not, why. */
+  single_calls?: { enabled: boolean; problems: string[]; per_day: number; max_concurrent: number }
 }
 
 export interface Funnel {
@@ -642,6 +652,9 @@ export const useAttempts = (params: Params) =>
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   })
+
+/** The toast after End: a call that hadn't rung yet is called off rather than hung up on. */
+export const endedText = (r: { cancelled?: boolean } | undefined) => (r?.cancelled ? 'Cancelled before it rang' : 'Call ended')
 
 export const useAttempt = (id: string | null, refetchInterval: number | false = false) =>
   useQuery({
@@ -775,7 +788,7 @@ export async function downloadSalesCsv(kind: 'leads' | 'attempts' | 'dncr-wash' 
   URL.revokeObjectURL(url)
 }
 
-export type LeadPatch = Partial<Pick<SalesLead, 'business_name' | 'contact_name' | 'email' | 'notes' | 'agent_notes' | 'timezone' | 'region_code' | 'website'>> & { stage?: string; tags?: string[]; owner_id?: string }
+export type LeadPatch = Partial<Pick<SalesLead, 'business_name' | 'contact_name' | 'email' | 'notes' | 'agent_notes' | 'timezone' | 'region_code' | 'website' | 'vertical' | 'no_website'>> & { stage?: string; tags?: string[]; owner_id?: string }
 
 export function useFollowUpMutations() {
   const done = useDone('s-pipeline', 's-tasks', 's-lead', 's-leads', 's-outbox', 's-meetings')
@@ -813,6 +826,18 @@ export interface CallContext {
     meeting: string
   }
 }
+
+/** Outcomes a person picks after a call they took (never the system-only ones). */
+export const WRAP_OUTCOMES: { value: string; label: string }[] = [
+  { value: 'interested', label: 'Interested' },
+  { value: 'demo_booked', label: 'Meeting booked (I booked it)' },
+  { value: 'callback', label: 'Call back later' },
+  { value: 'not_interested', label: 'Not interested (this offer)' },
+  { value: 'gatekeeper', label: 'Reached a gatekeeper' },
+  { value: 'no_conversation', label: 'No real conversation' },
+  { value: 'voicemail', label: 'Voicemail' },
+  { value: 'wrong_number', label: 'Wrong number' },
+]
 
 export interface WrapUpInput {
   outcome: string
@@ -852,7 +877,8 @@ export function useSalesMutations() {
     researchLead: useMutation({ mutationFn: (id: string) => send<{ research: Research }>(`/leads/${id}/research`, 'POST'), onSuccess: leads }),
     addDnc: useMutation({ mutationFn: (phone: string) => send<{ added: boolean; phone: string }>('/dnc', 'POST', { phone }), onSuccess: leads }),
     join: useMutation({ mutationFn: ({ id, mode }: { id: string; mode: 'listen' | 'takeover' }) => send<JoinInfo>(`/live/${id}/join`, 'POST', { mode }) }),
-    hangUp: useMutation({ mutationFn: (id: string) => send(`/live/${id}/hangup`, 'POST'), onSuccess: live }),
+    // `cancelled`: it hadn't rung yet, so it was called off and nothing was dialled.
+    hangUp: useMutation({ mutationFn: (id: string) => send<{ success: boolean; cancelled?: boolean }>(`/live/${id}/hangup`, 'POST'), onSuccess: live }),
     dialNext: useMutation({
       mutationFn: (campaignId: string) =>
         send<{ dialed: boolean; reason?: string; attempt_id?: string; lead?: SalesLead; join?: JoinInfo; context?: CallContext }>(`/campaigns/${campaignId}/dial-next`, 'POST'),
@@ -891,6 +917,14 @@ const FAILURE_TEXT: Record<string, string> = {
   prospect_cap: 'Called the most times allowed this month',
   timezone_unknown: 'Timezone unknown',
   outside_hours: 'Outside calling hours',
+  offer_declined: 'Said no to this offer',
+  cooldown: 'Resting after saying no to an offer',
+  consent_scope: 'Their consent is for another company',
+  single_gap: 'A single call went to them a few hours ago',
+  single_daily_cap: "Today's single calls are used up",
+  single_busy: 'The most single calls at once are in progress',
+  single_yours_live: 'You already have a single call in progress',
+  single_off: 'Single calls are switched off',
 }
 
 export const failureText = (code: string) => FAILURE_TEXT[code] ?? code.replaceAll('_', ' ')

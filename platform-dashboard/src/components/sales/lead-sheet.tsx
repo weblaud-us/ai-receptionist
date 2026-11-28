@@ -1,7 +1,8 @@
 /** One lead: its checks, details, memory, CRM, research, tasks, timeline, calls and consent. */
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Ban, Brain, CheckCircle2, Loader2, Plus, RotateCcw, Search, ShieldCheck, X, XCircle } from 'lucide-react'
+import { Ban, Brain, CheckCircle2, Loader2, PhoneOutgoing, Plus, RotateCcw, Search, ShieldCheck, X, XCircle } from 'lucide-react'
 import { ConfirmDialog, Field, KeyValue } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -45,7 +46,8 @@ function ResearchCard({ lead }: { lead: SalesLead }) {
           {m.researchLead.isPending ? <Loader2 className="animate-spin" /> : <Search />} {d ? 'Refresh' : 'Research now'}
         </Button>
       </div>
-      {!lead.website ? <p className="text-xs text-muted-foreground">No website on file.</p>
+      {lead.no_website ? <p className="text-xs text-muted-foreground">They don't have a website of their own{lead.website ? ' (only a social media page)' : ''}.</p>
+        : !lead.website ? <p className="text-xs text-muted-foreground">No website on file.</p>
         : !r ? <p className="text-xs text-muted-foreground">Not researched yet.</p>
         : r.status === 'pending' || r.status === 'running' ? <p className="text-xs text-muted-foreground">Queued: it will be read before the call.</p>
         : r.status !== 'done' || !d ? <p className="text-xs text-muted-foreground">Couldn't read it{r.error ? `: ${r.error}` : ''}.</p>
@@ -71,8 +73,18 @@ export function LeadSheet({ id, onClose }: { id: string | null; onClose: () => v
   const f = useFollowUpMutations()
   const [confirmDnc, setConfirmDnc] = useState(false)
   const [requeue, setRequeue] = useState(false)
+  const [, setParams] = useSearchParams()
   const can = useCan()
   const lead = q.data?.lead
+  // A single call (SALES_SINGLE_CALL_PLAN.md) opens over the Dialer page from its URL; this sheet closes first.
+  const callNow = (leadId: string) => {
+    onClose()
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      next.set('call', leadId)
+      return next
+    })
+  }
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
@@ -100,8 +112,13 @@ export function LeadSheet({ id, onClose }: { id: string | null; onClose: () => v
                   {m.checkLead.isPending ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Check now
                 </Button>
               )}
+              {can('caller') && !['dnc', 'bad_number', 'in_progress', 'merged'].includes(lead.status) && (
+                <Button size="sm" title="The AI calls this business now, after you check the call." onClick={() => callNow(lead.id)}>
+                  <PhoneOutgoing /> Call now
+                </Button>
+              )}
               {can('manager') && !['dnc', 'bad_number', 'queued', 'in_progress', 'callback'].includes(lead.status) && (
-                <Button size="sm" variant="outline" onClick={() => setRequeue(true)}><RotateCcw /> Call again</Button>
+                <Button size="sm" variant="outline" onClick={() => setRequeue(true)}><RotateCcw /> Add to a campaign</Button>
               )}
               {can('caller') && lead.status !== 'dnc' && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmDnc(true)}><Ban /> Do not call</Button>}
             </div>
@@ -313,7 +330,7 @@ function RequeueDialog({ leadId, onClose }: { leadId: string; onClose: () => voi
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Call again in another campaign</DialogTitle>
+          <DialogTitle>Add to a campaign</DialogTitle>
           <DialogDescription>Their attempts start again and this campaign's results are kept in their history. A “not interested” offer is never pitched to them again, and they rest after any “no” before another offer calls.</DialogDescription>
         </DialogHeader>
         <Field label="Campaign"><SimpleSelect className="w-full" placeholder="Choose…" value={campaignId} onChange={setCampaignId} options={campaigns.map((c) => ({ value: c.id, label: c.name }))} /></Field>

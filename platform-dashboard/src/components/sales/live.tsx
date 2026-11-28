@@ -8,7 +8,7 @@ import { Button } from '@receptionist/shared/components/ui/button'
 import { Card } from '@receptionist/shared/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { timeAgo, titleCase } from '@receptionist/shared/lib/format'
-import { MODE_LABEL, useLiveSalesCalls, useSalesMutations, type JoinInfo } from '@/lib/sales'
+import { MODE_LABEL, endedText, useLiveSalesCalls, useSalesMutations, type JoinInfo } from '@/lib/sales'
 import { useCan } from '@/lib/roles'
 
 const STAGE: Record<string, string> = { dispatched: 'Starting', dialing: 'Ringing', in_progress: 'On the call' }
@@ -24,7 +24,7 @@ export function Live() {
 
   const join = (id: string, title: string, mode: 'listen' | 'takeover') =>
     m.join.mutate({ id, mode }, { onSuccess: (j) => setJoined({ join: j, title, attemptId: id }) })
-  const hangUp = (id: string) => m.hangUp.mutate(id, { onSuccess: () => toast.success('Call ended') })
+  const hangUp = (id: string) => m.hangUp.mutate(id, { onSuccess: (r) => toast.success(endedText(r)) })
 
   return (
     <div className="space-y-4">
@@ -45,7 +45,11 @@ export function Live() {
                   <TableRow key={c.id}>
                     <TableCell><div className="font-medium">{title}</div><div className="font-mono text-xs text-muted-foreground">{c.to}</div></TableCell>
                     <TableCell>{STAGE[c.status] ?? titleCase(c.status)}{c.amd ? ` · ${titleCase(c.amd.replace('-', ' '))}` : ''}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{MODE_LABEL[c.mode]}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {c.kind === 'single' && <div className="font-medium text-foreground">Single call{c.approval?.by_name ? ` · ${c.approval.by_name}` : ''}
+                        {c.overrides?.length ? <span className="text-amber-700 dark:text-amber-500" title={c.approval?.override_reason || undefined}> · checks overridden</span> : null}</div>}
+                      {MODE_LABEL[c.mode]}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{timeAgo(c.created_at)}</TableCell>
                     <TableCell className="space-x-1 text-right">
                       {caller && <>

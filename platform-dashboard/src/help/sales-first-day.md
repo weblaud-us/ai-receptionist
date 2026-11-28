@@ -12,7 +12,7 @@ The dialer won't open without it. Set it up under **Account** with an authentica
 | Role | Can |
 |---|---|
 | Viewer | Look at everything |
-| Caller | Plus work leads: the power dialer, notes, tasks, wrap-up and do-not-call |
+| Caller | Plus work leads: the power dialer, single calls, notes, tasks, wrap-up and do-not-call |
 | Manager | Plus offers, the AI drafts, campaigns, imports and exports |
 | Admin | Plus the team and the compliance registries (platform admins) |
 
@@ -27,3 +27,6 @@ The dialer won't open without it. Set it up under **Account** with an authentica
 - **Compliance**: do-not-call lists and consent ([the rules](dialer-compliance.md)).
 
 The search box above the tabs finds any lead by name, number or e-mail.
+
+To call one business now without a campaign, use **Call a business** at the top
+([calling one business](single-call.md)).

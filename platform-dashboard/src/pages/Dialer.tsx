@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, PhoneOutgoing, ShieldCheck } from 'lucide-react'
 import { EmptyState, ErrorBanner, Field, PageHeader, Pagination } from '@receptionist/shared/components/blocks'
 import { SecurityCard } from '@receptionist/shared/components/security-card'
 import { Campaigns } from '@/components/sales/campaigns'
@@ -15,6 +15,7 @@ import { NumbersCard } from '@/components/sales/numbers'
 import { Reports } from '@/components/sales/reports'
 import { ActivityLog } from '@/components/sales/activity'
 import { SalesSearch } from '@/components/sales/search'
+import { SingleCallSheet } from '@/components/sales/single-call'
 import { can as canDo, useCan } from '@/lib/roles'
 import { Button } from '@receptionist/shared/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
@@ -42,13 +43,30 @@ export default function Dialer() {
   const status = useSalesStatus()
   const live = useLiveSalesCalls(admin)
   const [quickOffer, setQuickOffer] = useState<string | null>(null)
+  // Single calls (SALES_SINGLE_CALL_PLAN.md): ?call=new, or ?call=<lead id> from a lead's "Call now".
+  const call = canDo(user, 'caller') ? params.get('call') : null
+  const single = status.data?.single_calls
+  const setCall = (value: string | null) =>
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      if (value) next.set('call', value)
+      else next.delete('call')
+      return next
+    }, { replace: !value })
 
   if (!admin) return <EmptyState title="For the sales team only" icon={<ShieldCheck className="size-8" />} />
   const mfa = String((status.error as Error | null)?.message ?? '').startsWith('mfa_required')
 
   return (
     <>
-      <PageHeader title="Sales dialer" help="sales-first-day" description="Outbound calls that sell whatever you offer, and the CRM to close them. Every number passes the compliance checks before every call." />
+      <PageHeader title="Sales dialer" help="sales-first-day" description="Outbound calls that sell whatever you offer, and the CRM to close them. Every number passes the compliance checks before every call."
+        actions={canDo(user, 'caller') ? (
+          <Button data-tour="dialer-single-call" disabled={single ? !single.enabled : false} onClick={() => setCall('new')}
+            title={single && !single.enabled ? single.problems.join(' ') : 'Pick a business: the AI gets the call ready, you check it, the AI calls.'}>
+            <PhoneOutgoing /> Call a business
+          </Button>
+        ) : undefined} />
+      <SingleCallSheet call={call} onClose={() => setCall(null)} />
       <div className="-mt-2 mb-3 flex justify-end" data-tour="dialer-search"><SalesSearch /></div>
       {mfa ? (
         <div className="mb-4 max-w-md space-y-3" data-tour="mfa-card">

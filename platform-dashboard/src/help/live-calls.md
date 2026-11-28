@@ -10,5 +10,8 @@
 
 Listening and taking over need the caller role or above.
 
+A call you placed yourself with **Call a business** shows as **Single call** here, with your name
+([calling one business](single-call.md)).
+
 After the call, write up the outcome on the lead: what they said, and the next step. That's what the
 AI learns from.

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
-import { Loader2, PhoneCall, PhoneOutgoing, Timer } from 'lucide-react'
+import { Loader2, PhoneCall, PhoneOutgoing } from 'lucide-react'
 import { ConfirmDialog, Field } from '@receptionist/shared/components/blocks'
 import { SimpleSelect } from '@receptionist/shared/components/simple-select'
 import { Button } from '@receptionist/shared/components/ui/button'
@@ -9,8 +9,10 @@ import { Input } from '@receptionist/shared/components/ui/input'
 import { Textarea } from '@receptionist/shared/components/ui/textarea'
 import { timeAgo, titleCase } from '@receptionist/shared/lib/format'
 import { cn } from '@receptionist/shared/lib/utils'
-import { CallAudio, type TranscriptSegment } from '@/components/sales/call-audio'
-import { STAGE_LABEL, useAttempt, useCampaigns, useSalesMutations, type CallContext, type JoinInfo, type WrapUpInput } from '@/lib/sales'
+import { CallAudio } from '@/components/sales/call-audio'
+import { CallTimer, Transcript } from '@/components/sales/call-panel'
+import { useTranscript } from '@/lib/transcript'
+import { STAGE_LABEL, WRAP_OUTCOMES, useCampaigns, useSalesMutations, type CallContext, type JoinInfo, type WrapUpInput } from '@/lib/sales'
 
 const REASON: Record<string, string> = {
   no_leads: 'No leads are due to be called right now.',
@@ -21,18 +23,6 @@ const REASON: Record<string, string> = {
   gate: 'The next lead did not pass the compliance checks.',
   legal_review: "This campaign's legal review doesn't cover its current settings. Start it again to confirm.",
 }
-
-/** Outcomes a person picks after a call they took (never the system-only ones). */
-const WRAP_OUTCOMES: { value: string; label: string }[] = [
-  { value: 'interested', label: 'Interested' },
-  { value: 'demo_booked', label: 'Meeting booked (I booked it)' },
-  { value: 'callback', label: 'Call back later' },
-  { value: 'not_interested', label: 'Not interested (this offer)' },
-  { value: 'gatekeeper', label: 'Reached a gatekeeper' },
-  { value: 'no_conversation', label: 'No real conversation' },
-  { value: 'voicemail', label: 'Voicemail' },
-  { value: 'wrong_number', label: 'Wrong number' },
-]
 
 interface LiveCall { attemptId: string; join: JoinInfo; context: CallContext | null; title: string }
 
@@ -45,7 +35,7 @@ export function PowerDialer() {
   const m = useSalesMutations()
   const [campaignId, setCampaignId] = useState('')
   const [call, setCall] = useState<LiveCall | null>(null)
-  const [segments, setSegments] = useState<TranscriptSegment[]>([])
+  const { segments, onTranscript, reset } = useTranscript()
   const [ended, setEnded] = useState(false)
   const [done, setDone] = useState(0)
   const chosen = campaignId || campaigns[0]?.id || ''
@@ -65,19 +55,11 @@ export function PowerDialer() {
     m.dialNext.mutate(chosen, {
       onSuccess: (r) => {
         if (r.dialed && r.join && r.attempt_id) {
-          setSegments([])
+          reset()
           setEnded(false)
           setCall({ attemptId: r.attempt_id, join: r.join, context: r.context ?? null, title: `Calling ${r.lead?.business_name || r.lead?.phone}` })
         } else toast.message(REASON[r.reason ?? ''] ?? 'Nothing was dialled.')
       },
-    })
-  const onTranscript = (seg: TranscriptSegment) =>
-    setSegments((prev) => {
-      const i = prev.findIndex((s) => s.id === seg.id)
-      if (i === -1) return [...prev, seg]
-      const next = [...prev]
-      next[i] = seg
-      return next
     })
   const finished = (andNext: boolean, endCall: boolean) => {
     const current = call
@@ -161,44 +143,6 @@ function LeadPanel({ context }: { context: CallContext | null }) {
           {context?.earlier_calls.map((c) => <div key={c.id} className="text-muted-foreground">{titleCase(c.outcome)} · {timeAgo(c.created_at)}{c.summary ? ` — ${c.summary}` : ''}</div>)}
         </div>
       )}
-    </div>
-  )
-}
-
-function CallTimer({ attemptId, running }: { attemptId: string; running: boolean }) {
-  const q = useAttempt(attemptId, running ? 2000 : false)
-  const answered = (q.data?.attempt as { answered_at?: string | null } | undefined)?.answered_at
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!running) return
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [running])
-  const status = q.data?.attempt.status
-  const secs = answered ? Math.max(0, Math.round((now - new Date(answered).getTime()) / 1000)) : 0
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <Timer className="size-4 text-muted-foreground" />
-      {answered ? <span className="font-medium tabular-nums">{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</span>
-        : <span className="text-muted-foreground">{status === 'dialing' ? 'Ringing…' : status === 'done' ? 'Ended' : 'Connecting…'}</span>}
-      {q.data?.attempt.amd && q.data.attempt.amd !== 'human' && <span className="text-xs text-amber-600">({q.data.attempt.amd.replace('machine-', 'machine: ')})</span>}
-    </div>
-  )
-}
-
-function Transcript({ segments }: { segments: TranscriptSegment[] }) {
-  const box = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = box.current
-    if (el) el.scrollTop = el.scrollHeight                          // follow the conversation
-  }, [segments])
-  return (
-    <div ref={box} role="log" aria-live="polite" aria-label="Live transcript" className="h-72 space-y-1.5 overflow-y-auto rounded-md border p-2 text-sm">
-      {segments.length === 0 ? <p className="text-xs text-muted-foreground">What they say appears here as they speak.</p> : segments.map((s) => (
-        <div key={s.id} className={cn(!s.final && 'text-muted-foreground')}>
-          <span className="mr-1 text-xs font-medium uppercase">{s.identity === 'lead' ? 'Them' : 'AI'}</span>{s.text}
-        </div>
-      ))}
     </div>
   )
 }

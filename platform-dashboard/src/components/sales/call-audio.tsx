@@ -6,6 +6,19 @@ import { readTranscript, type TextStreamRoom, type TranscriptSegment } from '@/l
 
 export type { TranscriptSegment }
 
+// The LiveKit client, loaded the first time a call is joined and then shared.
+let client: Promise<typeof import('livekit-client')> | undefined
+const loadClient = () => (client ??= import('livekit-client'))
+
+/** What to say when joining failed. A join cut off partway (the call ended meanwhile) isn't the person's doing. */
+function joinError(e: unknown): string {
+  const message = e instanceof Error ? e.message : ''
+  if ((e as { reasonName?: string } | null)?.reasonName === 'Cancelled' || /cancelled/i.test(message)) {
+    return "Couldn't join the call. It may have just ended."
+  }
+  return message || 'Could not join the call'
+}
+
 /**
  * Joins a sales call's LiveKit room from the browser.
  * - listen: hidden, receive-only. Nobody on the call can hear or see you.
@@ -36,10 +49,16 @@ export function CallAudio({ join, title, onLeave, onHangUp, onTranscript, onEnde
 
   useEffect(() => {
     let cancelled = false
+    // This run's own room. A run that was cleaned up before the client loaded never joins: in dev,
+    // StrictMode mounts twice, and two rooms joining with one token are one identity, so LiveKit would
+    // drop one of them mid-connect ("room connection has been cancelled").
+    let mine: import('livekit-client').Room | null = null
     void (async () => {
       try {
-        const { Room, RoomEvent, Track } = await import('livekit-client')
+        const { Room, RoomEvent, Track } = await loadClient()
+        if (cancelled) return
         const r = new Room()
+        mine = r
         room.current = r
         r.on(RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) sink.current?.appendChild(track.attach())
@@ -59,14 +78,15 @@ export function CallAudio({ join, title, onLeave, onHangUp, onTranscript, onEnde
         setState('connected')
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Could not join the call')
+          setError(joinError(e))
           setState('error')
         }
       }
     })()
     return () => {
       cancelled = true
-      void room.current?.disconnect()
+      void mine?.disconnect()
+      if (room.current === mine) room.current = null
     }
   }, [join.token, join.url, takeover])
 
