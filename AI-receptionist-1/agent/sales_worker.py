@@ -41,6 +41,7 @@ server = AgentServer(
     api_key=settings.LIVEKIT_API_KEY or None,
     api_secret=settings.LIVEKIT_API_SECRET or None,
     num_idle_processes=settings.LIVEKIT_NUM_IDLE_PROCESSES,
+    initialize_process_timeout=settings.LIVEKIT_INITIALIZE_PROCESS_TIMEOUT,
     port=settings.LIVEKIT_WORKER_PORT,
     setup_fnc=prewarm,
     drain_timeout=settings.SALES_MAX_CALL_MINUTES * 60 + 60,     # a sales call is capped, so a short drain is enough

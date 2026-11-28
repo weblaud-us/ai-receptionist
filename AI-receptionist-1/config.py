@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     # ── Voice agent (LiveKit worker, Roadmap Phase 1) ─────
     LIVEKIT_AGENT_NAME:         str = Field(default="receptionist")  # SIP dispatch rule + call links use it
     LIVEKIT_NUM_IDLE_PROCESSES: int = Field(default=1)    # warm spare processes; 2+ in production
+    # How long a job process may take to start (load the VAD, import the agent). LiveKit's own 10 s is too
+    # tight on a busy dev machine: processes are killed mid-start in a loop and no call is ever taken.
+    LIVEKIT_INITIALIZE_PROCESS_TIMEOUT: float = Field(default=30.0, ge=5, le=120)
     LIVEKIT_SIP_OUTBOUND_TRUNK_ID: str = Field(default="")  # ST_… from `lk sip outbound create` (Phase 4)
     # Capacity and deploys (Phase 3, Task 3.6)
     LIVEKIT_DRAIN_TIMEOUT:       int   = Field(default=900)   # s a stopping worker waits for live calls to finish
