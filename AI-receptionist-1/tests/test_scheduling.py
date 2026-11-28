@@ -42,6 +42,11 @@ NOW = datetime(2026, 11, 23, 8, 0, tzinfo=ZoneInfo(TZ)).astimezone(UTC)
 DAY = date(2026, 11, 23)
 
 
+@pytest.fixture(autouse=True)
+def _frozen_db_clock(db_clock):
+    db_clock(NOW)          # or slot locks for these past dates expire as soon as they're written
+
+
 def _at(hh, mm=0, day=DAY):
     return datetime.combine(day, datetime.min.time().replace(hour=hh, minute=mm), tzinfo=ZoneInfo(TZ)).astimezone(UTC)
 

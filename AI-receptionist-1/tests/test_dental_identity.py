@@ -23,6 +23,11 @@ FAMILY_PHONE = "+61412345678"
 OTHER_PHONE = "+61498765432"
 
 
+@pytest.fixture(autouse=True)
+def _frozen_db_clock(db_clock):
+    db_clock(NOW)          # or slot locks for these past dates expire as soon as they're written
+
+
 def _tenant(vertical="dental", tenant_id="ten_dob") -> TenantConfig:
     t = TenantConfig(_id=tenant_id, name="Harbour Smiles", slug=tenant_id.replace("_", "-"), vertical=vertical,
                      country="AU", timezone=SYD, currency="AUD",

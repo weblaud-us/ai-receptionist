@@ -28,6 +28,11 @@ SLOT_2 = "2026-11-24T00:00:00Z"
 NOW = datetime(2026, 11, 23, 9, 0, tzinfo=ZoneInfo(SYD)).astimezone(timezone.utc)   # Monday 09:00
 
 
+@pytest.fixture(autouse=True)
+def _frozen_db_clock(db_clock):
+    db_clock(NOW)          # or slot locks for these past dates expire as soon as they're written
+
+
 class FakePMS:
     """A tiny Cliniko/Dentally: records every request; `fail` maps (method, path-prefix) → behaviour."""
 

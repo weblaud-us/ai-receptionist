@@ -77,6 +77,7 @@ os.environ.update(_TEST_ENV)
 import functools  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
+from datetime import timezone  # noqa: E402
 
 import pytest  # noqa: E402
 from mongomock_motor import AsyncMongoMockClient  # noqa: E402
@@ -110,6 +111,20 @@ async def db():
         yield database
     finally:
         mongodb._db = previous
+
+
+@pytest.fixture
+def db_clock(monkeypatch):
+    """Set the in-memory database's clock: `db_clock(when)`. mongomock drops TTL-indexed rows against
+    the real clock, so a test written for a fixed day (e.g. slot locks, which expire two days after
+    their block) breaks once that day is past. Tests that freeze "now" pin the database to it too."""
+    import mongomock
+
+    def pin(when):
+        moment = when.astimezone(timezone.utc).replace(tzinfo=None) if when.tzinfo else when
+        monkeypatch.setattr(mongomock, "utcnow", lambda: moment)
+
+    return pin
 
 
 @pytest.fixture(autouse=True)
