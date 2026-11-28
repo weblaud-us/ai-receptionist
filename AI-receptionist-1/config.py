@@ -325,7 +325,12 @@ class Settings(BaseSettings):
     SALES_MAX_CALL_MINUTES:   int  = Field(default=10)              # hard cap on one sales call
     SALES_RING_TIMEOUT_S:     int  = Field(default=25)
     SALES_MAX_CALLS_PER_NUMBER_PER_DAY: int = Field(default=30)     # volume discipline per caller ID (Task 4.1)
-    SALES_COST_PER_MINUTE_USD: float = Field(default=0.10)          # estimate used for cost per demo
+    SALES_COST_PER_MINUTE_USD: float = Field(default=0.10)          # cost per demo, only for attempts placed before rates were stamped
+    # Cost before a call (core/billing/carrier_rates.py): Twilio's account-specific trunking rates for the
+    # number's country, cached this long; a call whose estimate is above the limit shows a warning (never a block).
+    CARRIER_RATES_MAX_AGE_DAYS:     int   = Field(default=7, ge=1, le=90)
+    SALES_CARRIER_WARN_USD_PER_MIN: float = Field(default=0.15, ge=0)   # the whole minute: AI + carrier
+    SALES_TYPICAL_CALL_MINUTES:     float = Field(default=3.0, gt=0)    # "a 3-minute call ≈ $…"
     # "Not interested" (not an opt-out): that offer is never pitched to them again, and no other
     # offer may call them for this many days (SALES_DIALER_PLAN.md Phase 1A).
     SALES_NOT_INTERESTED_COOLDOWN_DAYS: int = Field(default=180)

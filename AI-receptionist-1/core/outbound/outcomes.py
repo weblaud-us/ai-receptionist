@@ -85,8 +85,11 @@ def retry_delay(campaign: Dict[str, Any], attempts_made: int) -> timedelta:
     return timedelta(hours=hours[min(max(attempts_made, 1), len(hours)) - 1])
 
 
-def call_cost(duration_s: Optional[float]) -> float:
-    return round(max(0.0, float(duration_s or 0)) / 60 * settings.SALES_COST_PER_MINUTE_USD, 4)
+def call_cost(duration_s: Optional[float], usd_per_min: Optional[float] = None) -> float:
+    """`usd_per_min`: the rate stamped on the attempt when it was dialled (its country, landline or mobile;
+    core/billing/carrier_rates.py). Attempts from before that use SALES_COST_PER_MINUTE_USD."""
+    rate = settings.SALES_COST_PER_MINUTE_USD if usd_per_min is None else float(usd_per_min)
+    return round(max(0.0, float(duration_s or 0)) / 60 * rate, 4)
 
 
 async def apply_to_lead(db: Any, lead_id: str, campaign: Optional[Dict[str, Any]], outcome: str, *,
@@ -194,8 +197,9 @@ async def finish_attempt(db: Any, attempt_id: str, outcome: str, *, now: Optiona
         if value is not None:
             sets[key] = value
     if duration_s is not None:
+        stamped = await db[m.ATTEMPTS].find_one({"_id": attempt_id}, {"est_usd_per_min": 1})
         sets["duration_sec"] = round(float(duration_s), 1)
-        sets["cost_usd"] = call_cost(duration_s)
+        sets["cost_usd"] = call_cost(duration_s, (stamped or {}).get("est_usd_per_min"))
     if callback_at is not None:
         sets["callback_at"] = callback_at           # so the learning loop can tell whether it was kept
     attempt = await db[m.ATTEMPTS].find_one_and_update(

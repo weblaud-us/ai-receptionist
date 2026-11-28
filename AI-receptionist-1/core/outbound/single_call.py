@@ -43,6 +43,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from config import settings
+from core.billing import carrier_rates
 from core.outbound import dialer, gate, importer, learning, number_health, outcomes, persona, phones, registry, research, rules
 from core.outbound import models as m
 from core.outbound import offers as of
@@ -496,6 +497,14 @@ async def review(db: Any, lead: Mapping[str, Any], *, offer_id: str, variant_id:
                              "international call, which fewer people answer."))
     else:
         checks.append(_check("caller_id", "A caller ID", "pass", chosen))
+    # What a minute of this call costs (its country, landline or mobile, our caller ID). Informational: an
+    # expensive number is a warning for the person approving, never a block.
+    cost = await carrier_rates.estimate(db, str(lead.get("phone") or ""), direction="outbound", from_number=chosen,
+                                        now=now)
+    if cost["warn"]:
+        checks.append(_check("call_cost", "This number costs more to call", "warn",
+                             f"About ${cost['per_minute']['mid']:.2f}/min ({cost['basis']}): a "
+                             f"{cost['typical_minutes']:g}-minute call is about ${cost['typical_call_usd']:.2f}."))
     variant = of.variant(offer, variant_id)
     opener = persona.opener(offer, variant, lead, mode, callback=callback) if mode else ""
     campaign = campaign_for({"mode": mode, "offer_id": offer["id"], "offer_version": offer["version"],
@@ -550,6 +559,7 @@ async def review(db: Any, lead: Mapping[str, Any], *, offer_id: str, variant_id:
         "checks": checks, "failures": failures,
         "retry_at": max(retry) if retry and any(c["status"] == "fail" for c in checks) else None,
         "local_times": [{"tz": z, "text": _local(now, z)} for z in zones[:3]],
+        "cost": cost,
         "can_call": bool(mode) and not any(c["status"] == "fail" for c in checks),
         # Overrides: what's applied (part of the hash), what else could be, and whether this person may.
         "overrides": sorted(applied), "overridable": overridable, "may_override": may_override,
@@ -881,7 +891,7 @@ async def place(db: Any, *, lead_id: str, offer_id: str, offer_version: int, var
         attempt_id=attempt_id, lead=claimed, campaign=campaign, from_number=from_number, offer_id=offer_id,
         offer_version=offer_version, variant_id=variant_id, operator=None, decision=decision, now=now,
         variant_pick={"how": KIND}, assignment=dict(learning.OFF), attempt_no=None,
-        dialled_as="callback" if view["status"] == "callback" else KIND)
+        dialled_as="callback" if view["status"] == "callback" else KIND, cost_estimate=rv.get("cost"))
     # `overrides` on the attempt itself: the agent's gate check builds the campaign from it (campaign_for).
     attempt.update(kind=KIND, overrides=applied, approval={
         "by": by, "by_name": by_name[:120], "at": now, "hash": rv["hash"], "material": rv["material"],

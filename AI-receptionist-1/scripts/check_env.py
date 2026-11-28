@@ -209,6 +209,15 @@ async def check_twilio(c: httpx.AsyncClient) -> Result:
     return _http_result(r.status_code, "Twilio")
 
 
+async def check_twilio_pricing(c: httpx.AsyncClient) -> Result:
+    """Call costs before each call come from Twilio's trunking prices (core/billing/carrier_rates.py)."""
+    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN):
+        return "WARN", "no Twilio credentials: call costs use the fallback table in core/billing/costs.py"
+    r = await c.get("https://pricing.twilio.com/v2/Trunking/Countries/US",
+                    auth=(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN))
+    return _http_result(r.status_code, "Twilio pricing")
+
+
 def check_secret_key() -> Result:
     if (m := _missing("SECRET_KEY")):
         return m
@@ -353,6 +362,7 @@ async def main() -> None:
             checks.append(("LK number", check_livekit_number()))
         else:
             checks.append(("Twilio", check_twilio(c)))
+        checks.append(("Call costs", check_twilio_pricing(c)))
         results: list[Result] = []
         for name, job in checks:
             try:

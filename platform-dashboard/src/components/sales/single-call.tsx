@@ -27,6 +27,7 @@ import { useDebounced } from '@receptionist/shared/hooks/use-debounced'
 import { dateTime, titleCase } from '@receptionist/shared/lib/format'
 import { CallAudio } from '@/components/sales/call-audio'
 import { CallTimer, Transcript } from '@/components/sales/call-panel'
+import { costSentence } from '@/lib/call-cost'
 import { ALL_COUNTRIES, isCountry } from '@/lib/countries'
 import { MODE_LABEL, WRAP_OUTCOMES, endedText, useAttempt, useFollowUpMutations, useSalesLeads, useSalesMutations, type JoinInfo, type SalesLead } from '@/lib/sales'
 import { FIELD_LABEL, refusal, useSingleCall, type CallCheck, type CallPrep, type Country, type NewBusiness, type Override, type PlacedCall, type SingleCallReview } from '@/lib/single-call'
@@ -393,6 +394,11 @@ function ReviewStep({ prep, review, onReview, onPrepareAgain, onPlaced, onCancel
                 options={review.caller_ids.map((n) => ({ value: n, label: n }))} />
             : <p className="text-xs text-destructive">No caller ID for this country yet.</p>}
         </Field>
+        {review.cost && (
+          <KeyValue label="Estimated cost">
+            <span className={review.cost.warn ? 'font-medium text-amber-700 dark:text-amber-500' : undefined}>{costSentence(review.cost)}</span>
+          </KeyValue>
+        )}
         {review.opener && (
           <div className="space-y-1">
             <div className="text-xs font-medium">{review.callback ? 'They asked for this call. The AI opens with:' : 'The AI opens with:'}</div>

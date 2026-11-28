@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { ErrorBanner, PageHeader } from '@receptionist/shared/components/blocks'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@receptionist/shared/components/ui/card'
 import { Skeleton } from '@receptionist/shared/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@receptionist/shared/components/ui/table'
 import { Badge } from '@receptionist/shared/components/ui/badge'
-import { useCostModel, useMargins } from '@/lib/platform'
+import { Input } from '@receptionist/shared/components/ui/input'
+import { useDebounced } from '@receptionist/shared/hooks/use-debounced'
+import { SOURCE_TEXT, costSentence, usdRate } from '@/lib/call-cost'
+import { useCarrierRate, useCostModel, useMargins, type CostModel } from '@/lib/platform'
 
 const usd = (n: number, digits = 2) => `$${n.toFixed(digits)}`
 
@@ -15,6 +19,61 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
         <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
       </CardHeader>
       {hint && <CardContent className="pt-0 text-xs text-muted-foreground">{hint}</CardContent>}
+    </Card>
+  )
+}
+
+/** What the phone network charges per minute: the launch markets, and a lookup for any number in the world. */
+function CarrierRates({ rows }: { rows: CostModel['carrier_table'] }) {
+  const [raw, setRaw] = useState('')
+  const number = useDebounced(raw.replace(/[^\d+]/g, ''), 400)
+  const q = useCarrierRate(number.length >= 8 ? number : '')
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Phone network rates</CardTitle>
+        <CardDescription>
+          Twilio Elastic SIP, USD per minute, for this account (refreshed weekly). An outbound call pays the rate of
+          the number it rings, not the inbound rate. "All-in" adds the AI and LiveKit costs above.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Country</TableHead><TableHead className="text-right">Inbound</TableHead>
+            <TableHead className="text-right">To a landline</TableHead><TableHead className="text-right">To a mobile</TableHead>
+            <TableHead className="text-right">All-in inbound</TableHead><TableHead className="text-right">All-in to a mobile</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.country}>
+                <TableCell className="font-medium">
+                  {r.country_name} {r.source !== 'twilio' && <Badge variant="secondary" className="ml-1">{SOURCE_TEXT[r.source]}</Badge>}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{usdRate(r.inbound)}</TableCell>
+                <TableCell className="text-right tabular-nums">{usdRate(r.outbound_landline)}</TableCell>
+                <TableCell className="text-right tabular-nums">{usdRate(r.outbound_mobile)}</TableCell>
+                <TableCell className="text-right tabular-nums">{usdRate(r.per_minute_inbound)}</TableCell>
+                <TableCell className="text-right tabular-nums">{usdRate(r.per_minute_outbound_mobile)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <div className="space-y-2">
+          <label htmlFor="rate-number" className="text-sm font-medium">Check a number, any country</label>
+          <Input id="rate-number" className="max-w-xs" inputMode="tel" placeholder="+61 412 345 678" value={raw}
+            onChange={(e) => setRaw(e.target.value)} />
+          {q.error && <p className="text-xs text-destructive">{q.error instanceof Error ? q.error.message : 'Enter a full international number.'}</p>}
+          {q.data && (
+            <ul className="space-y-1 text-sm" aria-label="Rate for this number">
+              <li><span className="font-medium">Calling it:</span> {costSentence(q.data.outbound)} · carrier {usdRate(q.data.outbound.carrier_usd_per_min)}/min
+                <span className="text-xs text-muted-foreground"> ({q.data.outbound.basis})</span>
+                {q.data.outbound.warn && <Badge variant="destructive" className="ml-1">costs more</Badge>}</li>
+              <li><span className="font-medium">If it were our number, receiving:</span> {costSentence(q.data.inbound)} · carrier {usdRate(q.data.inbound.carrier_usd_per_min)}/min</li>
+            </ul>
+          )}
+        </div>
+      </CardContent>
     </Card>
   )
 }
@@ -121,6 +180,7 @@ export default function Economics() {
           </CardContent>
         </Card>
       </div>
+      {m.carrier_table && <CarrierRates rows={m.carrier_table} />}
       <MarginTable />
       <p className="mt-4 text-xs text-muted-foreground">
         Businesses by status: {Object.entries(m.tenants_by_status).map(([k, n]) => `${k} ${n}`).join(' · ') || 'none yet'}

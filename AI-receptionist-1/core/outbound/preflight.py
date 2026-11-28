@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
 from config import settings
+from core.billing import carrier_rates
 from core.outbound import dialer, number_health, phones, registry, rules, simulate
 from core.outbound import models as m
 from core.outbound import offers as of
@@ -88,6 +89,8 @@ async def checks(db: Any, campaign: Mapping[str, Any], *, now: Optional[datetime
                           f"{len(due)} AU number{'s' if len(due) != 1 else ''} need a wash." if due else "", "compliance" if due else ""))
 
     numbers = list(campaign.get("from_numbers") or [])
+    if leads:
+        out.append(await cost_check(db, [str(lead.get("phone") or "") for lead in leads], numbers, now=now))
     resting = await number_health.rested(db, numbers, now) if numbers else set()
     number_countries = {(phones.parse(n) or phones.PhoneInfo("", "", "", ())).country for n in numbers}
     missing = [c for c in countries if c not in number_countries]
@@ -111,6 +114,26 @@ async def checks(db: Any, campaign: Mapping[str, Any], *, now: Optional[datetime
                       f"Pauses above {g.max_optout_rate * 100:.0f}% opt-outs, below {g.min_answer_rate * 100:.0f}% answered, "
                       f"above {g.max_error_rate * 100:.0f}% errors." if g.enabled else "Turn them on in the campaign.", ""))
     return out
+
+
+def _usd(value: float) -> str:
+    return f"${value:,.2f}" if value >= 0.1 else f"${value:.3f}"
+
+
+async def cost_check(db: Any, phones_list: List[str], from_numbers: List[str], *,
+                     now: Optional[datetime] = None) -> Dict[str, str]:
+    """What calling these leads costs per minute, by country and landline / mobile. A warning when a group
+    is above SALES_CARRIER_WARN_USD_PER_MIN; it never stops the campaign."""
+    s = await carrier_rates.summary(db, phones_list, from_numbers=from_numbers, now=now)
+    parts = [f"{g['country'] or '?'} {g['line_text']} {g['count']:,} · {_usd(g['usd_per_min'])}/min" + (" ⚠" if g["warn"] else "")
+             for g in s["groups"][:6]]
+    more = len(s["groups"]) - 6
+    detail = "; ".join(parts) + (f"; and {more} more" if more > 0 else "") + "."
+    detail += (f" A {s['typical_minutes']:g}-minute call to every {'(sampled) ' if s['sampled'] else ''}lead ≈ "
+               f"{_usd(s['typical_total_usd'])}.")
+    if s["warn"]:
+        detail += f" ⚠ marks numbers above {_usd(settings.SALES_CARRIER_WARN_USD_PER_MIN)}/min."
+    return _check("call_cost", "What the calls cost", "warn" if s["warn"] else "pass", detail)
 
 
 def failed(items: List[Dict[str, str]]) -> List[Dict[str, str]]:

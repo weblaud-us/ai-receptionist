@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from config import settings
+from core.billing import carrier_rates
 from core.billing.costs import call_cost_usd
 from core.billing.usage import aware
 from core.repositories import Repos
@@ -33,7 +34,8 @@ async def reconcile_usage(db: Any, tenant: TenantConfig, now: datetime) -> int:
     settled_before = now - timedelta(seconds=max_s) - MARGIN
     calls = await repos.calls.find({"started_at": {"$gte": now - LOOKBACK, "$lt": settled_before}},
                                    projection={"call_id": 1, "started_at": 1, "ended_at": 1, "updated_at": 1,
-                                               "direction": 1, "outcome": 1}, limit=5000)
+                                               "direction": 1, "outcome": 1, "channel": 1, "caller_phone": 1,
+                                               "dialed_number": 1}, limit=5000)
     if not calls:
         return 0
     have = {u["call_id"] for u in await repos.usage.find(
@@ -50,11 +52,16 @@ async def reconcile_usage(db: Any, tenant: TenantConfig, now: datetime) -> int:
             continue
         seconds = min(max_s, max(0, math.ceil((end - start).total_seconds())))
         outbound = call.get("direction") == "outbound"
+        channel = str(call.get("channel") or "phone")
+        est = await carrier_rates.for_call(repos.db, direction=str(call.get("direction") or "inbound"), channel=channel,
+                                           caller_phone=call.get("caller_phone"), dialed_number=call.get("dialed_number"))
         await repos.usage.update_one(
             {"call_id": call["call_id"], "kind": "voice_minute"},
             {"$setOnInsert": {"quantity": max(1, math.ceil(seconds / 60)), "seconds": seconds,
                               "direction": call.get("direction") or "inbound",
-                              "cost_usd": call_cost_usd(seconds, outbound=outbound),
+                              "cost_usd": call_cost_usd(seconds, outbound=outbound, carrier=est["carrier_usd_per_min"],
+                                                        channel=channel),
+                              "carrier": carrier_rates.stamp(est),
                               "billable": not sales and call.get("outcome") != "unavailable",
                               "at": end, "invoiced": False, "source": "reconciled"}},
             upsert=True)

@@ -1,6 +1,7 @@
 /** Outbound sales dialer (Roadmap Phase 4; SALES_DIALER_PLAN.md): types and data hooks for /platform/sales. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@receptionist/shared/lib/api'
+import type { CostStamp, CostSummary } from '@/lib/call-cost'
 
 export type CampaignMode = 'ai_cold_b2b_us' | 'ai_consented' | 'human_assisted'
 
@@ -881,7 +882,7 @@ export function useSalesMutations() {
     hangUp: useMutation({ mutationFn: (id: string) => send<{ success: boolean; cancelled?: boolean }>(`/live/${id}/hangup`, 'POST'), onSuccess: live }),
     dialNext: useMutation({
       mutationFn: (campaignId: string) =>
-        send<{ dialed: boolean; reason?: string; attempt_id?: string; lead?: SalesLead; join?: JoinInfo; context?: CallContext }>(`/campaigns/${campaignId}/dial-next`, 'POST'),
+        send<{ dialed: boolean; reason?: string; attempt_id?: string; lead?: SalesLead; join?: JoinInfo; context?: CallContext; cost?: CostStamp | null }>(`/campaigns/${campaignId}/dial-next`, 'POST'),
       onSuccess: live,
     }),
     wrapUp: useMutation({
@@ -945,6 +946,11 @@ export function useTeamMutations() {
     update: useMutation({ mutationFn: ({ id, ...body }: { id: string; role?: SalesRole | 'none'; takes_leads?: boolean }) => send<{ member: TeamMember }>(`/team/${id}`, 'PATCH', body), onSuccess: done }),
   }
 }
+
+/** What a minute of this campaign's calls costs, over the leads still to dial (the power dialer's range). */
+export const useCampaignCost = (campaignId: string) =>
+  useQuery({ queryKey: ['s-campaign-cost', campaignId], queryFn: () => get<CostSummary>(`/campaigns/${campaignId}/cost`),
+    enabled: !!campaignId, staleTime: 5 * 60_000 })
 
 export const usePreflight = (campaignId: string | null) =>
   useQuery({ queryKey: ['s-preflight', campaignId], queryFn: () => get<{ checks: PreflightCheck[]; can_start: boolean }>(`/campaigns/${campaignId}/preflight`), enabled: !!campaignId })

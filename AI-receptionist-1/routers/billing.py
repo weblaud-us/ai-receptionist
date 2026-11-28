@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from config import settings
 from core import ratelimit
 from core.auth import Principal, TenantPrincipal, require_platform_admin, require_tenant
-from core.billing import costs, lifecycle, plans, stripe_api, usage
+from core.billing import carrier_rates, costs, lifecycle, plans, stripe_api, usage
 from core.integrations import voice_code
 from core.phone import digits, mask_phone
 from core.repositories.repos import UsersStore
@@ -384,8 +384,21 @@ async def cost_model(admin: Principal = Depends(require_platform_admin)):
             mrr += row["n"] * plan.monthly_revenue_usd(str(row["_id"].get("currency") or ""),
                                                        str(row["_id"].get("interval") or "month"))
     mrr = round(mrr, 2)
-    return {**costs.model(), "last_30d": totals, "tenants_by_status": by_status, "tenants_by_plan": by_plan,
-            "list_mrr_usd": mrr}
+    return to_jsonable({**costs.model(), "last_30d": totals, "tenants_by_status": by_status, "tenants_by_plan": by_plan,
+                        "list_mrr_usd": mrr, "carrier_table": await carrier_rates.table(db)})
+
+
+@platform_billing_router.get("/costs/rate")
+async def carrier_rate(number: str = Query(..., min_length=4, max_length=32),
+                       admin: Principal = Depends(require_platform_admin)):
+    """What one call-minute costs to (outbound) and on (inbound) this number, anywhere in the world."""
+    e164, country, _kind = carrier_rates.classify(number)
+    if not e164 or not country:
+        raise HTTPException(422, "Enter a full international number, e.g. +61 2 9876 5432")
+    db = get_db()
+    return to_jsonable({"number": e164,
+                        "outbound": await carrier_rates.estimate(db, e164, direction="outbound"),
+                        "inbound": await carrier_rates.estimate(db, e164, direction="inbound")})
 
 
 @platform_billing_router.get("/number-orders")

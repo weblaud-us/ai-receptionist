@@ -883,6 +883,20 @@ async def suggest_campaign(body: SuggestBody, admin: Principal = Depends(manager
     return to_jsonable(result)
 
 
+@sales_router.get("/campaigns/{campaign_id}/cost")
+async def campaign_cost(campaign_id: str, admin: Principal = Depends(viewer)):
+    """What a minute of this campaign's calls costs, by country and landline / mobile, over the leads still to
+    dial (the power dialer shows the range next to Dial next)."""
+    from core.billing import carrier_rates
+
+    campaign = await _campaign(campaign_id)
+    leads = await get_db()[m.LEADS].find({"campaign_id": campaign_id, "status": {"$in": ["queued", "callback"]}},
+                                         {"phone": 1}).to_list(50_000)
+    return to_jsonable(await carrier_rates.summary(get_db(), [str(lead.get("phone") or "") for lead in leads],
+                                                   from_numbers=list(campaign.get("from_numbers") or []),
+                                                   now=utcnow()))
+
+
 @sales_router.get("/campaigns/{campaign_id}/preflight")
 async def campaign_preflight(campaign_id: str, admin: Principal = Depends(viewer)):
     """The launch checklist: what must be true before this campaign starts (SALES_SUITE_PLAN.md Phase 10)."""
@@ -1108,9 +1122,11 @@ async def dial_next(campaign_id: str, request: Request, admin: Principal = Depen
         return {"dialed": False, "reason": result["reason"]}
     lead = await _lead(result["lead_id"])
     await _audit(admin, request, "sales.call.dial_next", "call_attempt", result["attempt_id"])
+    attempt = await get_db()[m.ATTEMPTS].find_one({"_id": result["attempt_id"]})
     return {"dialed": True, "attempt_id": result["attempt_id"], "lead": _out({k: v for k, v in lead.items() if k != "gate_log"}),
             "join": _room_token(result["room"], takeover=True, user=admin),
-            "context": await _call_context(await get_db()[m.ATTEMPTS].find_one({"_id": result["attempt_id"]}))}
+            "cost": (attempt or {}).get("cost_estimate"),
+            "context": await _call_context(attempt)}
 
 
 # ── Results ──────────────────────────────────────────────────────────────────

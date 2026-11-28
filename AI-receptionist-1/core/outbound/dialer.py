@@ -30,6 +30,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional
 from pymongo import ReturnDocument
 
 from config import settings
+from core.billing import carrier_rates
 from core.outbound import gate, offers, outcomes, persona, timing
 from core.outbound import models as m
 from core.outbound import phones
@@ -250,9 +251,12 @@ async def pick_from_number(db: Any, campaign: Mapping[str, Any], lead: Mapping[s
 def attempt_doc(*, attempt_id: str, lead: Mapping[str, Any], campaign: Mapping[str, Any], from_number: str,
                 offer_id: str, offer_version: int, variant_id: str, operator: Optional[str],
                 decision: gate.GateDecision, now: datetime, variant_pick: Optional[Dict[str, Any]],
-                assignment: Mapping[str, Any], attempt_no: Optional[int], dialled_as: str) -> Dict[str, Any]:
+                assignment: Mapping[str, Any], attempt_no: Optional[int], dialled_as: str,
+                cost_estimate: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """The call attempt as it is written just before the sales agent is dispatched (campaign dials and
-    single calls alike): what it sells, with which script, from which number, and why the gate let it."""
+    single calls alike): what it sells, with which script, from which number, and why the gate let it.
+    `cost_estimate`: carrier_rates.estimate for this number; its per-minute rate prices the call when it ends."""
+    stamped = carrier_rates.stamp(cost_estimate) if cost_estimate else None
     return {
         "_id": attempt_id, "lead_id": lead["_id"], "campaign_id": campaign.get("_id"), "mode": campaign["mode"],
         "call_id": room_name(attempt_id), "from": from_number, "to": lead["phone"], "persona_id": variant_id,
@@ -264,7 +268,8 @@ def attempt_doc(*, attempt_id: str, lead: Mapping[str, Any], campaign: Mapping[s
         # For the learning loop (SALES_LEARNING_PLAN.md): a callback or a fresh try, and when it rang
         # where they are.
         "dialled_as": dialled_as, "country": str(lead.get("country") or ""),
-        "local": timing.local_slot(lead, now), "variant_pick": variant_pick, **assignment,
+        "local": timing.local_slot(lead, now), "variant_pick": variant_pick,
+        "cost_estimate": stamped, "est_usd_per_min": (stamped or {}).get("usd_per_min"), **assignment,
     }
 
 
@@ -321,11 +326,13 @@ async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], 
 
     assignment = await learning.assign(db, campaign, lead, offer_id=offer_id, offer_version=offer_version,
                                        variant_id=persona_id, now=now, cache=cache)
+    cost = await carrier_rates.estimate(db, str(lead.get("phone") or ""), direction="outbound",
+                                        from_number=from_number, now=now)
     attempt = attempt_doc(attempt_id=attempt_id, lead=lead, campaign=campaign, from_number=from_number,
                           offer_id=offer_id, offer_version=offer_version, variant_id=persona_id, operator=operator,
                           decision=decision, now=now, variant_pick=variant_pick, assignment=assignment,
                           attempt_no=int(lead.get("attempts") or 0) + 1,
-                          dialled_as=str(lead.get("claimed_from") or "queued"))
+                          dialled_as=str(lead.get("claimed_from") or "queued"), cost_estimate=cost)
     await db[m.ATTEMPTS].insert_one(attempt)
     await db[m.LEADS].update_one({"_id": lead["_id"]},
                                  {"$inc": {"attempts": 1}, "$set": {"last_attempt_at": now, "updated_at": now}})

@@ -12,7 +12,8 @@ import { cn } from '@receptionist/shared/lib/utils'
 import { CallAudio } from '@/components/sales/call-audio'
 import { CallTimer, Transcript } from '@/components/sales/call-panel'
 import { useTranscript } from '@/lib/transcript'
-import { STAGE_LABEL, WRAP_OUTCOMES, useCampaigns, useSalesMutations, type CallContext, type JoinInfo, type WrapUpInput } from '@/lib/sales'
+import { rangeSentence, stampSentence, type CostStamp } from '@/lib/call-cost'
+import { STAGE_LABEL, WRAP_OUTCOMES, useCampaignCost, useCampaigns, useSalesMutations, type CallContext, type JoinInfo, type WrapUpInput } from '@/lib/sales'
 
 const REASON: Record<string, string> = {
   no_leads: 'No leads are due to be called right now.',
@@ -24,7 +25,7 @@ const REASON: Record<string, string> = {
   legal_review: "This campaign's legal review doesn't cover its current settings. Start it again to confirm.",
 }
 
-interface LiveCall { attemptId: string; join: JoinInfo; context: CallContext | null; title: string }
+interface LiveCall { attemptId: string; join: JoinInfo; context: CallContext | null; title: string; cost: CostStamp | null }
 
 /**
  * Human-assisted calling: ring the next lead that passes the checks, talk with their details, research
@@ -39,6 +40,8 @@ export function PowerDialer() {
   const [ended, setEnded] = useState(false)
   const [done, setDone] = useState(0)
   const chosen = campaignId || campaigns[0]?.id || ''
+  const cost = useCampaignCost(chosen).data
+  const range = rangeSentence(cost)
 
   if (campaigns.length === 0) {
     return (
@@ -57,7 +60,7 @@ export function PowerDialer() {
         if (r.dialed && r.join && r.attempt_id) {
           reset()
           setEnded(false)
-          setCall({ attemptId: r.attempt_id, join: r.join, context: r.context ?? null, title: `Calling ${r.lead?.business_name || r.lead?.phone}` })
+          setCall({ attemptId: r.attempt_id, join: r.join, context: r.context ?? null, title: `Calling ${r.lead?.business_name || r.lead?.phone}`, cost: r.cost ?? null })
         } else toast.message(REASON[r.reason ?? ''] ?? 'Nothing was dialled.')
       },
     })
@@ -89,13 +92,21 @@ export function PowerDialer() {
           <SimpleSelect size="sm" value={chosen} onChange={setCampaignId} options={campaigns.map((c) => ({ value: c.id, label: c.name }))} />
         )}
         {done > 0 && <span className="text-xs text-muted-foreground">{done} call{done === 1 ? '' : 's'} this session</span>}
-        <Button disabled={m.dialNext.isPending || !!call || !chosen} onClick={dial}>
-          {m.dialNext.isPending ? <Loader2 className="animate-spin" /> : <PhoneCall />} Dial next ({campaigns.find((c) => c.id === chosen)?.progress?.to_dial ?? 0} left)
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button disabled={m.dialNext.isPending || !!call || !chosen} onClick={dial}>
+            {m.dialNext.isPending ? <Loader2 className="animate-spin" /> : <PhoneCall />} Dial next ({campaigns.find((c) => c.id === chosen)?.progress?.to_dial ?? 0} left)
+          </Button>
+          {range && (
+            <span className={cn('text-xs text-muted-foreground', cost?.warn && 'text-amber-700 dark:text-amber-500')}
+              title="What a minute of these calls costs, by the leads' countries and landline or mobile">
+              Calls: {range}{cost?.warn && ' · some numbers cost more'}
+            </span>
+          )}
+        </div>
       </CardHeader>
       {call && (
         <CardContent className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)_20rem]">
-          <LeadPanel context={call.context} />
+          <LeadPanel context={call.context} cost={call.cost} />
           <div className="space-y-3">
             <CallAudio key={call.join.token} join={call.join} title={call.title} onLeave={() => setEnded(true)}
               onHangUp={() => m.hangUp.mutate(call.attemptId)} onTranscript={onTranscript} onEnded={() => setEnded(true)} />
@@ -112,7 +123,7 @@ export function PowerDialer() {
   )
 }
 
-function LeadPanel({ context }: { context: CallContext | null }) {
+function LeadPanel({ context, cost }: { context: CallContext | null; cost: CostStamp | null }) {
   const lead = context?.lead
   if (!lead) return <div className="text-sm text-muted-foreground">Loading the lead…</div>
   const r = context?.research?.data
@@ -123,6 +134,7 @@ function LeadPanel({ context }: { context: CallContext | null }) {
         <div className="text-muted-foreground">{[lead.contact_name, lead.phone].filter(Boolean).join(' · ')}</div>
         {lead.website && <div className="truncate text-xs text-muted-foreground">{lead.website}</div>}
         <div className="text-xs text-muted-foreground">{[lead.region_code, lead.country].filter(Boolean).join(', ')}</div>
+        {cost && <div className="text-xs text-muted-foreground" title={cost.basis}>{stampSentence(cost)}</div>}
       </div>
       {r && (
         <div className="space-y-1 rounded-md bg-muted p-2 text-xs">

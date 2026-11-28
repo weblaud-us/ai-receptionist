@@ -21,6 +21,7 @@ from core.sensitive import HAS_SUMMARY, SUMMARY_PROJECTION, seal, unseal
 from agent.summary import summarise_call
 from agent.telemetry import summarise
 from config import settings
+from core.billing import carrier_rates
 from core.billing.costs import call_cost_usd
 from core.billing.usage import refresh_period_usage
 from core.integrations import webhooks
@@ -254,7 +255,11 @@ class CallRecorder:
             return
         seconds = math.ceil((_utcnow() - self.state.started_at).total_seconds())
         outbound = self.state.direction == "outbound"
-        cost = call_cost_usd(seconds, outbound=outbound)
+        # This call's own phone-network rate: its country, landline or mobile, in or out (never raises).
+        est = await carrier_rates.for_call(get_db(), direction=self.state.direction, channel=self.state.channel,
+                                           caller_phone=self.state.caller_phone, dialed_number=self.state.dialed_number)
+        cost = call_cost_usd(seconds, outbound=outbound, carrier=est["carrier_usd_per_min"], channel=self.state.channel)
+        carrier = carrier_rates.stamp(est)
         # Your own sales calls (Phase 4) are a cost to you, not usage a customer pays for.
         # Calls answered as "unavailable" (suspended / capped) aren't charged to the business either.
         billable = not (settings.SALES_TENANT_ID and tenant_id == settings.SALES_TENANT_ID)             and self.state.outcome != "unavailable"
@@ -263,11 +268,11 @@ class CallRecorder:
             await repos.usage.update_one(
                 {"call_id": self.state.call_id, "kind": "voice_minute"},
                 {"$set": {"quantity": max(1, math.ceil(seconds / 60)), "seconds": seconds,
-                          "direction": self.state.direction, "cost_usd": cost, "billable": billable,
-                          "at": _utcnow()},
+                          "direction": self.state.direction, "cost_usd": cost, "carrier": carrier,
+                          "billable": billable, "at": _utcnow()},
                  "$setOnInsert": {"invoiced": False}},
                 upsert=True)
-            await repos.calls.update_one({"call_id": self.state.call_id}, {"$set": {"cost_usd": cost}})
+            await repos.calls.update_one({"call_id": self.state.call_id}, {"$set": {"cost_usd": cost, "carrier": carrier}})
         except Exception:
             logger.warning("Usage event for call %s failed", self.state.call_id, exc_info=True)
             return

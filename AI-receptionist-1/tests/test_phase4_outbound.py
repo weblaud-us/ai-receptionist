@@ -568,9 +568,19 @@ async def test_no_answer_is_retried_after_the_campaign_delay_then_exhausted(seed
 async def test_an_attempt_is_finished_exactly_once(seeded):
     attempt_id = await _dial(seeded)
     first = await outcomes.finish_attempt(seeded, attempt_id, "demo_booked", now=NOW, duration_s=143, amd="human")
-    assert first["cost_usd"] == pytest.approx(143 / 60 * settings.SALES_COST_PER_MINUTE_USD, abs=1e-4)
+    # Priced at the rate stamped when it was dialled: that number's country and line, all-in.
+    rate = first["est_usd_per_min"]
+    assert rate and first["cost_estimate"]["source"] in ("twilio", "estimate")
+    assert first["cost_usd"] == pytest.approx(143 / 60 * rate, abs=1e-4)
     assert await outcomes.finish_attempt(seeded, attempt_id, "failed", now=NOW) is None
     assert (await seeded[m.LEADS].find_one({}))["status"] == "demo_booked"
+
+
+async def test_an_attempt_from_before_stamped_rates_uses_the_flat_rate(seeded):
+    await seeded[m.ATTEMPTS].insert_one({"_id": "att_old", "lead_id": "nobody", "campaign_id": "cmp_1",
+                                         "status": "dialing", "created_at": NOW, "call_id": "out-att_old"})
+    done = await outcomes.finish_attempt(seeded, "att_old", "no_answer", now=NOW, duration_s=60)
+    assert done["cost_usd"] == pytest.approx(settings.SALES_COST_PER_MINUTE_USD, abs=1e-4)
 
 
 async def test_callback_is_honoured_and_blocked_by_gate_costs_no_attempt(seeded):

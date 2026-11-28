@@ -4,6 +4,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@receptionist/shared/lib/api'
+import type { CallCost } from '@/lib/call-cost'
 import type { SiteDraft } from '@receptionist/shared/lib/site-import'
 
 const NO_TENANT = { tenant: null } as const
@@ -52,6 +53,11 @@ export interface CostModel {
   tenants_by_status: Record<string, number>
   tenants_by_plan: Record<string, number>
   list_mrr_usd: number
+  /** Phone-network rates per launch market (USD/min): Twilio's live rate for this account, or the fallback table. */
+  carrier_table: {
+    country: string; country_name: string; inbound: number; outbound_landline: number; outbound_mobile: number
+    per_minute_inbound: number; per_minute_outbound_mobile: number; source: CallCost['source']; fetched_at: string | null
+  }[]
   note: string
 }
 
@@ -73,6 +79,14 @@ export const useVerticals = () =>
 
 export const useCostModel = () =>
   useQuery({ queryKey: ['p-costs'], queryFn: () => api<CostModel>('/platform/costs', NO_TENANT) })
+
+/** What a minute costs to (outbound) and on (inbound) any number in the world. `number` empty = off. */
+export const useCarrierRate = (number: string) =>
+  useQuery({
+    queryKey: ['p-carrier-rate', number],
+    queryFn: () => api<{ number: string; outbound: CallCost; inbound: CallCost }>('/platform/costs/rate', { params: { number }, ...NO_TENANT }),
+    enabled: number.length >= 4, retry: false, staleTime: 5 * 60_000,
+  })
 
 /* ───────────── one business (details page) ───────────── */
 

@@ -278,6 +278,19 @@ async def test_the_review_trusts_nothing_the_browser_sends(offers_ready):
     assert (await db[m.LEADS].find_one({"_id": "lead_0199"})).get("gate") is None     # a review records nothing
 
 
+async def test_the_review_shows_what_the_call_costs_and_warns_when_it_is_expensive(offers_ready, monkeypatch):
+    db = offers_ready
+    lead = await single_call.resolve(db, "lead_0199")
+    rv = await single_call.review(db, lead, offer_id=WEBLAUD_ID, variant_id="custom_software", now=NOW)
+    cost = rv["cost"]
+    assert cost["direction"] == "outbound" and cost["country"] == "US" and cost["per_minute"]["mid"] > 0
+    assert cost["typical_call_usd"] > 0 and _status(rv, "call_cost") is None and rv["can_call"]
+    monkeypatch.setattr(settings, "SALES_CARRIER_WARN_USD_PER_MIN", 0.01)    # every call is "expensive" now
+    pricey = await single_call.review(db, lead, offer_id=WEBLAUD_ID, variant_id="custom_software", now=NOW)
+    assert _status(pricey, "call_cost") == "warn" and pricey["can_call"]       # a warning, never a block
+    assert pricey["hash"] == rv["hash"]                                         # rates don't change what's approved
+
+
 async def test_the_automated_test_calls_must_pass_like_for_a_campaign(offers_ready, monkeypatch):
     db = offers_ready
     monkeypatch.setattr(settings, "SALES_REQUIRE_SIMULATION", True)
@@ -334,6 +347,7 @@ async def test_approve_and_call_dials_once_and_keeps_the_approval(offers_ready):
     assert attempt["approval"]["by"] == "usr_1" and attempt["approval"]["hash"] == rv["hash"]
     assert attempt["approval"]["material"]["opener"] == rv["opener"] and attempt["arm"] == "off"
     assert attempt["attempt_no"] is None and attempt["dialled_as"] == "single" and attempt["from"] == CALLER_ID
+    assert attempt["est_usd_per_min"] == rv["cost"]["per_minute"]["mid"]       # priced as the person saw it
     lead = await db[m.LEADS].find_one({"_id": "lead_0199"})
     assert lead["status"] == "in_progress" and lead["claimed_for"] == "single" and lead["claimed_from"] == "queued"
     assert lead["attempts"] == 0 and lead["owner_id"] == "usr_1" and lead["gate"]["allowed"]

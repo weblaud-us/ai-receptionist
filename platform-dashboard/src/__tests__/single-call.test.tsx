@@ -52,6 +52,10 @@ function reviewOf(over: Partial<SingleCallReview> = {}): SingleCallReview {
     checks: [{ id: 'call_type', label: 'The AI may call this number', status: 'pass', detail: '' },
       { id: 'calling_window', label: 'Inside calling hours where they are', status: 'pass', detail: '' }],
     failures: [], retry_at: null, local_times: [{ tz: 'America/Chicago', text: 'Tue 17 Nov, 10:00' }],
+    cost: { direction: 'outbound', country: 'US', country_name: 'United States', line_kind: 'landline_or_mobile',
+      line_text: 'landline or mobile', carrier_usd_per_min: 0.01, per_minute: { low: 0.044, mid: 0.048, high: 0.052 },
+      typical_minutes: 3, typical_call_usd: 0.14, source: 'twilio', basis: 'Trunking Outbound Minute - United States',
+      fetched_at: null, warn: false },
     can_call: true, overrides: [], overridable: [], may_override: false, hash: 'hash-1', ...over,
   }
 }
@@ -77,6 +81,7 @@ describe('Call one business', () => {
     expect(prepare.mock.calls[0][0]).toEqual({ lead_id: 'lead_1' })            // straight to Preparing: no business step
     expect(screen.getByText(/an AI assistant calling from WebLaud/)).toBeTruthy()
     expect(screen.getByText('AI cold call to a business')).toBeTruthy()
+    expect(screen.getByText('About $0.048/min · United States, landline or mobile · a 3-min call ≈ $0.14 (Twilio rate)')).toBeTruthy()
     expect(screen.getByText(/Their site has no online booking/)).toBeTruthy()
     expect(screen.getByText('From their website: check it.')).toBeTruthy()      // the contact the AI filled in
     place.mockImplementation((_r: unknown, o: Opts<unknown>) => o.onSuccess?.({ attempt_id: 'att_1', room: 'out-att_1',

@@ -4,6 +4,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@receptionist/shared/lib/api'
+import type { CallCost } from '@/lib/call-cost'
 import type { Attempt, CampaignMode, JoinInfo, SalesLead } from '@/lib/sales'
 
 const BASE = '/platform/sales'
@@ -43,6 +44,8 @@ export interface SingleCallReview {
   failures: string[]
   retry_at: string | null
   local_times: { tz: string; text: string }[]
+  /** What a minute of this call costs: its country, landline or mobile, our caller ID. */
+  cost: CallCost
   can_call: boolean
   /** Overrides applied to this review (the hash covers them). */
   overrides: Override[]

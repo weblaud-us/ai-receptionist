@@ -141,6 +141,18 @@ def _fresh_shared_state():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_pricing_network(monkeypatch):
+    """Call-cost estimates never reach Twilio's pricing API in tests (some tests set Twilio credentials for
+    other reasons): it answers 503, so the fallback table is used. tests/test_carrier_rates.py swaps in its own."""
+    import httpx
+
+    from core.billing import carrier_rates
+
+    monkeypatch.setattr(carrier_rates, "_client", lambda: httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(503))))
+
+
 @pytest.fixture
 async def redis():
     """An in-memory Redis installed as core.redis.get_redis() for the test."""
