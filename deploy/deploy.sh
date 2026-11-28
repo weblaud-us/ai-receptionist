@@ -92,6 +92,7 @@ dc run --rm --no-deps jobs python -m migrations.m0005_encrypt_clinical_text --ap
 dc run --rm --no-deps jobs python -m migrations.m0006_sales_offers --apply
 dc run --rm --no-deps jobs python -m migrations.m0007_sales_crm --apply
 dc run --rm --no-deps jobs python -m migrations.m0008_sales_learning --apply
+dc run --rm --no-deps jobs python -m migrations.m0009_sales_website_offer --apply
 
 echo "==> [3/6] Jobs worker"
 dc up -d --wait --no-deps jobs

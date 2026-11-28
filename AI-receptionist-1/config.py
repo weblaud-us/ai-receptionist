@@ -6,6 +6,7 @@ Defaults are production-safe: a missing variable must never make the system less
 In production the app refuses to boot with unsafe settings (see `_production_guard`).
 """
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -332,6 +333,20 @@ class Settings(BaseSettings):
     # and at most this many times in 30 days by all of them (a callback they asked for is exempt).
     SALES_MIN_HOURS_BETWEEN_CAMPAIGNS: int = Field(default=24)
     SALES_MAX_CALLS_PER_PROSPECT_30D: int = Field(default=6)
+    # Single calls (SALES_SINGLE_CALL_PLAN.md): one business, now, without a campaign. The AI talks, after a
+    # person reviews the call. The compliance gate still decides; these only limit how many.
+    SALES_SINGLE_CALL_FROM_NUMBERS: str = Field(default="")          # comma-separated E.164; campaigns' caller IDs count too
+    SALES_SINGLE_CALLS_PER_DAY: int = Field(default=30, ge=0, le=1000)   # across everyone; 0 = single calls are off
+    SALES_SINGLE_CALLS_MAX_CONCURRENT: int = Field(default=2, ge=1, le=10)
+    SALES_SINGLE_CALL_MIN_GAP_HOURS: int = Field(default=4, ge=0, le=168)  # between two single calls to one business
+    # Where a single call may be an AI cold call to a business: "*" = every country (the owner's call,
+    # 2026-11-28), or ISO codes ("US,BD,PK"). Countries in SALES_AI_COLD_COUNTRIES always count. Where the
+    # law is stricter about AI or automated calls (rules.STRICT_AI_COLD) the review warns, and the person
+    # approving the call sees it; the do-not-call registers and calling hours still apply everywhere.
+    SALES_SINGLE_CALL_COUNTRIES: str = Field(default="*")
+    # Outside the US a single call may ring a business's mobile (the review asks the person approving to
+    # check it is the business's number). US mobiles never: an AI voice needs written consent there.
+    SALES_SINGLE_CALL_MOBILES: bool = Field(default=True)
     # Pre-call research (Phase 2): read each lead's website before the call. Off until switched on;
     # capped per day. Prices are OPENAI_MODEL's (gpt-4o-mini) per million tokens.
     SALES_RESEARCH_ENABLED:   bool  = Field(default=False)
@@ -553,6 +568,15 @@ class Settings(BaseSettings):
         return self._codes(self.SALES_AI_COLD_COUNTRIES)
 
     @property
+    def sales_single_call_countries(self) -> frozenset[str]:
+        """Where a single call may be an AI cold call ("*" = every country), the campaigns' list included."""
+        return self._codes(self.SALES_SINGLE_CALL_COUNTRIES) | self.sales_ai_cold_countries
+
+    @property
+    def sales_single_call_from_numbers(self) -> list[str]:
+        return list(dict.fromkeys(n.strip() for n in self.SALES_SINGLE_CALL_FROM_NUMBERS.split(",") if n.strip()))
+
+    @property
     def sales_trunk_id(self) -> str:
         """The trunk sales calls leave on. Production never falls back to the customers' trunk."""
         if self.SALES_SIP_OUTBOUND_TRUNK_ID or self.is_production:
@@ -639,6 +663,13 @@ class Settings(BaseSettings):
         if unruled:
             raise ValueError(f"SALES_AI_COLD_COUNTRIES has {unruled}: add a calling window and do-not-call list "
                              "for it in core/outbound/rules.py first (and get counsel's sign-off)")
+        odd = sorted(c for c in self._codes(self.SALES_SINGLE_CALL_COUNTRIES) if c != "*" and not re.fullmatch(r"[A-Z]{2}", c))
+        if odd:
+            raise ValueError(f"SALES_SINGLE_CALL_COUNTRIES has {odd}: use \"*\" or two-letter country codes such as US,BD")
+        not_e164 = [n for n in self.sales_single_call_from_numbers
+                    if not (n.startswith("+") and n[1:].isdigit() and 8 <= len(n[1:]) <= 15 and n[1] != "0")]
+        if not_e164:
+            raise ValueError(f"SALES_SINGLE_CALL_FROM_NUMBERS has {not_e164}: use E.164 numbers such as +15125550100")
         return self
 
     @model_validator(mode="after")

@@ -44,7 +44,8 @@ META = "sales_ai_meta"                 # one document per UTC day: what the copi
 # The learning loop (SALES_LEARNING_PLAN.md) spends from its own daily budget, so the coach reviewing
 # every call can never use up what the people editing offers need.
 LEARNING_META = "sales_learning_meta"
-KINDS = ("generate", "assist", "review", "insights", "simulation", "proposal", "compose", "coach", "learn")
+KINDS = ("generate", "assist", "review", "insights", "simulation", "proposal", "compose", "coach", "learn",
+         "single_call")                 # single_call: the offer and script suggested for one business (single_call.py)
 LLM_TIMEOUT_S = 60
 MAX_SITE_TEXT = 20_000
 GENERATE_PAGES = 6

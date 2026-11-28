@@ -404,6 +404,9 @@ def build_prompt(offer: Mapping[str, Any], variant: Mapping[str, Any], lead: Map
     vertical = str(lead.get("vertical") or campaign.get("vertical") or "")
     if vertical:
         lines.append(f"Kind of business: {VERTICAL_LABELS.get(vertical, vertical.replace('_', ' '))}.")
+    online = no_website_line(lead)
+    if online:
+        lines.append(online)
     lines += [
         this_call_line(lead, consented=consented),
         "You have already given your opener. Do not repeat it. Listen to their answer and continue.",
@@ -430,6 +433,19 @@ def build_prompt(offer: Mapping[str, Any], variant: Mapping[str, Any], lead: Map
                   "say otherwise, believe them. Don't tell them you researched them.",
                   *research_lines(research), "</prospect_research>"]
     return "\n".join(lines)
+
+
+def no_website_line(lead: Mapping[str, Any]) -> str:
+    """For a business with no website of its own (a person said so, or all it has is a social page)."""
+    from core.outbound import research
+
+    presence = research.web_presence(lead)
+    if presence not in ("none", "social"):
+        return ""
+    page = research.social_page(str(lead.get("website") or ""))
+    return ("Their website: we couldn't find one of their own"
+            + (f", only a {page} page" if presence == "social" and page else "")
+            + ". Never say you looked at their website. If they say they have one, believe them.")
 
 
 def research_lines(research: Mapping[str, Any]) -> List[str]:

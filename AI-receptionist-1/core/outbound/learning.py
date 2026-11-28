@@ -367,8 +367,9 @@ async def learning_curve(db: Any, offer_id: str, *, now: Optional[datetime] = No
 
     now = now or utcnow()
     since = now - timedelta(weeks=weeks)
+    # Single calls go to businesses a person picked by hand: counting them would flatter the curve.
     rows = await db[m.ATTEMPTS].find({"offer_id": offer_id, "status": "done", "created_at": {"$gte": since},
-                                      "mode": {"$ne": "human_assisted"}},
+                                      "mode": {"$ne": "human_assisted"}, "kind": {"$ne": "single"}},
                                      {"transcript": 0, "gate": 0}).limit(50_000).to_list(50_000)
     by_week: Dict[str, List[Mapping[str, Any]]] = {}
     for r in rows:

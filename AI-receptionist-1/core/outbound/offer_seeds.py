@@ -4,6 +4,9 @@ platform dashboard afterwards).
 
 - off_laudline        the LaudLine AI receptionist: the original scripts, unchanged in meaning
 - off_weblaud_studio  WebLaud LLC's custom AI and software services, written from weblaud.com
+- off_weblaud_websites  (a DRAFT, migrations/m0009) a website for a business that has none, or only a
+                      Facebook page. Nothing in it is published until someone checks it, confirms its
+                      facts and publishes it; it quotes no prices
 
 Every claim in a seed is something weblaud.com or the product itself states. Proof points are the
 only facts the agent may use to back up a claim, so add real results (client names, numbers) only
@@ -19,6 +22,7 @@ from core.outbound import persona
 
 LAUDLINE_ID = "off_laudline"
 WEBLAUD_ID = "off_weblaud_studio"
+WEBSITES_ID = "off_weblaud_websites"     # a draft (migrations/m0009): websites for businesses that have none
 
 _OPT_OUT = "If you'd rather not get calls like this, just say so and I'll take you off our list."
 
@@ -147,3 +151,122 @@ _CALLBACK_OPENER = ("Hi, it's {persona}, the AI assistant from {company}, callin
 def seeds() -> Dict[str, Dict[str, Any]]:
     return {LAUDLINE_ID: {**persona.legacy_offer_settings(), "callback_opener": _CALLBACK_OPENER},
             WEBLAUD_ID: {**weblaud_studio(), "callback_opener": _CALLBACK_OPENER}}
+
+
+def weblaud_websites() -> Dict[str, Any]:
+    """Websites for businesses that have none. Written as a starting point: every fact in it must be
+    checked and confirmed in the offer editor before it can be published (m0009 marks them)."""
+    return {
+        "name": "WebLaud: a website for your business", "brand": "weblaud", "company_name": "WebLaud",
+        "persona_name": settings.SALES_PERSONA_NAME, "website": "weblaud.com",
+        "what_we_sell": (
+            "WebLaud designs and builds websites for businesses that don't have one, or only have a Facebook or "
+            "Instagram page: a fast site that works on phones, with their services, opening hours, location and "
+            "contact details, and buttons to call or message them. We put it live on their own web address."),
+        "ideal_customer": (
+            "Owners of local businesses with no website of their own, or only a social media page, and businesses "
+            "whose website is old or hard to use on a phone."),
+        "value_props": [
+            "People who look them up online find a proper website, not just a social media page",
+            "Works on phones, where most customers look a business up",
+            "Shows what they offer, when they're open and how to reach them, with one-tap call and message buttons",
+            "A fixed price agreed before any work starts",
+            "They own the website we build for them",
+        ],
+        "proof_points": [
+            "We build web apps, client portals and booking systems for businesses",
+            "We offer a free website audit",
+        ],
+        "discovery_questions": [
+            "How do new customers find you today?",
+            "When someone looks you up online, what do they find?",
+            "Do customers ever ask whether you have a website?",
+        ],
+        "qualification_questions": [
+            "Are they the person who decides on this?",
+            "Do they already have a web address (domain) or a Facebook page?",
+            "Is this something for this month, or later?",
+        ],
+        "pain_hypotheses": [
+            "People who search for them online find a competitor with a website first",
+            "A social media page alone doesn't look established to new customers",
+            "Customers phone just to ask the opening hours, the address or the prices",
+        ],
+        "objections": [
+            {"objection": "We get enough customers from Facebook",
+             "response": "That's great. A website works alongside it: it shows up when people search, and it's "
+                         "theirs, not the platform's. The call is free, with no obligation."},
+            {"objection": "Too expensive / no budget",
+             "response": "We agree a fixed price before any work starts, so there are no surprises. The call is free "
+                         "and they leave with a rough idea of the cost."},
+            {"objection": "We had a website before and it didn't bring anything in",
+             "response": "Fair. On the call we look at what would actually bring customers in, and say honestly if a "
+                         "website isn't worth it for them."},
+            {"objection": "We're too busy right now",
+             "response": "Understood. It's 15 minutes: would later this week or next week be easier?"},
+            {"objection": "Where are you based?",
+             "response": "We're WebLaud LLC, a US software company, and we work with clients remotely."},
+        ],
+        "pricing": {"mode": "never", "text": ""},
+        "call_goal": "book_meeting",
+        "meeting": {"label": "website call", "length_min": 15, "service_name": settings.SALES_DEMO_SERVICE,
+                    "url": settings.SALES_DEMO_MEETING_URL, "host_name": settings.SALES_FOUNDER_NAME},
+        "info_email": {
+            "subject": "{company}: a website for {business}",
+            "body": ("Hi {first_name},\n\nThanks for taking our call. {company} designs and builds websites for "
+                     "businesses: a fast site that works on phones, with your services, opening hours, location and "
+                     "a button to call or message you, live on your own web address.\n\n"
+                     "We agree a fixed price before any work starts, and you own the website we build. Reply to this "
+                     "email to book a free 15-minute {meeting_label}. More at {website}.")},
+        "confirmation_email": {
+            "subject": "Your {company} {meeting_label}: {when}",
+            "body": ("Hi {first_name},\n\nYour 15-minute {meeting_label} with {host} is booked for {when}.\n"
+                     "{meeting_url}\n\nIf you have a Facebook page, photos or a logo you'd like on the site, have them "
+                     "handy. Reply to this email if you need to change the time.")},
+        "consented_opener": ("Hi, this is {persona}, an AI assistant from {company}. You asked us for a call about a "
+                             "website for {business}. Is now a good time? If you'd rather not hear from us, just say "
+                             "so and I'll take you off our list."),
+        "callback_opener": _CALLBACK_OPENER,
+        "voicemail": ("Hi, this is {persona}, an AI assistant from {company}, returning your request for a call "
+                      "about a website. You can reach us on {callback}. If you'd prefer no more calls, call that "
+                      "number and tell us. Thanks, goodbye."),
+        "consent_text": (
+            "By ticking this box and pressing the button, I agree that {company} may call the phone number I "
+            "entered using an artificial (AI-generated) voice and automated dialling technology, to tell me about "
+            "its website design services. My consent is not a condition of buying anything, and I can opt out at "
+            "any time by saying so on a call."),
+        "variants": [
+            {"id": "no_website", "label": "They have no website",
+             "cold_opener": ("Hi, this is {persona}, an AI assistant calling from {company}. We build websites, and I "
+                             "couldn't find one for {business}. Am I speaking with the owner or manager? " + _OPT_OUT),
+             "first_question": "When people look you up online today, what do they find?",
+             "pitch": ("We build a simple website that works on phones, with your services, hours and a call button, "
+                       "at a fixed price agreed up front. Could I set up a free 15-minute call to talk it through?"),
+             "human_opener": ("Hi, this is [your name] from {company}. We build websites, and I couldn't find one for "
+                              "{business}. Is this the owner or manager? If you'd rather not get calls like this, say "
+                              "so and I'll take you off our list.")},
+            {"id": "social_only", "label": "Only a Facebook or Instagram page",
+             "cold_opener": ("Hi, this is {persona}, an AI assistant calling from {company}. I found {business} on "
+                             "social media but not a website of its own. Is the owner or manager around? " + _OPT_OUT),
+             "first_question": "Do most of your customers find you through Facebook, or some other way?",
+             "pitch": ("A website works alongside your page: it shows up when people search and it's yours. We build "
+                       "it at a fixed price agreed up front. Could I set up a free 15-minute call?"),
+             "human_opener": ("Hi, this is [your name] from {company}. I found {business} on social media but not a "
+                              "website of its own. Is the owner or manager around? If you'd rather not get calls like "
+                              "this, say so and I'll take you off our list.")},
+            {"id": "site_refresh", "label": "Their website needs work",
+             "cold_opener": ("Hi, this is {persona}, an AI assistant calling from {company} about the website for "
+                             "{business}. Am I speaking with the owner or manager? " + _OPT_OUT),
+             "first_question": "How many of your new customers come from your website today?",
+             "pitch": ("We rebuild websites so they're fast and easy to use on a phone, at a fixed price agreed up "
+                       "front, and we offer a free website audit. Could I set up a 15-minute call?"),
+             "human_opener": ("Hi, this is [your name] from {company}, about the website for {business}. Is the owner "
+                              "or manager around? If you'd rather not get calls like this, say so and I'll take you "
+                              "off our list.")},
+        ],
+    }
+
+
+def drafts() -> Dict[str, Dict[str, Any]]:
+    """Offers added as drafts (migrations/m0009): nobody calls with them until a person publishes them."""
+    return {WEBSITES_ID: weblaud_websites()}

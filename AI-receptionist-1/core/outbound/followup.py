@@ -62,7 +62,7 @@ def derived_stage(lead: Mapping[str, Any]) -> str:
         return "interested"
     if status in ("not_interested", "dnc", "bad_number"):
         return "lost"
-    if int(lead.get("attempts") or 0) > 0 or (lead.get("history") or []):
+    if int(lead.get("attempts") or 0) > 0 or (lead.get("history") or []) or int(lead.get("single_calls") or 0) > 0:
         return "contacted"
     return "new"
 

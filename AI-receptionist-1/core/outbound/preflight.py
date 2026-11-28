@@ -27,6 +27,9 @@ async def checks(db: Any, campaign: Mapping[str, Any], *, now: Optional[datetime
     now = now or datetime.now(timezone.utc)
     out: List[Dict[str, str]] = []
     problems = dialer.readiness() + dialer.campaign_problems(campaign)
+    tenant = await dialer.tenant_problem(db)
+    if tenant:
+        problems.append(tenant)
     out.append(_check("dialer", "The dialer can place calls", "fail" if problems else "pass", " ".join(problems),
                       "status" if problems else ""))
 

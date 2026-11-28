@@ -54,7 +54,7 @@ async def report(db: Any, *, days: int = 90, now: Optional[datetime] = None) -> 
     cycle = [((_aware(d.get("won_at")) or now) - (_aware(d.get("created_at")) or now)).days for d in won]
     done = {"created_at": {"$gte": since}, "status": "done"}
     meetings = await db[m.ATTEMPTS].find({**done, "outcome": "demo_booked"},
-                                         {"offer_id": 1, "campaign_id": 1, "lead_id": 1}).to_list(20_000)
+                                         {"offer_id": 1, "campaign_id": 1, "lead_id": 1, "kind": 1}).to_list(20_000)
     called = await _distinct_leads(db, done)
     reached = await _distinct_leads(db, {**done, "$or": [{"amd": "human"}, {"outcome": {"$in": list(m.HUMAN_OUTCOMES)}}]})
     lead_source = {}
@@ -79,7 +79,8 @@ async def report(db: Any, *, days: int = 90, now: Optional[datetime] = None) -> 
                     "cycle_days": round(sum(cycle) / len(cycle), 1) if cycle else None},
         "meetings": {"total": len(meetings),
                      "by_offer": dict(Counter(offers.get(a.get("offer_id") or "off_laudline", a.get("offer_id") or "LaudLine (built-in)") for a in meetings)),
-                     "by_campaign": dict(Counter(names.get(a.get("campaign_id"), "—") for a in meetings)),
+                     "by_campaign": dict(Counter("Single calls" if a.get("kind") == "single" else names.get(a.get("campaign_id"), "—")
+                                                 for a in meetings)),
                      "by_source": dict(Counter(lead_source.get(a["lead_id"], "—") for a in meetings))},
         "activity": {who: dict(c) for who, c in activity.items()},
         "funnel": {"leads": leads_total, "called": called, "reached": reached,

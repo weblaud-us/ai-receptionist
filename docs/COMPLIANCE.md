@@ -182,6 +182,78 @@ What it does, and the safeguards in code:
 - that coaching inside the approved offer, which never changes the opener, disclosure, prices, claims or consent, does not need a new legal review of each version (the campaign's sign-off records consent to learning);
 - the retention periods above, and that a "forget" request covers lead memory (it does) and the coach's notes (cleared at 90 days).
 
+### 9b. Single sales calls (SALES_SINGLE_CALL_PLAN.md)
+
+A person on the sales team (caller role or above) can have the AI call one business now, without a
+campaign (`core/outbound/single_call.py`, `routers/sales_calls.py`). The safeguards in code:
+- **Who the AI may call comes from the rules, never the model**: AI cold calls to businesses wherever
+  `SALES_SINGLE_CALL_COUNTRIES` allows (default `*`, every country: the owner's decision on 2026-11-28;
+  `SALES_AI_COLD_COUNTRIES` always counts too), AI consented calls only where
+  `SALES_AI_CONSENTED_COUNTRIES` allows and an active consent covers the offer's company (written in the
+  US). Set `SALES_SINGLE_CALL_COUNTRIES=US` to go back to US business landlines only.
+- **Stricter countries get a warning, not a block** (`rules.STRICT_AI_COLD`): the UK (PECR reg. 19),
+  the EU/EEA (ePrivacy art. 13), Canada (CRTC ADAD rules), Australia (an AI voice may be a "recorded
+  message"), India (TRAI TCCCPR: registered telemarketers and the DND register) and the UAE (Cabinet
+  Resolution 56/2024: a licence and its DNCR). The review shows the law in one line and the approval
+  records that the person saw it. Their do-not-call registers still block: UK TPS/CTPS must be loaded,
+  Australian numbers need a fresh DNCR wash, Canadian numbers the DNCL. Campaigns never AI-cold-call
+  these countries.
+- **Business mobiles outside the US** (`SALES_SINGLE_CALL_MOBILES`, on by default): a single call may
+  ring a mobile, a toll-free or a company number abroad, judged by the numbering plan. A mobile shows as
+  a warning ("make sure it's the business's number") that the person approving must check. US numbers
+  keep the paid line-type lookup and landlines only: an AI voice to a US mobile needs written consent.
+  Campaigns outside the US still ring geographic landlines only.
+- **Working week**: where the weekend is Friday and Saturday (`rules.FRI_SAT_WEEKEND`, e.g. Bangladesh,
+  Saudi Arabia, Egypt, Israel), calls go Sunday to Thursday, 9 am–6 pm local time; elsewhere without
+  encoded hours, Monday to Friday 9 am–6 pm.
+- **Caller ID**: a number in the business's country when we have one; otherwise one of ours from
+  another country, shown as a warning (they see an international call).
+- **The full compliance gate runs three times**: on the review, when the person approves, and in the
+  agent seconds before dialling. Nothing about the gate changes, except that a campaign's own attempt
+  count and retry delay don't block a call a person chose to make (and the overrides below). A callback time they asked for
+  still does, and the calling hours must fit every time zone the number itself could be in, as well as
+  any typed in by hand. Hours: 8 am–6 pm, Monday to Saturday, where the business is, inside the legal
+  windows and Australian holidays. Australian numbers still need a fresh DNCR wash.
+- **The review is the sign-off**: the person sees the business, the offer version and script, the call
+  type and why, the caller ID, the exact opener and every check, and presses "Approve & call". The
+  approval (who, when, a hash of what they saw, and the checks) is kept on the attempt (`approval`) and
+  in the audit log (`sales.call.single`). If anything that matters changed since the review, the call
+  is refused until it is reviewed again. The agent refuses an approval older than 10 minutes. The
+  offer's own automated test calls must have passed, as for a campaign launch.
+- **Limits**: `SALES_SINGLE_CALLS_PER_DAY` (30; 0 switches single calls off), `SALES_SINGLE_CALLS_MAX_CONCURRENT`
+  (2, and one per person), `SALES_SINGLE_CALL_MIN_GAP_HOURS` (4) between single calls to one business, plus the
+  existing 24-hour rest after another campaign's call and the cap of 6 calls in 30 days.
+- **Overrides (the owner's decision, 2026-11-28)**: a sales manager (or a platform admin) may override a
+  failed check that is one of our own rules (`single_call.OVERRIDES`, and the gate's share in
+  `gate.WAIVABLE`): the offer's automated test calls, the business hours (ours, and the default hours of a
+  country where no law sets calling hours, `LegalWindow.statutory=False`: the UK and every country not in
+  `rules.COUNTRY_WINDOWS`), the gap between single calls, and the rest after a campaign's call. Even
+  overridden, a call goes only 8 am–9 pm the business's time (`single_call.OVERRIDE_WINDOW`), inside any
+  statutory window and Australian holidays. **No override** for statutory calling hours (US federal and
+  state, Canada, Australia, the UAE), do-not-call lists and registers, consent, line types, the 30-day
+  cap, a callback time they asked for, a declined offer, or the call limits. The override is ticked on
+  the review, which is worked out again with it; the hash covers it; placing the call needs a reason;
+  the overrides and the reason are kept on the attempt (`overrides`, `approval.override_reason`) and in
+  the audit log, and the agent's own gate check reads them from the attempt. Callers see what a manager
+  could override, but can't. Campaigns can't waive anything (`gate.waived` checks `kind == "single"`).
+- **No voicemail** is ever left, playbooks and A/B tests are off, and the caller IDs are ours
+  (`SALES_SINGLE_CALL_FROM_NUMBERS` and the numbers campaigns use), whatever the browser sends.
+- **Website reading** is the existing SSRF-safe crawler, and the website's text is fenced as data for
+  the model, which only picks among the published offers the rules allow.
+
+🧑‍⚖️ ⚠ VERIFY with counsel: that a recorded review by a trained team member is an adequate sign-off for one
+call, in place of the lawyer confirmation a campaign needs before it starts (the offer's openers and
+consent wording are the same reviewed text either way).
+
+🧑‍⚖️ ⚠ VERIFY with counsel: which countries do set calling hours by law. A country left out of
+`rules.COUNTRY_WINDOWS` has default hours that a sales manager can override on a single call (still 8 am–9 pm
+their time); if a law sets hours there, add its row to `COUNTRY_WINDOWS` and the override stops at it.
+
+🧑‍⚖️ ⚠ VERIFY with counsel, before single calls go to a new country: whether an AI cold call to a business
+there is lawful (with or without consent, and to a mobile), which do-not-call register applies and how
+to check it, and whether the Friday–Saturday weekend list and `STRICT_AI_COLD` are right. The default
+of every country is a business decision taken knowing these warnings; it is not legal advice.
+
 ## 10. DPIA outline (do it before the first EU customer)
 
 1. **What:** inbound AI phone answering for small businesses; speech-to-text, LLM, text-to-speech;

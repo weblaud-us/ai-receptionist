@@ -176,3 +176,23 @@ async def test_the_agent_speaks_for_the_offer_version_the_attempt_was_dialled_wi
     assert "on behalf of WebLaud" in agent.instructions and "Which tools or spreadsheets" in agent.instructions
     legacy = await sales_mod.load_offer(db, {"persona_id": "sales_v1"})
     assert legacy["id"] == "off_laudline" and legacy["version"] == 0
+
+
+async def test_a_single_call_runs_as_the_campaign_built_from_its_attempt(db):
+    """SALES_SINGLE_CALL_PLAN.md: no campaign document; the agent builds it from the approved attempt."""
+    from core.outbound import dialer
+
+    now = datetime.now(timezone.utc)
+    await db[m.LEADS].insert_one({**_lead(), "claimed_for": "single", "claimed_from": "new"})
+    await db[m.ATTEMPTS].insert_one({
+        "_id": "att_s", "call_id": "out-att_s", "lead_id": "lead_1", "campaign_id": None, "kind": "single",
+        "status": "dispatched", "mode": "ai_cold_b2b_us", "from": "+15125550100", "offer_id": "off_weblaud_studio",
+        "offer_version": 1, "variant_id": "custom_software", "created_at": now,
+        "approval": {"by": "usr_1", "hash": "abc", "at": now}})
+    attempt, lead, campaign = await sales_mod._load({"attempt_id": "att_s"})
+    assert lead["_id"] == "lead_1" and campaign["_id"] is None and campaign["kind"] == "single"
+    assert campaign["mode"] == "ai_cold_b2b_us" and campaign["from_numbers"] == ["+15125550100"]
+    assert campaign["voicemail_policy"] == "hang_up" and campaign["owner_id"] == "usr_1"
+    assert dialer.why_not_dial(campaign, attempt, now) == ""
+    stale = {**attempt, "approval": {**attempt["approval"], "at": now.replace(year=now.year - 1)}}
+    assert dialer.why_not_dial(campaign, stale, now) == "single call approval expired"

@@ -63,7 +63,7 @@ from agent.telemetry import attach_telemetry
 from config import settings
 from core.log import call_id_var, set_tenant
 from core.outbound import (coach, dialer, gate, learning_stats, memory, offers, optout, outcomes, persona, playbook,
-                           qualify, sales_tools)
+                           qualify, sales_tools, single_call)
 from core.outbound import models as m
 from core.outbound.sales_tools import SalesContext
 from core.phone import mask_phone
@@ -337,6 +337,8 @@ async def _load(meta: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optiona
     if attempt is None:
         return None, None, None
     lead = await db[m.LEADS].find_one({"_id": attempt["lead_id"]})
+    if single_call.is_single(attempt):            # a single call has no campaign document: it is built from the attempt
+        return attempt, lead, single_call.campaign_for(attempt)
     campaign = await db[m.CAMPAIGNS].find_one({"_id": attempt["campaign_id"]})
     return attempt, lead, campaign
 
@@ -420,22 +422,27 @@ async def sales_caller(ctx: JobContext) -> None:
 
     # The gate, again, seconds before the phone rings. Also stops a paused campaign's queued jobs.
     now = datetime.now(timezone.utc)
-    decision = await gate.run_gate(db, lead, campaign, now)
+    single = single_call.is_single(attempt)
+    decision = await gate.run_gate(db, single_call.gate_view(lead) if single else lead, campaign, now)
     profile = await resolve_profile(tenant_id=settings.SALES_TENANT_ID) if settings.SALES_TENANT_ID else None
     trunk = settings.sales_trunk_id
-    reviewed = m.legal_review_valid(campaign)
-    if not decision.allowed or campaign.get("status") != "running" or not reviewed or profile is None or not trunk:
+    refusal = dialer.why_not_dial(campaign, attempt, now)   # running + signed off, or a person's fresh approval
+    if not decision.allowed or refusal or profile is None or not trunk:
+        outcome = "blocked_by_gate"
         if not decision.allowed:
-            await dialer.apply_gate_failure(db, lead, decision, now)
+            if not single:                       # a single call's lead goes back where it was (finish_attempt)
+                await dialer.apply_gate_failure(db, lead, decision, now)
             detail = ", ".join(decision.failures)
-        elif campaign.get("status") != "running":
-            detail = "campaign not running"
-        elif not reviewed:
-            detail = "legal review missing"
+        elif refusal:
+            detail = refusal
         else:
-            detail = "sales tenant or trunk missing"
+            # Setup, not compliance: "could not start the call", with which piece is missing.
+            outcome = "dispatch_failed"
+            detail = (f"The sales tenant ({settings.SALES_TENANT_ID or 'SALES_TENANT_ID'}) is missing or inactive, "
+                      "so nothing was dialled." if profile is None
+                      else "No outbound trunk for sales calls, so nothing was dialled.")
         logger.warning("Attempt %s not dialled: %s", attempt_id, detail)
-        await outcomes.finish_attempt(db, attempt_id, "blocked_by_gate", now=now, detail=detail)
+        await outcomes.finish_attempt(db, attempt_id, outcome, now=now, detail=detail)
         ctx.shutdown("blocked")
         return
 
@@ -557,6 +564,11 @@ async def sales_caller(ctx: JobContext) -> None:
             await hang_up(state.final_outcome)
             return
         except Exception as e:
+            if outcomes.dial_timeout(e):             # rang out with nobody answering, not a failure
+                state.sip_status, state.final_outcome, state.detail = 408, "no_answer", "Rang with no answer"
+                _mark_end(state, "system")
+                await hang_up("no_answer")
+                return
             logger.error("Dial failed for attempt %s", attempt_id, exc_info=True)
             state.final_outcome, state.detail = "failed", type(e).__name__
             _mark_end(state, "system")

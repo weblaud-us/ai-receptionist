@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from pymongo import ReturnDocument
 
@@ -49,6 +49,13 @@ def sip_outcome(status_code: Optional[int]) -> str:
     if status_code in _SIP_BAD_NUMBER:
         return "wrong_number"
     return "failed"
+
+
+def dial_timeout(error: BaseException) -> bool:
+    """LiveKit's "sip request timed out" (twirp `canceled`, HTTP 408, no SIP status attached): the far end
+    rang until our ring timeout and nobody answered. Twilio logs the same call as no-answer."""
+    code, status = getattr(error, "code", None), getattr(error, "status", None)
+    return code in ("canceled", "deadline_exceeded") and status == 408
 
 
 def amd_outcome(category: str) -> Optional[str]:
@@ -88,6 +95,14 @@ async def apply_to_lead(db: Any, lead_id: str, campaign: Optional[Dict[str, Any]
     lead = await db[m.LEADS].find_one({"_id": lead_id})
     if lead is None or lead.get("status") == "dnc":
         return
+    if attempt is not None and attempt.get("kind") == "single":
+        # A single call (core/outbound/single_call.py): no answer puts the lead back where it was, and
+        # a callback leaves its campaign. Decisive outcomes go on below, the same as a campaign's.
+        from core.outbound import single_call
+
+        if await single_call.after_call(db, lead, attempt, outcome, now=now, callback_at=callback_at):
+            return
+        campaign = None
     sets: Dict[str, Any] = {"updated_at": now, "last_outcome": outcome}
     inc: Dict[str, int] = {}
     campaign = campaign or {}
@@ -166,8 +181,11 @@ async def finish_attempt(db: Any, attempt_id: str, outcome: str, *, now: Optiona
                          duration_s: Optional[float] = None, summary: Optional[str] = None,
                          next_step: Optional[str] = None, callback_at: Optional[datetime] = None,
                          detail: str = "", reason: Optional[str] = None,
-                         extra: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Close an attempt and move its lead on. None when the attempt was already closed."""
+                         extra: Optional[Dict[str, Any]] = None,
+                         only_from: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
+    """Close an attempt and move its lead on. None when the attempt was already closed, or (with
+    `only_from`) was no longer in one of those statuses: a call the agent has just started dialling
+    is never closed under it by someone cancelling one that hadn't rung yet."""
     now = now or datetime.now(timezone.utc)
     sets: Dict[str, Any] = {**(extra or {}), "status": "done", "outcome": outcome, "ended_at": now,
                             "detail": detail[:200]}
@@ -181,7 +199,8 @@ async def finish_attempt(db: Any, attempt_id: str, outcome: str, *, now: Optiona
     if callback_at is not None:
         sets["callback_at"] = callback_at           # so the learning loop can tell whether it was kept
     attempt = await db[m.ATTEMPTS].find_one_and_update(
-        {"_id": attempt_id, "status": {"$ne": "done"}}, {"$set": sets}, return_document=ReturnDocument.AFTER)
+        {"_id": attempt_id, "status": {"$in": list(only_from)} if only_from else {"$ne": "done"}}, {"$set": sets},
+        return_document=ReturnDocument.AFTER)
     if attempt is None:
         return None
     # On a human-assisted call the person's wrap-up form is the outcome, whichever finished first.
@@ -194,8 +213,11 @@ async def finish_attempt(db: Any, attempt_id: str, outcome: str, *, now: Optiona
             fix["callback_at"] = callback_at
         await db[m.ATTEMPTS].update_one({"_id": attempt_id}, {"$set": fix})
         attempt.update(fix)
-    campaign = await db[m.CAMPAIGNS].find_one({"_id": attempt.get("campaign_id")})
+    single = attempt.get("kind") == "single"
+    campaign = None if single else await db[m.CAMPAIGNS].find_one({"_id": attempt.get("campaign_id")})
     await apply_to_lead(db, attempt["lead_id"], campaign, outcome, now=now, callback_at=callback_at, attempt=attempt)
+    if single and outcome not in m.UNCOUNTED_OUTCOMES:      # a call went out: the pipeline counts it as contact
+        await db[m.LEADS].update_one({"_id": attempt["lead_id"]}, {"$inc": {"single_calls": 1}})
     await _record_call(db, attempt, outcome, now)
     logger.info("Attempt %s finished: %s%s", attempt_id, outcome, f" ({detail})" if detail else "")
     return attempt

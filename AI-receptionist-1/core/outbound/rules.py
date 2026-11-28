@@ -27,10 +27,12 @@ Day = Optional[tuple[time, time]]          # None = no calls that day
 
 @dataclass(frozen=True)
 class LegalWindow:
-    """Allowed local hours per weekday (0 = Monday … 6 = Sunday)."""
+    """Allowed local hours per weekday (0 = Monday … 6 = Sunday). `statutory=False`: no law sets these
+    hours, they are business hours we chose, so a sales manager may override them on a single call."""
 
     days: tuple[Day, ...]
     source: str
+    statutory: bool = True
 
     def for_weekday(self, weekday: int) -> Day:
         return self.days[weekday]
@@ -41,9 +43,11 @@ def _t(hhmm: str) -> time:
     return time(int(h), int(m))
 
 
-def _every_day(start: str, end: str, source: str, *, sunday: bool = True, saturday: bool = True) -> LegalWindow:
+def _every_day(start: str, end: str, source: str, *, sunday: bool = True, saturday: bool = True,
+               statutory: bool = True) -> LegalWindow:
     span = (_t(start), _t(end))
-    return LegalWindow(days=(span,) * 5 + (span if saturday else None, span if sunday else None), source=source)
+    return LegalWindow(days=(span,) * 5 + (span if saturday else None, span if sunday else None), source=source,
+                       statutory=statutory)
 
 
 def _weekly(weekday: tuple[str, str], saturday: Optional[tuple[str, str]], sunday: Optional[tuple[str, str]],
@@ -60,7 +64,8 @@ COUNTRY_WINDOWS: Mapping[str, LegalWindow] = {
     # ⚠ VERIFY: CRTC Unsolicited Telecommunications Rules — weekdays 9:00–21:30, weekends 10:00–18:00.
     "CA": _weekly(("09:00", "21:30"), ("10:00", "18:00"), ("10:00", "18:00"), "CA: CRTC UTR calling hours"),
     # The UK sets no statutory hours; business hours are used so a B2B call lands at a business.
-    "GB": _every_day("09:00", "18:00", "GB: business hours (no statutory window)", saturday=False, sunday=False),
+    "GB": _every_day("09:00", "18:00", "GB: business hours (no statutory window)", saturday=False, sunday=False,
+                     statutory=False),
     # UAE Cabinet Resolution 56 of 2024: 9 am – 6 pm.
     "AE": _every_day("09:00", "18:00", "AE: Cabinet Resolution 56/2024, 9 am – 6 pm"),
     # ⚠ VERIFY: Telecommunications (Telemarketing and Research Calls) Industry Standard 2017 —
@@ -69,8 +74,25 @@ COUNTRY_WINDOWS: Mapping[str, LegalWindow] = {
     "AU": _weekly(("09:00", "20:00"), ("09:00", "17:00"), None,
                   "AU: Telemarketing and Research Industry Standard 2017 — weekdays 9–8, Sat 9–5, no Sunday or public holiday"),
 }
-# Anywhere else a consented call is placed: weekday business hours until researched.
-DEFAULT_WINDOW = _every_day("09:00", "18:00", "default: weekday business hours", saturday=False, sunday=False)
+# Anywhere else: weekday business hours until researched.
+DEFAULT_WINDOW = _every_day("09:00", "18:00", "default: weekday business hours", saturday=False, sunday=False,
+                            statutory=False)
+# ⚠ VERIFY: countries whose working week is Sunday to Thursday (the weekend is Friday and Saturday).
+FRI_SAT_WEEKEND = frozenset({"BD", "SA", "QA", "KW", "BH", "OM", "EG", "JO", "IQ", "YE", "DZ", "LY", "IL", "MV", "SY"})
+_NINE_TO_SIX = (_t("09:00"), _t("18:00"))
+SUN_THU_WINDOW = LegalWindow(days=(_NINE_TO_SIX,) * 4 + (None, None, _NINE_TO_SIX),
+                             source="default: Sunday–Thursday business hours", statutory=False)
+
+
+def default_window(country: str) -> LegalWindow:
+    """Business hours on the country's working days, where no calling hours are encoded."""
+    return SUN_THU_WINDOW if country in FRI_SAT_WEEKEND else DEFAULT_WINDOW
+
+
+def business_days(country: str) -> list[int]:
+    """ISO weekdays a business is likely open: Monday to Saturday, or every day but Friday where the
+    weekend is Friday and Saturday. The legal window narrows it further."""
+    return [1, 2, 3, 4, 6, 7] if country in FRI_SAT_WEEKEND else [1, 2, 3, 4, 5, 6]
 
 # US states with a narrower window than federal. ⚠ VERIFY every row with counsel; a wrong row here
 # can only stop calls that federal law would allow, never permit one it forbids.
@@ -166,6 +188,10 @@ def closed_day(country: str, day: date) -> Optional[str]:
 # Line types an AI voice may cold-call in the US. A mobile needs prior express written consent; a
 # non-fixed VoIP number (Google Voice and the like) usually rings a mobile, so it is treated as one.
 AI_COLD_LINE_TYPES = frozenset({"landline", "fixed_voip", "toll_free"})
+# Outside the US (phones.line_kind): what a single call may ring besides a landline. The second set
+# only with SALES_SINGLE_CALL_MOBILES, and the person approving is asked to check it's the business's.
+SINGLE_CALL_BUSINESS_LINES = frozenset({"toll_free", "business_line"})
+SINGLE_CALL_CHECK_LINES = frozenset({"mobile", "landline_or_mobile", "voip"})
 
 
 # ── Patient reactivation (dental recall, SMS-first) ──────────────────────────
@@ -200,11 +226,31 @@ def is_mobile(phone: str, country: str) -> bool:
     return any((phone or "").startswith(p) for p in prefixes) and 11 <= len(phone or "") <= 13
 
 
+# ⚠ VERIFY with counsel. Countries whose law is stricter about AI or automated sales calls than "a
+# business may be called". Campaigns never AI-cold-call them (SALES_AI_COLD_COUNTRIES keeps them out).
+# A single call may (the owner's decision, 2026-11-28): the review shows this warning, and the approval
+# records that the person saw it. Their do-not-call registers (REQUIRED_REGISTRIES) still apply.
+_EU = "EU law (the ePrivacy Directive, article 13) needs prior consent for automated calls, and many EU countries apply that to businesses too."
+_EEA = "EEA law follows the EU's ePrivacy rules: automated calls need prior consent, often for businesses too."
+STRICT_AI_COLD: Mapping[str, str] = {
+    "GB": "UK law (PECR regulation 19) needs prior consent for automated calls, to businesses too.",
+    "CA": "Canada's CRTC rules need express consent before an automated or AI voice sales call.",
+    "AU": "In Australia an AI voice may count as a recorded message, which needs consent first.",
+    "IN": "India (TRAI's TCCCPR 2018) only allows sales calls from registered telemarketers on 140-series numbers, "
+          "and never to numbers on the DND register, which we can't check.",
+    "AE": "The UAE (Cabinet Resolution 56 of 2024) needs a telemarketing licence and a registered number, and bars "
+          "numbers on its do-not-call register, which we can't check.",
+    **{c: _EU for c in "AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE".split()},
+    **{c: _EEA for c in ("IS", "LI", "NO")},
+}
+
+
 def allowed_countries(mode: str) -> frozenset[str]:
     """Where a campaign mode may dial. Empty for an unknown mode: fail closed."""
     if mode == "ai_cold_b2b_us":
-        # US business landlines; another country only when counsel adds it (config refuses one with
-        # no calling window or do-not-call list). UK / EU / CA / UAE: no AI cold calls (Task 4.0).
+        # Campaigns: US business landlines; another country only when counsel adds it (config refuses
+        # one with no calling window or do-not-call list). UK / EU / CA / UAE: no AI cold calls (Task
+        # 4.0). Single calls have their own, wider list: see may_call.
         return settings.sales_ai_cold_countries
     if mode == "ai_consented":
         return settings.sales_ai_consented_countries
@@ -213,12 +259,24 @@ def allowed_countries(mode: str) -> frozenset[str]:
     return frozenset()
 
 
-def legal_windows(country: str, region_code: str = "") -> list[LegalWindow]:
-    """Every window that applies; the gate requires the local time to be inside all of them."""
-    windows = [COUNTRY_WINDOWS.get(country, DEFAULT_WINDOW)]
+def may_call(mode: str, country: str, *, single: bool = False) -> bool:
+    """May this kind of call go to a number in `country`? A single call (one business, approved by a
+    person who saw the review) may be an AI cold call wherever SALES_SINGLE_CALL_COUNTRIES allows."""
+    if not country:
+        return False
+    if single and mode == "ai_cold_b2b_us":
+        allowed = settings.sales_single_call_countries
+        return "*" in allowed or country in allowed
+    return country in allowed_countries(mode)
+
+
+def legal_windows(country: str, region_code: str = "", *, statutory_only: bool = False) -> list[LegalWindow]:
+    """Every window that applies; the gate requires the local time to be inside all of them.
+    `statutory_only`: just the ones a law sets (a single call whose business hours were overridden)."""
+    windows = [COUNTRY_WINDOWS.get(country) or default_window(country)]
     if country == "US" and region_code in US_STATE_WINDOWS:
         windows.append(US_STATE_WINDOWS[region_code])
-    return windows
+    return [w for w in windows if w.statutory] if statutory_only else windows
 
 
 def required_registries(mode: str, country: str) -> tuple[str, ...]:

@@ -171,6 +171,38 @@ def _url(website: str) -> str:
     return site if re.match(r"^https?://", site, re.IGNORECASE) else f"https://{site}"
 
 
+# A page on one of these is not a website of the business's own (and most of them won't let a crawler in).
+SOCIAL_SITES: Mapping[str, str] = {
+    "facebook.com": "Facebook", "fb.com": "Facebook", "fb.me": "Facebook", "instagram.com": "Instagram",
+    "instagr.am": "Instagram", "tiktok.com": "TikTok", "linkedin.com": "LinkedIn", "x.com": "X", "twitter.com": "X",
+    "youtube.com": "YouTube", "linktr.ee": "Linktree", "wa.me": "WhatsApp", "whatsapp.com": "WhatsApp",
+    "t.me": "Telegram", "g.page": "Google Maps", "maps.app.goo.gl": "Google Maps", "yelp.com": "Yelp",
+}
+
+
+def social_page(website: str) -> str:
+    """"Facebook" when `website` is a social media page rather than the business's own site; else ""."""
+    host = re.sub(r"^https?://", "", str(website or "").strip(), flags=re.IGNORECASE).split("/", 1)[0]
+    host = host.split("@")[-1].split(":")[0].lower()
+    for domain, name in SOCIAL_SITES.items():
+        if host == domain or host.endswith("." + domain):
+            return name
+    if host in ("google.com", "www.google.com") and "/maps" in str(website).lower():
+        return "Google Maps"
+    return ""
+
+
+def web_presence(lead: Mapping[str, Any]) -> str:
+    """How the business is online, as far as we know: "social" (only a social media page), "none" (a
+    person said they have no website), "site", or "" (we don't know)."""
+    site = str(lead.get("website") or "")
+    if social_page(site):
+        return "social"
+    if lead.get("no_website"):
+        return "none"
+    return "site" if site.strip() else ""
+
+
 def is_fresh(lead: Mapping[str, Any], now: datetime) -> bool:
     research = lead.get("research") or {}
     expires = research.get("expires_at")
@@ -205,7 +237,7 @@ async def research_lead(db: Any, lead: Mapping[str, Any], offer: Mapping[str, An
     url = _url(str(lead.get("website") or ""))
     base: Dict[str, Any] = {"requested_at": now, "offer_id": offer.get("id"), "fetched_at": None,
                             "expires_at": None, "data": None, "cost_usd": 0.0, "error": "", "url": url}
-    if not url:
+    if not url or social_page(url):
         doc = {**base, "status": "no_website"}
     elif not settings.OPENAI_API_KEY and llm is None:
         doc = {**base, "status": "failed", "error": "OPENAI_API_KEY is not set"}

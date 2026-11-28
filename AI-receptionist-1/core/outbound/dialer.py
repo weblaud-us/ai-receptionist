@@ -42,6 +42,11 @@ TICK_SECONDS = 20
 MAX_DIALS_PER_TICK = 10                       # across all campaigns: a bug can never start a flood
 DAY = timedelta(hours=24)
 STUCK_LEAD = timedelta(minutes=30)
+# The agent picks a single call up within seconds. One still waiting after this was never picked up
+# (no sales worker running): it is cancelled before anything is dialled, instead of sitting on
+# "Starting" and holding the person's single-call slot until the usual reap.
+SINGLE_PICKUP = timedelta(minutes=2)
+NOT_PICKED_UP = "The AI never picked the call up, so nothing was dialled. Is the sales worker running?"
 CAPPED_NUMBER_RETRY = timedelta(hours=1)
 
 Dispatch = Callable[[str, Dict[str, Any]], Awaitable[None]]
@@ -77,14 +82,41 @@ def readiness() -> List[str]:
     return problems
 
 
-def campaign_problems(campaign: Mapping[str, Any]) -> List[str]:
-    """Why this campaign cannot be started."""
+# A tenant the sales agent may speak for (the same rule as TenantConfig.active).
+_LIVE_TENANT = ("trial", "active", "past_due")
+
+
+async def tenant_problem(db: Any) -> str:
+    """"" when SALES_TENANT_ID is a tenant the sales agent can speak for; else why not. `readiness()`
+    only knows it is set: without the tenant the agent refuses every call seconds before dialling."""
+    tid = settings.SALES_TENANT_ID
+    if not tid:
+        return ""                                   # readiness() already says so
+    doc = await db.tenants.find_one({"_id": tid}, {"status": 1, "billing.deleted_at": 1})
+    if doc is None:
+        return (f"The sales tenant (SALES_TENANT_ID={tid}) doesn't exist yet. "
+                "Create it: python -m scripts.seed_sales_tenant.")
+    if (doc.get("billing") or {}).get("deleted_at") or doc.get("status") not in _LIVE_TENANT:
+        return f"The sales tenant ({tid}) isn't active."
+    return ""
+
+
+async def setup_problems(db: Any) -> List[str]:
+    """`readiness()`, plus the checks that need the database. Empty = the agent can place calls."""
+    problems = list(readiness())
+    tenant = await tenant_problem(db)
+    return [*problems, tenant] if tenant else problems
+
+
+def campaign_problems(campaign: Mapping[str, Any], *, us_lookups: bool = True) -> List[str]:
+    """Why this campaign cannot be started. `us_lookups=False`: no US number is involved (a single call
+    elsewhere), so the paid line-type lookup isn't needed."""
     from core.outbound import lookup
 
     problems = list(readiness())
     if not campaign.get("from_numbers"):
         problems.append("The campaign has no caller ID (from number).")
-    if campaign.get("mode") == "ai_cold_b2b_us" and not lookup.configured():
+    if campaign.get("mode") == "ai_cold_b2b_us" and us_lookups and not lookup.configured():
         problems.append("Line-type lookups are not configured (Twilio credentials), so no lead can pass the gate.")
     return problems
 
@@ -120,6 +152,16 @@ async def dialled_since(db: Any, query: Dict[str, Any], since: datetime) -> int:
 async def reap(db: Any, now: datetime) -> int:
     """Close attempts whose agent died, and release leads claimed by a tick that never finished."""
     reaped = 0
+    # A single call nobody picked up: cancelled only while still "dispatched", so an agent that claims it
+    # this very moment keeps it. Uncounted, so the lead goes back as it was (no gap, no daily cap used).
+    unclaimed = await db[m.ATTEMPTS].find(
+        {"kind": "single", "status": "dispatched", "created_at": {"$lt": now - SINGLE_PICKUP}}, {"_id": 1}).to_list(200)
+    for row in unclaimed:
+        if await outcomes.finish_attempt(db, row["_id"], "dispatch_failed", now=now, detail=NOT_PICKED_UP,
+                                         only_from=("dispatched",)):
+            logger.warning("Single call %s was never picked up by the sales agent '%s'. Is the sales worker running? "
+                           "(docker compose --profile dialer up -d sales-worker)", row["_id"], settings.SALES_AGENT_NAME)
+            reaped += 1
     cutoff = _stale_before(now)
     # Measured from when each stage began: a call that started late (a busy worker, the operator
     # wait) is not cut off while it is still talking.
@@ -136,12 +178,18 @@ async def reap(db: Any, now: datetime) -> int:
     live = {a["lead_id"] async for a in db[m.ATTEMPTS].find(
         {"status": {"$in": list(m.ACTIVE_ATTEMPT_STATUSES)}}, {"lead_id": 1})}
     stuck = await db[m.LEADS].find({"status": "in_progress", "claimed_at": {"$lt": now - STUCK_LEAD}},
-                                   {"_id": 1}).to_list(500)
+                                   {"_id": 1, "claimed_for": 1, "claimed_from": 1}).to_list(500)
     for lead in stuck:
-        if lead["_id"] not in live:
+        if lead["_id"] in live:
+            continue
+        if lead.get("claimed_for") == "single":        # a single call never got going: back where it was
+            await db[m.LEADS].update_one({"_id": lead["_id"], "status": "in_progress"},
+                                         {"$set": {"status": lead.get("claimed_from") or "new"},
+                                          "$unset": {"claimed_for": ""}})
+        else:
             await db[m.LEADS].update_one({"_id": lead["_id"], "status": "in_progress"},
                                          {"$set": {"status": "queued", "next_eligible_at": now}})
-            reaped += 1
+        reaped += 1
     return reaped
 
 
@@ -199,6 +247,41 @@ async def pick_from_number(db: Any, campaign: Mapping[str, Any], lead: Mapping[s
 
 # ── One dial ─────────────────────────────────────────────────────────────────
 
+def attempt_doc(*, attempt_id: str, lead: Mapping[str, Any], campaign: Mapping[str, Any], from_number: str,
+                offer_id: str, offer_version: int, variant_id: str, operator: Optional[str],
+                decision: gate.GateDecision, now: datetime, variant_pick: Optional[Dict[str, Any]],
+                assignment: Mapping[str, Any], attempt_no: Optional[int], dialled_as: str) -> Dict[str, Any]:
+    """The call attempt as it is written just before the sales agent is dispatched (campaign dials and
+    single calls alike): what it sells, with which script, from which number, and why the gate let it."""
+    return {
+        "_id": attempt_id, "lead_id": lead["_id"], "campaign_id": campaign.get("_id"), "mode": campaign["mode"],
+        "call_id": room_name(attempt_id), "from": from_number, "to": lead["phone"], "persona_id": variant_id,
+        "offer_id": offer_id, "offer_version": offer_version, "variant_id": variant_id,
+        "status": "dispatched", "outcome": None, "amd": None, "sip_status": None, "operator": operator,
+        "attempt_no": attempt_no, "gate": decision.to_doc(),
+        "created_at": now, "started_at": None, "ended_at": None, "duration_sec": None,
+        "summary": None, "next_step": None, "cost_usd": 0.0, "amd_label": None,
+        # For the learning loop (SALES_LEARNING_PLAN.md): a callback or a fresh try, and when it rang
+        # where they are.
+        "dialled_as": dialled_as, "country": str(lead.get("country") or ""),
+        "local": timing.local_slot(lead, now), "variant_pick": variant_pick, **assignment,
+    }
+
+
+def why_not_dial(campaign: Mapping[str, Any], attempt: Mapping[str, Any], now: datetime) -> str:
+    """"" when the agent may ring for this attempt; else why not. A campaign must be running with a
+    current legal sign-off; a single call needs a person's approval from moments ago."""
+    if attempt.get("kind") == "single":
+        from core.outbound import single_call
+
+        return single_call.approval_problem(attempt, now)
+    if campaign.get("status") != "running":
+        return "campaign not running"
+    if not m.legal_review_valid(campaign):
+        return "legal review missing"
+    return ""
+
+
 async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], now: datetime,
                     dispatch: Dispatch, *, operator: Optional[str] = None,
                     cache: Optional[Dict[Any, Any]] = None) -> Dict[str, Any]:
@@ -238,19 +321,11 @@ async def dial_lead(db: Any, campaign: Mapping[str, Any], lead: Dict[str, Any], 
 
     assignment = await learning.assign(db, campaign, lead, offer_id=offer_id, offer_version=offer_version,
                                        variant_id=persona_id, now=now, cache=cache)
-    attempt = {
-        "_id": attempt_id, "lead_id": lead["_id"], "campaign_id": campaign["_id"], "mode": campaign["mode"],
-        "call_id": room_name(attempt_id), "from": from_number, "to": lead["phone"], "persona_id": persona_id,
-        "offer_id": offer_id, "offer_version": offer_version, "variant_id": persona_id,
-        "status": "dispatched", "outcome": None, "amd": None, "sip_status": None, "operator": operator,
-        "attempt_no": int(lead.get("attempts") or 0) + 1, "gate": decision.to_doc(),
-        "created_at": now, "started_at": None, "ended_at": None, "duration_sec": None,
-        "summary": None, "next_step": None, "cost_usd": 0.0, "amd_label": None,
-        # For the learning loop (SALES_LEARNING_PLAN.md): a callback or a fresh try, and when it rang
-        # where they are.
-        "dialled_as": lead.get("claimed_from") or "queued", "country": str(lead.get("country") or ""),
-        "local": timing.local_slot(lead, now), "variant_pick": variant_pick, **assignment,
-    }
+    attempt = attempt_doc(attempt_id=attempt_id, lead=lead, campaign=campaign, from_number=from_number,
+                          offer_id=offer_id, offer_version=offer_version, variant_id=persona_id, operator=operator,
+                          decision=decision, now=now, variant_pick=variant_pick, assignment=assignment,
+                          attempt_no=int(lead.get("attempts") or 0) + 1,
+                          dialled_as=str(lead.get("claimed_from") or "queued"))
     await db[m.ATTEMPTS].insert_one(attempt)
     await db[m.LEADS].update_one({"_id": lead["_id"]},
                                  {"$inc": {"attempts": 1}, "$set": {"last_attempt_at": now, "updated_at": now}})
@@ -317,7 +392,7 @@ async def tick(db: Any, *, now: Optional[datetime] = None, dispatch: Dispatch = 
     now = now or datetime.now(timezone.utc)
     stats = {"campaigns": 0, "dialed": 0, "refused": 0, "reaped": 0, "completed": 0}
     stats["reaped"] = await reap(db, now)          # always: tidy up even while the dialer is off
-    if readiness():
+    if await setup_problems(db):
         return stats
     budget = MAX_DIALS_PER_TICK
     cache: Dict[Any, Any] = {}                     # learning state and offer versions, looked up once per tick

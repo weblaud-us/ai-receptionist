@@ -66,6 +66,7 @@ _ROUTERS = [
     ("routers.sales_crm", "sales_crm_router"),        # the built-in CRM (SALES_SUITE_PLAN.md wave 3)
     ("routers.sales_crm", "public_crm_router"),       # replies to sales email (inbound-parse webhook)
     ("routers.sales_learning", "sales_learning_router"),  # the agent that learns from its calls (SALES_LEARNING_PLAN.md)
+    ("routers.sales_calls", "sales_calls_router"),    # single calls: one business, now (SALES_SINGLE_CALL_PLAN.md)
     ("routers.signup", "public_plans_router"),        # Phase 5: plan catalogue
     ("routers.signup", "signup_router"),              # Phase 5: self-serve signup + e-mail verification
     ("routers.billing", "billing_router"),            # Phase 5: plan, usage, Checkout/Portal, numbers, export

@@ -106,11 +106,12 @@ def build_dispatch_rule(s: Settings, trunk_ids: Sequence[str]) -> proto_sip.SIPD
 
 
 def build_outbound_trunk(s: Settings, numbers: Sequence[str]) -> proto_sip.SIPOutboundTrunkInfo:
-    """Calls going out through Twilio: `transfer_to_human` and the Phase 4 dialer."""
+    """Calls going out through Twilio: `transfer_to_human` and the Phase 4 dialer. It also carries the
+    sales caller IDs (SALES_SINGLE_CALL_FROM_NUMBERS), which ring out from it but aren't receptionist lines."""
     return proto_sip.SIPOutboundTrunkInfo(
         name=outbound_trunk_name(s),
         address=s.TWILIO_TERMINATION_URI,
-        numbers=normalize_numbers(numbers),
+        numbers=normalize_numbers([*numbers, *s.sales_single_call_from_numbers]),
         auth_username=s.TWILIO_SIP_OUTBOUND_USERNAME,
         auth_password=s.TWILIO_SIP_OUTBOUND_PASSWORD,
     )

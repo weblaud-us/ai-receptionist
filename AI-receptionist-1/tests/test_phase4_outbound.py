@@ -67,8 +67,9 @@ def frozen_api_clock(monkeypatch):
 
 
 @pytest.fixture
-def ready(monkeypatch):
-    """A configured dialer: switched on, trunk and sales tenant set, line-type lookups answering."""
+async def ready(db, monkeypatch):
+    """A configured dialer: switched on, trunk and sales tenant set (and the tenant there), line-type lookups answering."""
+    await db.tenants.insert_one({"_id": "ten_sales", "slug": "weblaud-sales", "name": "WebLaud", "status": "active"})
     monkeypatch.setattr(settings, "OUTBOUND_DIALER_ENABLED", True)
     monkeypatch.setattr(settings, "SALES_TENANT_ID", "ten_sales")
     monkeypatch.setattr(settings, "LIVEKIT_SIP_OUTBOUND_TRUNK_ID", "ST_dev")
@@ -615,6 +616,11 @@ async def test_please_dont_call_me_means_never_dialled_again(seeded):
 
 
 def test_sip_and_amd_results_map_to_outcomes():
+    from livekit.api.twirp_client import ServerError
+
+    assert outcomes.dial_timeout(ServerError("canceled", "sip request timed out", status=408))   # rang out, no answer
+    assert not outcomes.dial_timeout(ServerError("unauthenticated", "invalid token", status=401))
+    assert not outcomes.dial_timeout(RuntimeError("boom"))
     assert [outcomes.sip_outcome(c) for c in (486, 480, 408, 404, 503, None)] == \
         ["busy", "no_answer", "no_answer", "wrong_number", "failed", "failed"]
     assert outcomes.amd_outcome("human") is None

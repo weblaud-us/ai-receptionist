@@ -86,6 +86,13 @@ def test_outbound_trunk_points_at_twilio_termination():
     assert (t.auth_username, t.auth_password) == ("u", "p")
 
 
+def test_outbound_trunk_also_carries_the_sales_caller_ids():
+    s = _prod(TWILIO_TERMINATION_URI="acme.pstn.twilio.com", TWILIO_SIP_OUTBOUND_USERNAME="u",
+              TWILIO_SIP_OUTBOUND_PASSWORD="p", SALES_SINGLE_CALL_FROM_NUMBERS="+17405600905, +15551234567")
+    assert list(st.build_outbound_trunk(s, ["+15551234567"]).numbers) == ["+15551234567", "+17405600905"]
+    assert "+17405600905" not in st.build_inbound_trunk(s, ["+15551234567"]).numbers    # not a receptionist line
+
+
 # ── idempotence + preflight ─────────────────────────────
 
 def test_same_ignores_server_fields():

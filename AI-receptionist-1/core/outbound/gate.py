@@ -1,7 +1,10 @@
 """
 The compliance gate (Roadmap Task 4.3). Runs when a lead is imported or queued, and again
 immediately before every dial. There is no way round it: the dialer and the sales agent both call
-`run_gate`, and neither the API nor the dashboard has an override.
+`run_gate`. The one exception is narrow: on a single call (one business, a person reviewed it) a sales
+manager may waive two of our own rules, never a law's (`WAIVABLE`, `waived`): the business hours where
+no law sets calling hours, and the rest after another campaign's call. The law's calling hours,
+holidays, do-not-call lists, consent, line types, the 30-day cap and a "no" have no override.
 
 `evaluate` is a pure function of the lead, the campaign, the facts looked up for the number and
 the clock, so every rule is tested without a database. Every decision is written to the lead
@@ -36,6 +39,9 @@ RETRY_LOOKUP = timedelta(hours=1)
 RETRY_REGISTRY = timedelta(hours=6)
 WINDOW_SEARCH_STEP = timedelta(minutes=5)
 WINDOW_SEARCH_DAYS = 8
+
+# What a sales manager may override on a single call (single_call.OVERRIDES), as the gate sees it.
+WAIVABLE = frozenset({"business_hours", "recently_called"})
 
 PERMANENT = frozenset({
     "internal_dnc", "country_not_allowed", "state_blocked", "state_unknown", "line_type_not_allowed",
@@ -102,6 +108,11 @@ def _hhmm(value: str) -> time:
     return time(int(h), int(mi))
 
 
+def waived(campaign: Mapping[str, Any], rule: str) -> bool:
+    """A rule a sales manager overrode for this single call. Campaigns never waive anything."""
+    return campaign.get("kind") == "single" and rule in WAIVABLE and rule in (campaign.get("waive") or ())
+
+
 def lead_timezones(lead: Mapping[str, Any]) -> tuple[str, ...]:
     zones = lead.get("timezones") or ([lead["timezone"]] if lead.get("timezone") else [])
     return tuple(z for z in zones if z)
@@ -109,7 +120,7 @@ def lead_timezones(lead: Mapping[str, Any]) -> tuple[str, ...]:
 
 def window_open(lead: Mapping[str, Any], campaign: Mapping[str, Any], now: datetime) -> bool:
     """True when `now` is inside the campaign window AND every legal window, in every timezone the
-    lead might be in."""
+    lead might be in. With the business hours overridden (`waived`), only the windows a law sets."""
     zones = lead_timezones(lead)
     if not zones:
         return False
@@ -117,7 +128,8 @@ def window_open(lead: Mapping[str, Any], campaign: Mapping[str, Any], now: datet
     start, end = _hhmm(window.get("start", "09:30")), _hhmm(window.get("end", "17:00"))
     days = set(window.get("days") or [1, 2, 3, 4, 5])
     country = str(lead.get("country") or "")
-    legal = rules.legal_windows(country, str(lead.get("region_code") or ""))
+    legal = rules.legal_windows(country, str(lead.get("region_code") or ""),
+                                statutory_only=waived(campaign, "business_hours"))
     for zone in zones:
         local = now.astimezone(ZoneInfo(zone))
         t = local.time()
@@ -167,8 +179,10 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
     else:
         checks["internal_dnc"] = "pass"
 
-    # 2. Is this kind of call allowed in the lead's country (and state)?
-    if not country or country not in rules.allowed_countries(mode):
+    # 2. Is this kind of call allowed in the lead's country (and state)? A single call (one business, a
+    # person approved the review) has its own list: SALES_SINGLE_CALL_COUNTRIES.
+    single = campaign.get("kind") == "single"
+    if not rules.may_call(mode, country, single=single):
         fail("market", "country_not_allowed", f"{mode} campaigns may not call {country or 'an unknown country'}")
     elif mode == "ai_cold_b2b_us" and country == "US" and not region:
         fail("market", "state_unknown", "the US state is unknown, so state rules cannot be checked")
@@ -179,11 +193,20 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
 
     # 3. Line type — an AI voice may only cold-call business landlines
     if mode == "ai_cold_b2b_us" and country and country != "US":
-        # No paid lookup outside the US: the numbering plan says whether it is a geographic landline.
-        if phones.is_fixed_line(str(lead.get("phone") or "")):
+        # No paid lookup outside the US: the numbering plan says what the number is. Campaigns ring
+        # geographic landlines only. A single call may also ring a business's toll-free or company
+        # number, and (SALES_SINGLE_CALL_MOBILES) its mobile: "check" marks one the person approving
+        # must confirm is the business's.
+        kind = phones.line_kind(str(lead.get("phone") or ""))
+        if kind == "landline":
             checks["line_type"] = "pass: fixed line (numbering plan)"
+        elif single and kind in rules.SINGLE_CALL_BUSINESS_LINES:
+            checks["line_type"] = f"pass: {kind} (numbering plan)"
+        elif single and settings.SALES_SINGLE_CALL_MOBILES and kind in rules.SINGLE_CALL_CHECK_LINES:
+            checks["line_type"] = f"pass: {kind} (numbering plan), check it is the business's"
         else:
-            fail("line_type", "line_type_not_allowed", "not a geographic landline")
+            fail("line_type", "line_type_not_allowed",
+                 f"a {kind.replace('_', ' ')} number" if single else "not a geographic landline")
     elif mode == "ai_cold_b2b_us":
         line_type = str(lead.get("line_type") or "")
         checked = _aware(lead.get("line_type_checked_at"))
@@ -230,7 +253,8 @@ def evaluate(lead: Mapping[str, Any], campaign: Mapping[str, Any], facts: GateFa
     elif eligible is not None and eligible > now:
         fail("frequency", "too_soon", "not due yet", retry_at=eligible)
     elif lead.get("status") != "callback":       # a callback they asked for is called when they asked
-        spacing = _spacing_failure(facts.recent_calls, str(campaign.get("_id") or ""), now)
+        spacing = _spacing_failure(facts.recent_calls, str(campaign.get("_id") or ""), now,
+                                   rest=not waived(campaign, "recently_called"))
         if spacing:
             fail("frequency", spacing[0], spacing[1], retry_at=spacing[2])
         else:
@@ -265,8 +289,9 @@ SPACING_WINDOW = timedelta(days=30)
 
 
 def _spacing_failure(calls: tuple[tuple[datetime, str], ...], campaign_id: str,
-                     now: datetime) -> Optional[tuple[str, str, datetime]]:
-    """Across campaigns: rest after another campaign's call, and a cap on calls in 30 days."""
+                     now: datetime, *, rest: bool = True) -> Optional[tuple[str, str, datetime]]:
+    """Across campaigns: rest after another campaign's call (`rest=False`: overridden), and a cap on
+    calls in 30 days (never overridden)."""
     recent = sorted((_aware(at) or now, cid) for at, cid in calls if (_aware(at) or now) > now - SPACING_WINDOW)
     cap = int(settings.SALES_MAX_CALLS_PER_PROSPECT_30D)
     if cap > 0 and len(recent) >= cap:
@@ -274,7 +299,7 @@ def _spacing_failure(calls: tuple[tuple[datetime, str], ...], campaign_id: str,
         return "prospect_cap", f"called {len(recent)} times in 30 days across campaigns", until
     gap = timedelta(hours=max(0, int(settings.SALES_MIN_HOURS_BETWEEN_CAMPAIGNS)))
     other = [at for at, cid in recent if cid != campaign_id]
-    if gap and other and other[-1] > now - gap:
+    if rest and gap and other and other[-1] > now - gap:
         return "recently_called", "another campaign called them recently", other[-1] + gap
     return None
 

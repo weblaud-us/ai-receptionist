@@ -1,5 +1,5 @@
 """
-Outbound sales dialer API (Roadmap Task 4.6) — prefix /platform/sales, platform admins only.
+Outbound sales dialer API (Roadmap Task 4.6) — prefix /platform/sales, the sales team (viewer < caller < manager).
 
 GET    /platform/sales/status                 readiness, do-not-call lists loaded, personas, counts
 GET    /platform/sales/leads                  search / filter
@@ -14,7 +14,7 @@ GET    /platform/sales/campaigns   POST …     PATCH …/{id}      POST …/{id
 POST   /platform/sales/campaigns/{id}/dial-next                 human-assisted: ring the next lead for me
 GET    /platform/sales/live                   calls in progress
 POST   /platform/sales/live/{attempt}/join    a LiveKit token to listen in (hidden) or take over
-POST   /platform/sales/live/{attempt}/hangup
+POST   /platform/sales/live/{attempt}/hangup  end it; one that hasn't rung yet is cancelled
 GET    /platform/sales/attempts   GET …/{id}  PATCH …/{id}      results; correct an outcome; label AMD
 GET    /platform/sales/funnel
 GET    /platform/sales/offers   POST …   GET/PATCH …/{id}       what the dialer sells (SALES_DIALER_PLAN.md)
@@ -27,9 +27,11 @@ GET    /platform/sales/outbox  POST …/{id}/retry | mark-sent    sales email th
 GET    /platform/sales/leads.csv   GET /platform/sales/attempts.csv
 GET    /public/sales/unsubscribe              one-click unsubscribe from sales email
 
-There is deliberately no endpoint that skips the compliance gate, removes a do-not-call entry,
-dials an arbitrary number, or deletes an offer (offers are archived; every call can be traced to the
-exact offer version it used).
+There is deliberately no endpoint that skips the compliance gate, removes a do-not-call entry, or
+deletes an offer (offers are archived; every call can be traced to the exact offer version it used).
+The one way to ring a number a person chose (POST /platform/sales/calls, routers/sales_calls.py) goes
+to a lead, through the full gate, only after a person approved a review of exactly that call, and the
+approval is kept on the attempt.
 
 Public (no sign-in), for the "get a call from our AI" landing page:
 GET    /public/demo-call/consent              the exact consent wording to show next to the checkbox
@@ -56,7 +58,8 @@ from config import settings
 from core import ratelimit
 from core.auth import Principal, require_platform_admin
 from core.auth.deps import require_sales
-from core.outbound import dialer, followup, funnel, gate, importer, lookup, outcomes, persona, phones, registry, research
+from core.outbound import (dialer, followup, funnel, gate, importer, lookup, outcomes, persona, phones, registry, research,
+                           single_call)
 from core.outbound import models as m
 from core.outbound import offer_ai
 from core.outbound import offers as of
@@ -118,15 +121,28 @@ def _pages(total: int, size: int) -> int:
     return max(1, -(-total // size))
 
 
+SINGLE_CALLS = "single"            # ?campaign_id=single: calls placed one at a time, without a campaign
+
+
+def _by_campaign(campaign_id: Optional[str]) -> Dict[str, Any]:
+    """Attempts of one campaign, or of single calls (`campaign_id` None, so the campaign index serves it)."""
+    if not campaign_id:
+        return {}
+    if campaign_id == SINGLE_CALLS:
+        return {"campaign_id": None, "kind": "single"}
+    return {"campaign_id": campaign_id}
+
+
 # ── Status ───────────────────────────────────────────────────────────────────
 
 @sales_router.get("/status")
 async def status(admin: Principal = Depends(viewer)):
     db = get_db()
     legacy = persona.legacy_offer()
+    problems = await dialer.setup_problems(db)
     return to_jsonable({
-        "ready": not dialer.readiness(),
-        "problems": dialer.readiness(),
+        "ready": not problems,
+        "problems": problems,
         "dialer_enabled": settings.OUTBOUND_DIALER_ENABLED,
         "line_type_lookup": lookup.configured(),
         "sales_tenant_id": settings.SALES_TENANT_ID or None,
@@ -150,6 +166,7 @@ async def status(admin: Principal = Depends(viewer)):
         "research": {"enabled": research.enabled(), "spent_today_usd": round(await research.spent_today(db, utcnow()), 4),
                      "daily_cap_usd": settings.SALES_RESEARCH_DAILY_USD,
                      "pending": await db[m.LEADS].count_documents({"research.status": {"$in": ["pending", "running"]}})},
+        "single_calls": await single_call.status(db),
         "counts": {"leads": await db[m.LEADS].count_documents({}), "dnc": await db[m.DNC].count_documents({})},
     })
 
@@ -424,10 +441,12 @@ class LeadPatch(BaseModel):
     email: Optional[str] = Field(default=None, max_length=200)
     notes: Optional[str] = Field(default=None, max_length=1000)
     agent_notes: Optional[str] = Field(default=None, max_length=600)   # what the agent should know about them
+    vertical: Optional[str] = Field(default=None, max_length=60)        # what kind of business, e.g. "dental clinic"
     tags: Optional[List[str]] = Field(default=None, max_length=20)
     timezone: Optional[str] = Field(default=None, max_length=64)
     region_code: Optional[str] = Field(default=None, max_length=40)     # "TX", "QLD", or the full name
     website: Optional[str] = Field(default=None, max_length=200)
+    no_website: Optional[bool] = None                              # they have no website of their own
     stage: Optional[str] = Field(default=None, max_length=20)     # "" = back to the stage the calls say
     owner_id: Optional[str] = Field(default=None, max_length=60)  # who works this lead ("" = nobody)
 
@@ -680,12 +699,11 @@ async def dncr_wash_export(request: Request, admin: Principal = Depends(require_
 @sales_router.get("/attempts.csv")
 async def export_attempts(request: Request, campaign_id: Optional[str] = None, days: int = Query(90, ge=1, le=365),
                           admin: Principal = Depends(manager)):
-    query: Dict[str, Any] = {"status": "done", "created_at": {"$gte": utcnow() - timedelta(days=days)}}
-    if campaign_id:
-        query["campaign_id"] = campaign_id
+    query: Dict[str, Any] = {"status": "done", "created_at": {"$gte": utcnow() - timedelta(days=days)},
+                             **_by_campaign(campaign_id)}
     rows = await get_db()[m.ATTEMPTS].find(query, {"gate": 0}).sort("created_at", -1).limit(50_000).to_list(50_000)
     await _audit(admin, request, "sales.attempts.export", "call_attempts", "*", {"rows": len(rows), "days": days})
-    return _csv(rows, ["created_at", "campaign_id", "to", "from", "offer_id", "offer_version", "variant_id", "mode",
+    return _csv(rows, ["created_at", "campaign_id", "kind", "to", "from", "offer_id", "offer_version", "variant_id", "mode",
                        "outcome", "amd", "duration_sec", "cost_usd", "summary", "next_step"], "sales-calls.csv")
 
 
@@ -1044,6 +1062,24 @@ async def hang_up_call(attempt_id: str, request: Request, admin: Principal = Dep
     attempt = await _active_attempt(attempt_id)
     from livekit import api
 
+    if attempt["status"] == "dispatched":
+        # It hasn't rung yet (the agent is starting, or no sales worker picked it up): cancel it. Closed
+        # first, so the agent's claim (dispatched → dialing) fails and nothing ever rings; then the room
+        # goes, which drops the waiting dispatch. Uncounted: the lead goes back as it was.
+        who = (admin.name or "someone")[:60]
+        if await outcomes.finish_attempt(get_db(), attempt_id, "dispatch_failed", only_from=("dispatched",),
+                                         detail=f"Ended by {who} before it rang"):
+            lk = api.LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
+            try:
+                await lk.room.delete_room(api.DeleteRoomRequest(room=attempt["call_id"]))
+            except Exception:                            # often there is no room yet: nothing to drop
+                logger.info("No room to drop for cancelled call %s", attempt_id, exc_info=True)
+            finally:
+                await lk.aclose()
+            await _audit(admin, request, "sales.call.cancel", "call_attempt", attempt_id)
+            return {"success": True, "cancelled": True}
+        # The agent claimed it a moment ago: it's ringing now, so hang up as usual.
+
     lk = api.LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
     try:
         await lk.room.delete_room(api.DeleteRoomRequest(room=attempt["call_id"]))     # drops the phone leg too
@@ -1083,9 +1119,7 @@ async def dial_next(campaign_id: str, request: Request, admin: Principal = Depen
 async def list_attempts(campaign_id: Optional[str] = None, outcome: Optional[str] = None,
                         unlabelled: bool = False, flagged: bool = False, page: int = Query(1, ge=1),
                         admin: Principal = Depends(viewer)):
-    query: Dict[str, Any] = {"status": "done"}
-    if campaign_id:
-        query["campaign_id"] = campaign_id
+    query: Dict[str, Any] = {"status": "done", **_by_campaign(campaign_id)}
     if outcome:
         query["outcome"] = outcome
     if unlabelled:
@@ -1281,9 +1315,8 @@ FUNNEL_MAX_CALLS = 50_000
 @sales_router.get("/funnel")
 async def get_funnel(campaign_id: Optional[str] = None, days: int = Query(30, ge=1, le=365),
                      admin: Principal = Depends(viewer)):
-    query: Dict[str, Any] = {"status": "done", "created_at": {"$gte": utcnow() - timedelta(days=days)}}
-    if campaign_id:
-        query["campaign_id"] = campaign_id
+    query: Dict[str, Any] = {"status": "done", "created_at": {"$gte": utcnow() - timedelta(days=days)},
+                             **_by_campaign(campaign_id)}
     rows = await get_db()[m.ATTEMPTS].find(
         query, {"outcome": 1, "amd": 1, "amd_label": 1, "duration_sec": 1, "cost_usd": 1, "persona_id": 1,
                 "offer_id": 1, "offer_version": 1, "variant_id": 1, "status": 1,

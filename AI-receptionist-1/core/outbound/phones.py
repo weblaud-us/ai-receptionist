@@ -129,11 +129,40 @@ def normalize_region(country: str, value: Optional[str]) -> str:
 
 def is_fixed_line(e164: str) -> bool:
     """A geographic landline by its numbering plan (outside the US there is no paid line-type lookup)."""
+    return line_kind(e164) == "landline"
+
+
+_KINDS = {
+    phonenumbers.PhoneNumberType.FIXED_LINE: "landline",
+    phonenumbers.PhoneNumberType.MOBILE: "mobile",
+    phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE: "landline_or_mobile",   # e.g. every +1 number
+    phonenumbers.PhoneNumberType.TOLL_FREE: "toll_free",
+    phonenumbers.PhoneNumberType.UAN: "business_line",          # one number for a company, e.g. Pakistan's 111
+    phonenumbers.PhoneNumberType.SHARED_COST: "business_line",
+    phonenumbers.PhoneNumberType.VOIP: "voip",
+    phonenumbers.PhoneNumberType.PREMIUM_RATE: "premium_rate",
+}
+
+
+def line_kind(e164: str) -> str:
+    """What the numbering plan says the number is: landline, mobile, landline_or_mobile, toll_free,
+    business_line, voip, premium_rate, or other."""
     try:
         number = phonenumbers.parse(e164, None)
     except phonenumbers.NumberParseException:
-        return False
-    return phonenumbers.number_type(number) == phonenumbers.PhoneNumberType.FIXED_LINE
+        return "other"
+    return _KINDS.get(phonenumbers.number_type(number), "other")
+
+
+def country_name(code: str) -> str:
+    """The country's English name, from the numbering plan's data ("BD" → "Bangladesh"); else the code."""
+    code = (code or "").upper()
+    try:
+        example = phonenumbers.example_number(code)
+        name = geocoder.country_name_for_number(example, "en") if example else ""
+    except Exception:
+        name = ""
+    return name or code
 
 
 def parse(raw: Optional[str], default_region: str = "US") -> Optional[PhoneInfo]:
